@@ -8,6 +8,8 @@ import com.eyue.reader.data.BitmapLoader
 import com.eyue.reader.data.Book
 import com.eyue.reader.data.BookFormat
 import com.eyue.reader.data.CloudBookMatch
+import com.eyue.reader.data.cloudBookSourceMatch
+import com.eyue.reader.data.hydrateBookSourceIdentity
 import com.eyue.reader.data.sameTitleLocalBooks
 import com.eyue.reader.data.ImportedFont
 import com.eyue.reader.data.LibraryMode
@@ -55,9 +57,14 @@ class CloudBackupService(
         val check = { job.ensureActive() }
         val content = HashMap<String, String?>()
         val source = HashMap<String, String?>()
+        val identified = state.copy(books = state.books.map { hydrateBookSourceIdentity(context, it) })
         buildMap {
-            for (info in incoming) for (local in sameTitleLocalBooks(state, info.book)) {
+            for (info in incoming) for (local in sameTitleLocalBooks(identified, info.book)) {
                 check()
+                if (cloudBookSourceMatch(local, info.book) == CloudBookMatch.SAME) {
+                    put(local.id to info.book.id, CloudBookMatch.SAME)
+                    continue
+                }
                 val originalHash = if (info.sourceSha256 == null) null else source.getOrPut(local.id) {
                     val path = if (local.sourceLinked) local.sourceUri ?: local.sourcePath else local.sourcePath ?: local.sourceUri
                     path?.let { runCatching { cloudSourceHash(context, it, check) }.getOrElse { error ->
@@ -121,7 +128,7 @@ class CloudBackupService(
             val backupAt = System.currentTimeMillis()
             val source = if (book.format == BookFormat.IMAGES) null else
                 (if (book.sourceLinked) book.sourceUri ?: book.sourcePath else book.sourcePath ?: book.sourceUri)
-            val materialized = materializeCloudBook(context, book)
+            val materialized = materializeCloudBook(context, hydrateBookSourceIdentity(context, book))
             check()
             val portable = remapBook(materialized, ::path).copy(sourcePath = path(source), sourceUri = null,
                 sourceLinked = false, cloudEnabled = true, cloudOnly = false, cloudBackupAt = backupAt)
@@ -551,7 +558,8 @@ class CloudBackupService(
 
     private fun contentBook(book: Book): Book = book.copy(title = "", author = "", chapterIndex = 0, pageIndex = 0,
         characterOffset = 0, progress = 0f, lastReadAt = 0, addedAt = 0, isDemo = false, positionImagePath = null,
-        groupId = null, cloudEnabled = false, cloudOnly = false, cloudBackupAt = 0, voiceRoles = emptyList())
+        groupId = null, cloudEnabled = false, cloudOnly = false, cloudBackupAt = 0, voiceRoles = emptyList(),
+        sourceFileName = null, sourceFileBytes = null)
 
     private fun writeManifest(info: CloudBookInfo, records: List<CloudAssetRecord>, cover: String?): ByteArray =
         writeMetadata(info.book, info.annotations, info.settings, info.group, info.backupAt, records, info.readingSeconds)
@@ -620,7 +628,10 @@ class CloudBackupService(
         require(cover == null || cover == "$revision-cover.jpg") { "云端封面路径无效" }
         val identity = if (json.isNull("contentIdentity")) null else json.optString("contentIdentity").takeIf { it.isNotEmpty() }
         require(identity == null || identity.matches(Regex("(?:text|pages)-v1:[a-f0-9]{64}"))) { "云端正文校验信息损坏" }
-        return Manifest(CloudBookInfo(data.book, data.annotations, data.settings, data.group, data.backupAt,
+        val sourceBytes = assets.firstOrNull { it.name == data.book.sourcePath }?.bytes
+        val identified = if (data.book.sourceFileBytes == null && data.book.format != BookFormat.IMAGES)
+            data.book.copy(sourceFileBytes = sourceBytes) else data.book
+        return Manifest(CloudBookInfo(identified, data.annotations, data.settings, data.group, data.backupAt,
             revision, archiveBytes, sha256, parts, data.readingSeconds, identity,
             assets.firstOrNull { it.name == data.book.sourcePath }?.sha256), assets, cover)
     }

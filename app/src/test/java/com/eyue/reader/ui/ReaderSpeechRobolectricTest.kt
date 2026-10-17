@@ -45,6 +45,68 @@ class ReaderSpeechRobolectricTest {
 
     @After fun tearDown() { speech.release(); idle() }
 
+    @Test fun aNewSystemEngineWaitsForInitializationAndUsesTheLatestPendingSpeed() {
+        val waiting = ReaderSpeech(RuntimeEnvironment.getApplication())
+        val newEngine = Shadows.shadowOf(ShadowTextToSpeech.getLastTextToSpeechInstance()) as HeldSpeechShadow
+        try {
+            waiting.start(listOf(ReaderSpeechSegment(3, 1, 57, "切换后的正文。")), 1f) { segment, offset -> positions += segment.chapter to offset }
+            assertTrue(waiting.playing.value)
+            assertEquals(null, waiting.error.value)
+            assertTrue(newEngine.spoken.isEmpty())
+            waiting.setSpeed(1.4f)
+            assertTrue(waiting.playing.value)
+            newEngine.onInitListener.onInit(TextToSpeech.SUCCESS)
+            idle()
+            assertEquals(listOf("切换后的正文。"), newEngine.spoken)
+            assertEquals(3 to 57, positions.single())
+            assertTrue(waiting.playing.value)
+        } finally { waiting.release(); idle() }
+    }
+
+    @Test fun pausingWhileSystemInitializationIsPendingDoesNotPlayUntilExplicitResume() {
+        val waiting = ReaderSpeech(RuntimeEnvironment.getApplication())
+        val newEngine = Shadows.shadowOf(ShadowTextToSpeech.getLastTextToSpeechInstance()) as HeldSpeechShadow
+        try {
+            waiting.start(listOf(ReaderSpeechSegment(1, 0, 31, "等待后继续。")), 1f) { _, _ -> }
+            assertTrue(waiting.pause())
+            newEngine.onInitListener.onInit(TextToSpeech.SUCCESS)
+            idle()
+            assertFalse(waiting.playing.value)
+            assertTrue(newEngine.spoken.isEmpty())
+            assertTrue(waiting.resume())
+            assertEquals(listOf("等待后继续。"), newEngine.spoken)
+        } finally { waiting.release(); idle() }
+    }
+
+    @Test fun stoppingOrReleasingAnInitializingEngineDiscardsItsDeferredStart() {
+        for (release in listOf(false, true)) {
+            val waiting = ReaderSpeech(RuntimeEnvironment.getApplication())
+            val newEngine = Shadows.shadowOf(ShadowTextToSpeech.getLastTextToSpeechInstance()) as HeldSpeechShadow
+            try {
+                waiting.start(listOf(ReaderSpeechSegment(0, 0, 0, "取消的正文。")), 1f) { _, _ -> }
+                if (release) waiting.release() else waiting.stop()
+                newEngine.onInitListener.onInit(TextToSpeech.SUCCESS)
+                idle()
+                assertFalse(waiting.playing.value)
+                assertTrue(newEngine.spoken.isEmpty())
+                assertFalse(waiting.resume())
+            } finally { waiting.release(); idle() }
+        }
+    }
+
+    @Test fun aFailedInitializationReportsFailureWithoutStartingTheDeferredText() {
+        val waiting = ReaderSpeech(RuntimeEnvironment.getApplication())
+        val newEngine = Shadows.shadowOf(ShadowTextToSpeech.getLastTextToSpeechInstance()) as HeldSpeechShadow
+        try {
+            waiting.start(listOf(ReaderSpeechSegment(0, 0, 0, "不可播放的正文。")), 1f) { _, _ -> }
+            newEngine.onInitListener.onInit(TextToSpeech.ERROR)
+            idle()
+            assertFalse(waiting.playing.value)
+            assertTrue(newEngine.spoken.isEmpty())
+            assertTrue(waiting.error.value.orEmpty().contains("系统朗读引擎不可用"))
+        } finally { waiting.release(); idle() }
+    }
+
     @Test fun rangeTimingMapsToOriginalChapterOffsetAcrossUtteranceChunks() {
         speech.start(listOf(ReaderSpeechSegment(2, 0, 37, "A".repeat(600))), 1f) { segment, offset -> positions += segment.chapter to offset }
         val firstId = requireNotNull(engine.currentId)

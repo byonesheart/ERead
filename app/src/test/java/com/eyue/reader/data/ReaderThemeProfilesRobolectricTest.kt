@@ -75,4 +75,29 @@ class ReaderThemeProfilesRobolectricTest {
         assertNull(restored.activeAppearanceProfileId)
         assertEquals(ChineseConversion.ORIGINAL, restored.chineseConversion)
     }
+
+    @Test fun savingAnEditedThemeUpdatesOnlyThatProfileAndKeepsItsIdentityAndName() {
+        val first = ReaderSettings(fontSize = 20f).saveAppearanceProfile()
+        val both = first.copy(fontSize = 24f).saveAppearanceProfile()
+        val profile = both.appearanceProfiles.first()
+        val edited = both.copy(fontSize = 30f, brightness = .6f).saveAppearanceProfile(profile.id)
+        assertEquals(2, edited.appearanceProfiles.size)
+        assertEquals(profile.id, edited.activeAppearanceProfileId)
+        assertEquals(profile.name, edited.appearanceProfiles.first().name)
+        assertEquals(30f, edited.appearanceProfiles.first().appearance.fontSize)
+        assertEquals(.6f, edited.appearanceProfiles.first().appearance.brightness)
+        assertEquals(both.appearanceProfiles.last(), edited.appearanceProfiles.last())
+        assertSame(edited, edited.saveAppearanceProfile("deleted-profile"))
+    }
+
+    @Test fun deletingTheActiveThemeKeepsItsCurrentAppearanceAndLeavesOtherProfilesUntouched() {
+        val first = ReaderSettings(fontSize = 20f).saveAppearanceProfile()
+        val both = first.copy(fontSize = 24f).saveAppearanceProfile()
+        val removed = both.removeAppearanceProfile(both.activeAppearanceProfileId!!)
+        assertNull(removed.activeAppearanceProfileId)
+        assertEquals(both.appearanceSnapshot(), removed.appearanceSnapshot())
+        assertEquals(listOf(first.appearanceProfiles.single()), removed.appearanceProfiles)
+        val removedInactive = both.removeAppearanceProfile(first.activeAppearanceProfileId!!)
+        assertEquals(both.activeAppearanceProfileId, removedInactive.activeAppearanceProfileId)
+    }
 }

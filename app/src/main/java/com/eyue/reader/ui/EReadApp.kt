@@ -287,7 +287,9 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
                 showNotes = false
             })
         }
-        if (vm.pendingCloudRestore != null) CloudRestoreDialog(vm.cloudRestoreConflicts, vm.meteredNetwork, vm.cloudBusy,
+        if (vm.pendingCloudUpload != null) CloudRestoreDialog(vm.cloudUploadConflicts, vm.meteredNetwork, vm.cloudBusy,
+            vm::cancelCloudUploadConflict, vm::resolveCloudUploadSelections, uploading = true)
+        else if (vm.pendingCloudRestore != null) CloudRestoreDialog(vm.cloudRestoreConflicts, vm.meteredNetwork, vm.cloudBusy,
             vm::cancelCloudRestore, vm::resolveCloudRestoreSelections)
         if (showChapterRules) {
             ChapterRulesDialog(state.settings.chapterRules, state.settings.activeChapterRuleId,

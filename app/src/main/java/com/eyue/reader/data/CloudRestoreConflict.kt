@@ -10,17 +10,25 @@ data class CloudRestoreSelection(val keepLocalIds: Set<String>, val keepRemote: 
 internal fun cloudRestoreConflicts(state: LibraryState, incoming: List<CloudBookInfo>,
     matches: Map<Pair<String, String>, CloudBookMatch> = emptyMap()): List<CloudRestoreConflict> =
     incoming.mapNotNull { info ->
-        val candidates = sameTitleLocalBooks(state, info.book)
-        if (candidates.any { matches[it.id to info.book.id] == CloudBookMatch.SAME }) null
-        else candidates.firstOrNull { matches[it.id to info.book.id] != CloudBookMatch.DIFFERENT }
+        val candidates = sameTitleLocalBooks(state, info.book, matches)
+        if (candidates.any { cloudRestoreBookMatch(it, info.book, matches) == CloudBookMatch.SAME }) null
+        else candidates.firstOrNull { cloudRestoreBookMatch(it, info.book, matches) != CloudBookMatch.DIFFERENT }
             ?.let { CloudRestoreConflict(it, info.book, candidates) }
     }.distinctBy { it.remote.id }
 
-internal fun sameTitleLocalBooks(state: LibraryState, remote: Book): List<Book> =
+internal fun sameTitleLocalBooks(state: LibraryState, remote: Book,
+    matches: Map<Pair<String, String>, CloudBookMatch> = emptyMap()): List<Book> =
     if (state.books.any { !it.cloudOnly && it.id == remote.id }) emptyList() else state.books.filter { local ->
-    !local.cloudOnly && local.id != remote.id && local.mode == remote.mode &&
-        local.title.trim().equals(remote.title.trim(), ignoreCase = true)
+    !local.cloudOnly && local.id != remote.id &&
+        (local.mode == remote.mode && local.title.trim().equals(remote.title.trim(), ignoreCase = true) ||
+            !local.sourceFileName.isNullOrBlank() && local.sourceFileName == remote.sourceFileName ||
+            (local.id to remote.id) in matches)
 }
+
+internal fun cloudRestoreBookMatch(local: Book, remote: Book,
+    matches: Map<Pair<String, String>, CloudBookMatch>): CloudBookMatch =
+    cloudBookSourceMatch(local, remote).takeIf { it == CloudBookMatch.SAME }
+        ?: matches[local.id to remote.id] ?: CloudBookMatch.UNKNOWN
 
 /** Apply the user decision only after any required cloud updates have completed. */
 internal fun resolveCloudRestoreInformation(state: LibraryState, incoming: List<CloudBookInfo>,
@@ -54,19 +62,21 @@ internal fun normalizedCloudRestoreSelections(conflicts: List<CloudRestoreConfli
 }
 
 internal fun cloudRestoreSelectionsForState(state: LibraryState, incoming: List<CloudBookInfo>,
-    selections: Map<String, CloudRestoreSelection>, matches: Map<Pair<String, String>, CloudBookMatch>): Map<String, CloudRestoreSelection> {
+    selections: Map<String, CloudRestoreSelection>, matches: Map<Pair<String, String>, CloudBookMatch>,
+    protectedLocalIds: Set<String> = emptySet()): Map<String, CloudRestoreSelection> {
     val automatic = state.books.filter { !it.cloudOnly && incoming.any { remote ->
-        remote.book.id == it.id || matches[it.id to remote.book.id] == CloudBookMatch.SAME
+        remote.book.id == it.id || cloudRestoreBookMatch(it, remote.book, matches) == CloudBookMatch.SAME
     } }.map { it.id }.toSet()
-    return normalizedCloudRestoreSelections(cloudRestoreConflicts(state, incoming, matches), selections, automatic)
+    return normalizedCloudRestoreSelections(cloudRestoreConflicts(state, incoming, matches), selections, automatic + protectedLocalIds)
 }
 
 internal fun resolveCloudRestoreSelectionsInformation(state: LibraryState, incoming: List<CloudBookInfo>,
-    selections: Map<String, CloudRestoreSelection>, matches: Map<Pair<String, String>, CloudBookMatch> = emptyMap()): LibraryState {
+    selections: Map<String, CloudRestoreSelection>, matches: Map<Pair<String, String>, CloudBookMatch> = emptyMap(),
+    protectedLocalIds: Set<String> = emptySet()): LibraryState {
     val conflicts = cloudRestoreConflicts(state, incoming, matches)
-    val resolved = cloudRestoreSelectionsForState(state, incoming, selections, matches)
-    val sameBooks = incoming.filter { info -> sameTitleLocalBooks(state, info.book).any {
-        matches[it.id to info.book.id] == CloudBookMatch.SAME } }.map { it.book.id }.toSet()
+    val resolved = cloudRestoreSelectionsForState(state, incoming, selections, matches, protectedLocalIds)
+    val sameBooks = incoming.filter { info -> sameTitleLocalBooks(state, info.book, matches).any {
+        cloudRestoreBookMatch(it, info.book, matches) == CloudBookMatch.SAME } }.map { it.book.id }.toSet()
     val discarded = conflicts.flatMap { conflict ->
         val selection = resolved.getValue(conflict.remote.id)
         conflict.locals.filterNot { it.id in selection.keepLocalIds }.map { it.id } +

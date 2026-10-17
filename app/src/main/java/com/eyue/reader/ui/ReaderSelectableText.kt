@@ -5,6 +5,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -65,7 +66,8 @@ internal fun ReaderSelectableText(
     paragraphSpacing: Float = ReaderParagraphGapEm,
     onRole: ((ReaderSelectedPassage) -> Unit)? = null,
     chineseConverter: ChineseTextConverter? = null,
-    sourceContext: String? = null
+    sourceContext: String? = null,
+    onSelectionActive: (Boolean) -> Unit = {}
 ) {
     var value by remember(chapter, pageStart, text.text) { mutableStateOf(TextFieldValue(text)) }
     var toolbarVisible by remember(chapter, pageStart) { mutableStateOf(false) }
@@ -78,6 +80,7 @@ internal fun ReaderSelectableText(
     val latestEdit by rememberUpdatedState(onEdit)
     val latestRole by rememberUpdatedState(onRole)
     val latestMenuEnabled by rememberUpdatedState(selectionMenuEnabled)
+    val latestSelectionActive by rememberUpdatedState(onSelectionActive)
     var textLayout by remember(chapter, pageStart, text.text) { mutableStateOf<TextLayoutResult?>(null) }
     var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val pointerConfiguration = LocalViewConfiguration.current
@@ -91,6 +94,10 @@ internal fun ReaderSelectableText(
                 .also { previous = input to it }
         }
     }
+    LaunchedEffect(value.selection.collapsed, selectionMenuEnabled) {
+        latestSelectionActive(!value.selection.collapsed && selectionMenuEnabled)
+    }
+    DisposableEffect(Unit) { onDispose { latestSelectionActive(false) } }
     LaunchedEffect(selectionReset) {
         toolbarVisible = false
         if (!value.selection.collapsed) {

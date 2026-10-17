@@ -57,7 +57,9 @@ data class Book(
     val cloudOnly: Boolean = false,
     val cloudBackupAt: Long = 0,
     val hasTextEdits: Boolean = false,
-    val voiceRoles: List<BookVoiceRole> = emptyList()
+    val voiceRoles: List<BookVoiceRole> = emptyList(),
+    val sourceFileName: String? = null,
+    val sourceFileBytes: Long? = null
 )
 
 data class Annotation(

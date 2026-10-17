@@ -24,6 +24,35 @@ class CloudRestoreSelectionsRobolectricTest {
     private val remote = first.copy(id = "remote", format = BookFormat.MOBI)
     private val conflict = CloudRestoreConflict(first, remote, listOf(first, second))
 
+    @Test fun uploadRetainingBothStillRequiresMeteredConsentAndShowsOriginalFileIdentity() {
+        val local = first.copy(sourceFileName = "本地文件.txt", sourceFileBytes = 1024)
+        val cloud = remote.copy(sourceFileName = "云端文件.mobi", sourceFileBytes = 2048)
+        var saved: Map<String, CloudRestoreSelection>? = null
+        var allowed = false
+        compose.setContent { MaterialTheme { CloudRestoreDialog(listOf(CloudRestoreConflict(local, cloud)), true, false,
+            {}, { choices, consent -> saved = choices; allowed = consent }, uploading = true) } }
+        compose.onNodeWithText("确认上传").assertIsDisplayed()
+        compose.onNodeWithText("确认还原").assertDoesNotExist()
+        compose.onNodeWithText("本地文件.txt").assertIsDisplayed()
+        compose.onNodeWithText("云端文件.mobi").assertIsDisplayed()
+        compose.onNodeWithTag("cloud_restore_confirm").assertIsNotEnabled()
+        compose.onNodeWithTag("cloud_restore_metered").performClick()
+        compose.onNodeWithTag("cloud_restore_confirm").assertIsEnabled().performClick()
+        compose.runOnIdle {
+            assertTrue(allowed)
+            assertEquals(CloudRestoreSelection(setOf(local.id), true), saved?.get(cloud.id))
+        }
+    }
+
+    @Test fun uploadDecisionCannotBeSubmittedTwiceWhileTheCloudOperationRuns() {
+        var calls = 0
+        compose.setContent { MaterialTheme { CloudRestoreDialog(listOf(conflict), false, true, {}, { _, _ -> calls++ }, uploading = true) } }
+        compose.onNodeWithTag("cloud_restore_confirm").assertIsNotEnabled()
+        compose.onNodeWithTag("cloud_restore_local_remote_first").assertIsNotEnabled()
+        compose.onNodeWithText("取消").assertIsNotEnabled()
+        compose.runOnIdle { assertEquals(0, calls) }
+    }
+
     @Test fun multipleCandidatesCanBeCheckedAsASubsetWithoutRequiringMeteredCloudUpdates() {
         var saved: Map<String, CloudRestoreSelection>? = null
         compose.setContent { MaterialTheme { CloudRestoreDialog(listOf(conflict), true, false, {}, { choices, _ -> saved = choices }) } }

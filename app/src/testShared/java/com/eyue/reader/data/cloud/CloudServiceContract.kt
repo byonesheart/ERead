@@ -102,6 +102,43 @@ abstract class CloudServiceContract {
         assertEquals(book.title, service.download(listed).book.title)
     }
 
+    @Test fun originalFilenameAndBytesSurviveCloudRestoreAndMetadataOnlyIdentityRefresh() = runBlocking {
+        val (book, state) = novel()
+        val first = service.upload(state, book)
+        val uploads = transport.binaryUploads
+        val identified = service.list().single().book
+        assertEquals("original.mobi", identified.sourceFileName)
+        assertEquals(File(book.sourcePath!!).length(), identified.sourceFileBytes)
+        val renamed = book.copy(sourceFileName = "更正后的原始名字.mobi", progress = .75f)
+        val refreshed = service.upload(state.copy(books = listOf(renamed)), renamed)
+        assertEquals(first.revision, refreshed.revision)
+        assertEquals(uploads, transport.binaryUploads)
+        val restored = service.download(service.list().single()).book
+        assertEquals(renamed.sourceFileName, restored.sourceFileName)
+        assertEquals(File(book.sourcePath!!).length(), restored.sourceFileBytes)
+        assertEquals(.75f, restored.progress)
+    }
+
+    @Test fun reimportedSameSourceUpdatesTheExistingCloudIdAndKeepsItsLocalNoteIdentity() = runBlocking {
+        val (original, state) = novel()
+        val first = service.upload(state, original)
+        val reimported = original.copy(id = "reimported-book", progress = .8f)
+        val note = Annotation(bookId = reimported.id, chapterIndex = 0, pageIndex = 0, note = "重新导入后的新笔记")
+        val localState = state.copy(books = listOf(reimported), annotations = listOf(note))
+        val catalog = service.list()
+        val matches = service.restoreBookMatches(localState, catalog)
+        val targetId = cloudUploadTargetId(reimported, catalog, matches)
+        val (snapshot, uploadBook) = cloudUploadSnapshot(localState, reimported, targetId)
+        service.upload(snapshot, uploadBook)
+        val updated = service.list().single()
+        assertEquals(first.book.id, updated.book.id)
+        assertEquals(.8f, updated.book.progress)
+        assertEquals(first.book.id, updated.annotations.single().bookId)
+        assertEquals(note.note, service.download(updated).annotations.single().note)
+        assertEquals(reimported.id, localState.annotations.single().bookId)
+        assertEquals(reimported.id, localState.books.single().id)
+    }
+
     private fun novel(): Pair<Book, LibraryState> {
         val source = File(root, "original.mobi").apply { writeText("mock original bytes") }
         val text = File(root, "chapter.txt").apply { writeText("第一章\n正文的第一段。\n正文的第二段。") }

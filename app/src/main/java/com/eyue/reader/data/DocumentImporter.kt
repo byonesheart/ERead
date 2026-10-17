@@ -86,13 +86,14 @@ class DocumentImporter(private val context: Context) {
                         report("读取源文件", item.name)
                         val reference = reference(item, directory, "source.${format.name.lowercase()}", retainFallback = format == BookFormat.PDF)
                         val imported = withLocalDocument(context, reference.path) { source ->
-                            when (format) {
+                            val parsed = when (format) {
                                 BookFormat.TXT -> importText(source, directory, id, item.name.substringBeforeLast('.'), LibraryMode.NOVEL, rule)
                                 BookFormat.EPUB -> importEpub(source, directory, id, item.name.substringBeforeLast('.'), mode)
                                 BookFormat.MOBI -> importMobi(source, directory, id, item.name.substringBeforeLast('.'), rule, { work.ensureActive() })
                                 BookFormat.PDF -> importPdf(source, reference.path, directory, id, item.name.substringBeforeLast('.'), mode)
                                 BookFormat.IMAGES -> error("图片应合并导入")
                             }
+                            parsed.copy(sourceFileName = item.name, sourceFileBytes = source.length())
                         }
                         imported.copy(sourcePath = documentFile(reference.path)?.absolutePath,
                             sourceUri = item.permissionUri.toString(), sourceLinked = reference.linked)
@@ -182,7 +183,7 @@ class DocumentImporter(private val context: Context) {
             report("漫画整理完成", root.name, completed, discovered, 1f)
             return Book(id = id, title = title, format = BookFormat.IMAGES, mode = LibraryMode.COMIC,
                 coverPath = cover, chapters = chapters, sourcePath = documentFile(root.uri.toString())?.absolutePath,
-                sourceUri = root.permissionUri.toString(), sourceLinked = linkedRoot)
+                sourceUri = root.permissionUri.toString(), sourceLinked = linkedRoot, sourceFileName = root.name)
         } catch (error: Throwable) {
             directory.deleteRecursively()
             throw error
@@ -637,7 +638,9 @@ class DocumentImporter(private val context: Context) {
                 format = BookFormat.IMAGES, mode = mode, coverPath = cover(pages.first(), directory),
                 chapters = listOf(Chapter(title = "正文", pages = pages)),
                 sourcePath = documentFile(references[linkedIndex].path)?.absolutePath,
-                sourceUri = ordered[linkedIndex].toString(), sourceLinked = references.any { it.linked })
+                sourceUri = ordered[linkedIndex].toString(), sourceLinked = references.any { it.linked },
+                sourceFileName = ordered.singleOrNull()?.let(::displayName),
+                sourceFileBytes = if (ordered.size == 1) documentSourceFileInfo(context, references.single().path)?.bytes else null)
         } catch (error: Throwable) {
             directory.deleteRecursively()
             throw error

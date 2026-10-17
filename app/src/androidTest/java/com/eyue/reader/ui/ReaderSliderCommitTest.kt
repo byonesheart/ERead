@@ -98,7 +98,7 @@ class ReaderSliderCommitTest {
     @Test fun compactSettingsExposeFontControlsAndImageImportWithoutOpeningAnotherPanel() {
         var imageImports = 0
         compose.setContent {
-            MaterialTheme { ReaderCompactSettings(settings, false, ::commit, {}, { imageImports++ }, {}) }
+            MaterialTheme { ReaderCompactSettings(settings, false, ::commit, {}, { imageImports++ }) }
         }
         compose.onNodeWithText("宋体").performScrollTo().performClick()
         compose.runOnIdle { assertEquals("系统宋体", settings.fontName); assertEquals(1, commits) }
@@ -131,7 +131,7 @@ class ReaderSliderCommitTest {
 
     private fun compactSettings() {
         compose.setContent {
-            MaterialTheme { ReaderCompactSettings(settings, false, ::commit, {}, {}, {}) }
+            MaterialTheme { ReaderCompactSettings(settings, false, ::commit, {}, {}) }
         }
     }
 

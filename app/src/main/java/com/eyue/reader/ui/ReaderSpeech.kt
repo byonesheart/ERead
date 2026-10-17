@@ -44,6 +44,7 @@ internal class ReaderSpeech(context: Context) : ReaderSpeechController {
     override val error = errorState.asStateFlow()
     private var ready = false
     private var initializationError: String? = null
+    private var pendingStart: (() -> Unit)? = null
     private var disposed = false
     private var paused = false
     private var generation = 0
@@ -67,6 +68,16 @@ internal class ReaderSpeech(context: Context) : ReaderSpeechController {
                         if (!ready) initializationError = "系统缺少中文语音，请先在系统文字转语音设置中安装。"
                     } else {
                         initializationError = "系统朗读引擎不可用，请检查系统文字转语音设置。"
+                    }
+                    pendingStart?.let { start ->
+                        if (!ready) {
+                            pendingStart = null
+                            errorState.value = initializationError
+                            playingState.value = false
+                        } else if (!paused) {
+                            pendingStart = null
+                            start()
+                        }
                     }
                 }
             }
@@ -115,7 +126,11 @@ internal class ReaderSpeech(context: Context) : ReaderSpeechController {
     ) {
         stop()
         if (!ready) {
-            errorState.value = initializationError ?: "系统语音正在初始化，请稍后再试。"
+            if (initializationError != null) { errorState.value = initializationError; return }
+            setSpeed(speed)
+            errorState.value = null
+            pendingStart = { start(source, this.speed, onLocation) }
+            playingState.value = true
             return
         }
         segments = source.filter { it.text.isNotBlank() }
@@ -171,6 +186,11 @@ internal class ReaderSpeech(context: Context) : ReaderSpeechController {
     override fun pause(): Boolean {
         if (paused) return true
         if (!playingState.value) return false
+        if (pendingStart != null) {
+            paused = true
+            playingState.value = false
+            return true
+        }
         generation++
         paused = true
         playingState.value = false
@@ -186,6 +206,10 @@ internal class ReaderSpeech(context: Context) : ReaderSpeechController {
         if (!paused || disposed) return false
         paused = false
         playingState.value = true
+        pendingStart?.let { start ->
+            if (ready) { pendingStart = null; start() }
+            return playingState.value
+        }
         speakNext()
         return playingState.value
     }
@@ -195,7 +219,7 @@ internal class ReaderSpeech(context: Context) : ReaderSpeechController {
         val changed = this.speed != rate
         this.speed = rate
         engine?.setSpeechRate(rate)
-        if (changed && playingState.value) {
+        if (changed && playingState.value && pendingStart == null) {
             generation++
             engine?.stop()
             segmentOffset = spokenOffset
@@ -209,6 +233,7 @@ internal class ReaderSpeech(context: Context) : ReaderSpeechController {
     override fun stop() {
         generation++
         paused = false
+        pendingStart = null
         playingState.value = false
         engine?.stop()
         segments = emptyList()

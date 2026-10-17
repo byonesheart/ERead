@@ -20,26 +20,45 @@ import com.eyue.reader.data.PageTurnStyle
 import com.eyue.reader.data.ReaderBackground
 import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.ReadingMode
+import com.eyue.reader.data.saveAppearanceProfile
 import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
 internal fun ReaderCompactSettings(
     settings: ReaderSettings, raster: Boolean, onSettings: (ReaderSettings) -> Unit,
-    onImportFont: () -> Unit, onImportBackground: () -> Unit, onMore: () -> Unit,
-    onFonts: () -> Unit = onImportFont, onResetDefaults: () -> Unit = {}
+    onImportFont: () -> Unit, onImportBackground: () -> Unit,
+    onFonts: () -> Unit = onImportFont
 ) {
-    var tab by remember { mutableIntStateOf(0) }
+    var editingProfileId by remember { mutableStateOf<String?>(null) }
+    val editingProfile = settings.appearanceProfiles.firstOrNull { it.id == editingProfileId }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("界面", "设置").forEachIndexed { index, label ->
-                FilterChip(tab == index, { tab = index }, { Text(label, fontSize = 13.sp) },
-                    Modifier.height(34.dp).testTag(if (index == 0) "reader_settings_tab_interface" else "reader_settings_tab_preferences"))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(if (editingProfile == null) "界面" else "界面 · ${editingProfile.name}", Modifier.weight(1f).testTag("reader_interface_title"),
+                style = MaterialTheme.typography.titleSmall)
+            if (editingProfileId != null) TextButton(onClick = { editingProfileId = null },
+                contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("reader_finish_theme_edit")) { Text("退出编辑", fontSize = 12.sp) }
+            TextButton(onClick = {
+                onSettings(settings.saveAppearanceProfile(editingProfileId))
+                editingProfileId = null
+            }, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("reader_save_theme")) {
+                Text("保存", fontSize = 12.sp)
             }
         }
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            if (tab == 0) ReaderInterfaceSettings(settings, raster, onSettings, onImportBackground, onFonts)
-            else ReaderPreferenceSettings(settings, onSettings, onResetDefaults)
+            ReaderThemeProfiles(settings, onSettings, editingProfileId, { editingProfileId = it })
+            ReaderInterfaceSettings(settings, raster, onSettings, onImportBackground, onFonts)
+        }
+    }
+}
+
+@Composable
+internal fun ReaderPreferencesPanel(settings: ReaderSettings, onSettings: (ReaderSettings) -> Unit,
+    onResetDefaults: () -> Unit = {}) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+        Text("设置", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = 12.dp))
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+            ReaderPreferenceSettings(settings, onSettings, onResetDefaults)
         }
     }
 }
@@ -48,7 +67,6 @@ internal fun ReaderCompactSettings(
 @Composable
 private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, onSettings: (ReaderSettings) -> Unit,
     onImportBackground: () -> Unit, onFonts: () -> Unit) {
-    ReaderThemeProfiles(settings, onSettings)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text("背景", Modifier.width(34.dp), fontSize = 12.sp)
         FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {

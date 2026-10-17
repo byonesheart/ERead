@@ -146,7 +146,8 @@ class ReaderScreenStartupRobolectricTest {
         showReader(navigationBook(), ReadingMode.PAGED, { SilentSpeech() })
         awaitText("TOOLBAR_CHAPTER_0")
         revealToolbar()
-        compose.onNodeWithContentDescription("阅读设置").performClick()
+        compose.onNodeWithContentDescription("阅读设置").assertIsDisplayed()
+        compose.onNodeWithContentDescription("界面设置").performClick()
         val sheet = compose.onNodeWithTag("reader_settings_sheet")
         sheet.assertIsDisplayed()
         assertTrue(windowHeight > 0)
@@ -156,6 +157,41 @@ class ReaderScreenStartupRobolectricTest {
         compose.onNodeWithText("黑体").performScrollTo().performClick()
         compose.onNodeWithText("黑体").assertIsSelected()
         sheet.assertIsDisplayed()
+    }
+
+    @Test fun interfaceAndPreferencesOpenDirectlyFromSeparateToolbarActions() {
+        showReader(navigationBook(), ReadingMode.PAGED, { SilentSpeech() })
+        awaitText("TOOLBAR_CHAPTER_0")
+        revealToolbar()
+        compose.onNodeWithContentDescription("界面设置").assertIsDisplayed()
+        compose.onNodeWithContentDescription("阅读设置").performClick()
+        compose.onNodeWithText("音量键翻页").assertIsDisplayed()
+        compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
+        compose.onNodeWithTag("reader_settings_tab_interface").assertDoesNotExist()
+        compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(center.x, height * .1f)) }
+        compose.onNodeWithTag("reader_settings_sheet").assertDoesNotExist()
+        revealToolbar()
+        compose.onNodeWithContentDescription("界面设置").performClick()
+        compose.onNodeWithTag("reader_save_theme").assertIsDisplayed()
+        compose.onNodeWithText("音量键翻页").assertDoesNotExist()
+        compose.onNodeWithTag("reader_settings_tab_preferences").assertDoesNotExist()
+    }
+
+    @Test fun editingAThemeSurvivesTheMoreFontsDialogAndSavesBackToTheSameProfile() {
+        showReader(navigationBook(), ReadingMode.PAGED, { SilentSpeech() })
+        awaitText("TOOLBAR_CHAPTER_0")
+        revealToolbar()
+        compose.onNodeWithContentDescription("界面设置").performClick()
+        compose.onNodeWithTag("reader_save_theme").performClick()
+        compose.onNodeWithText("配置1", substring = false).performTouchInput { longClick() }
+        compose.onNodeWithTag("reader_more_fonts").performScrollTo().performClick()
+        compose.onNodeWithText("等宽字体", substring = false).performClick()
+        compose.onNodeWithText("完成", substring = false).performClick()
+        compose.onNodeWithText("界面 · 配置1").assertIsDisplayed()
+        compose.onNodeWithTag("reader_save_theme").performClick()
+        compose.onNodeWithText("配置2", substring = false).assertDoesNotExist()
+        compose.onNodeWithText("主题", substring = false).performScrollTo()
+        compose.onNodeWithText("配置1", substring = false).assertIsDisplayed()
     }
 
     @Test fun narrationBarAdjustsSpeedAndSyncAndCanPauseOrStopFromTheHeadphonesButton() {

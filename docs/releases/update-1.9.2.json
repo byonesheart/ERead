@@ -1,0 +1,17 @@
+{
+  "versionCode": 31,
+  "versionName": "1.9.2",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.9.2",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.9.2/ERead-1.9.2-debug.apk",
+  "mirrors": [
+    { "name": "百度网盘", "url": "https://pan.baidu.com/s/17BayhJiqACiezUgw7HiOxQ?pwd=READ", "extractionCode": "READ" },
+    { "name": "夸克网盘", "url": "https://pan.quark.cn/s/9b41ad83cda5", "extractionCode": "Bh3p" }
+  ],
+  "changelog": [
+    "阅读工具栏独立显示界面和设置，主题支持长按编辑与确认删除。",
+    "导入期间可操作其他书籍的云端备份，减少成功提示。",
+    "上传和还原统一使用原文件名及原书大小去重，无法确定的同名书可选择保留。",
+    "记笔记不中断朗读，播放中切换引擎自动继续；同步移动后可从原节点所在句首重读。",
+    "更多功能请自行体验。"
+  ]
+}

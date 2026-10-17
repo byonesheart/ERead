@@ -149,6 +149,52 @@ fun documentSourceIdentity(context: Context, pathOrUri: String): String {
     return "$pathOrUri:$size:$modified"
 }
 
+internal data class DocumentSourceFileInfo(val name: String?, val bytes: Long?, val directory: Boolean)
+
+/** Metadata only; never opens, copies or scans the book contents or a cache directory. */
+internal fun documentSourceFileInfo(context: Context, pathOrUri: String): DocumentSourceFileInfo? = runCatching {
+    documentFile(pathOrUri)?.let { file ->
+        return@runCatching if (!file.exists()) null else
+            DocumentSourceFileInfo(file.name, file.length().takeIf { file.isFile }, file.isDirectory)
+    }
+    val uri = Uri.parse(pathOrUri)
+    val tree = DocumentsContract.isTreeUri(uri) && "document" !in uri.pathSegments
+    val document = if (tree) DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri)) else uri
+    context.contentResolver.query(document, null, null, null, null)?.use { cursor ->
+        if (!cursor.moveToFirst()) return@use null
+        fun string(column: String): String? = cursor.getColumnIndex(column).takeIf { it >= 0 && !cursor.isNull(it) }
+            ?.let(cursor::getString)?.takeIf { it.isNotBlank() }
+        val directory = tree || string(DocumentsContract.Document.COLUMN_MIME_TYPE) in
+            setOf(DocumentsContract.Document.MIME_TYPE_DIR, "inode/directory", "resource/folder")
+        val bytes = if (directory) null else cursor.getColumnIndex(OpenableColumns.SIZE)
+            .takeIf { it >= 0 && !cursor.isNull(it) }?.let(cursor::getLong)?.takeIf { it >= 0 }
+        DocumentSourceFileInfo(string(OpenableColumns.DISPLAY_NAME), bytes, directory)
+    }
+}.getOrNull()
+
+/** Old entries gain source identity lazily; private parser filenames must not become original names. */
+internal fun hydrateBookSourceIdentity(context: Context, book: Book): Book {
+    if (book.cloudOnly) return book
+    val singleFile = book.format != BookFormat.IMAGES ||
+        book.chapters.asSequence().flatMap { it.pages.asSequence() }.map { it.path }.distinct().take(2).count() == 1
+    if (!singleFile) return book
+    val original = book.sourceUri?.let { documentSourceFileInfo(context, it) }
+    val privateSource = book.sourcePath?.let { documentSourceFileInfo(context, it) }
+    val name = original?.name ?: book.sourceFileName ?: privateSource?.name?.takeUnless {
+        book.sourcePath?.startsWith(File(context.filesDir, "books").absolutePath + File.separator) == true
+    }
+    if (original?.directory == true || privateSource?.directory == true)
+        return book.copy(sourceFileName = name, sourceFileBytes = null)
+    val currentBytes = if (book.sourceLinked) original?.bytes ?: privateSource?.bytes else privateSource?.bytes ?: original?.bytes
+    return book.copy(sourceFileName = name, sourceFileBytes = currentBytes ?: book.sourceFileBytes)
+}
+
+/** Exact source filename and original file size are sufficient by the user's duplicate rule. */
+internal fun cloudBookSourceMatch(local: Book, remote: Book): CloudBookMatch =
+    if (!local.sourceFileName.isNullOrBlank() && local.sourceFileName == remote.sourceFileName &&
+        local.sourceFileBytes != null && local.sourceFileBytes >= 0 && local.sourceFileBytes == remote.sourceFileBytes)
+        CloudBookMatch.SAME else CloudBookMatch.UNKNOWN
+
 internal fun documentFile(pathOrUri: String): File? {
     File(pathOrUri).takeIf { it.isAbsolute }?.let { return it }
     val uri = Uri.parse(pathOrUri)

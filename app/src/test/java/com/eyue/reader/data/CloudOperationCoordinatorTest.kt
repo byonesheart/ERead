@@ -11,6 +11,33 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CloudOperationCoordinatorTest {
+    @Test fun aliasesTakeOnlyOneTransferSlotAndLockTheirRemoteBookToo() = runBlocking<Unit> {
+        val coordinator = CloudOperationCoordinator()
+        val releases = (1..3).associateWith { CompletableDeferred<Unit>() }
+        val starts = (1..3).associateWith { CompletableDeferred<Unit>() }
+        val workers = (1..3).map { index -> launch {
+            coordinator.withBooks(listOf("local-$index", "remote-$index")) {
+                coordinator.withBook("remote-$index") {
+                    starts.getValue(index).complete(Unit)
+                    releases.getValue(index).await()
+                }
+            }
+        } }
+        try {
+            withTimeout(1_000) { starts.values.forEach { it.await() } }
+            var aliasStarted = false
+            val alias = launch { coordinator.withBook("remote-1") { aliasStarted = true } }
+            yield()
+            assertFalse(aliasStarted)
+            releases.getValue(1).complete(Unit)
+            withTimeout(1_000) { alias.join() }
+            assertTrue(aliasStarted)
+        } finally {
+            releases.values.forEach { it.complete(Unit) }
+            workers.forEach { it.join() }
+        }
+    }
+
     @Test fun exclusiveOwnerValidationDoesNotReleaseAnotherOwnersTransferSlots() = runBlocking<Unit> {
         val coordinator = CloudOperationCoordinator()
         val owner = Any()

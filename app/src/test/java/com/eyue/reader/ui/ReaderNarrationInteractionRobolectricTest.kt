@@ -21,6 +21,8 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import com.eyue.reader.data.Book
+import com.eyue.reader.data.Annotation
+import com.eyue.reader.data.AnnotationKind
 import com.eyue.reader.data.BookFormat
 import com.eyue.reader.data.Chapter
 import com.eyue.reader.data.LibraryMode
@@ -44,6 +46,8 @@ import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
 import java.io.File
 import java.time.Duration
 import java.util.UUID
@@ -60,6 +64,7 @@ class ReaderNarrationInteractionRobolectricTest {
     private val voice = ControllableSpeech()
     private val selectedVoice = mutableStateOf(voice)
     private val settings = mutableStateOf(ReaderSettings())
+    private val annotations = mutableStateOf<List<Annotation>>(emptyList())
     private val viewportHeight = mutableStateOf(640.dp)
     private data class Position(val chapter: Int, val page: Int, val offset: Int)
     private val position = AtomicReference<Position?>()
@@ -134,18 +139,76 @@ class ReaderNarrationInteractionRobolectricTest {
         compose.onNodeWithTag("reader_speech_settings").assertDoesNotExist()
     }
 
+    @Test fun shortNotePreviewKeepsNarrationPlayingAndDefersPageFollowingUntilClosed() {
+        verifyNotePreviewKeepsNarration("随手记下", dialog = false)
+    }
+
+    @Test fun longNotePreviewKeepsNarrationPlayingAndDefersPageFollowingUntilClosed() {
+        verifyNotePreviewKeepsNarration("完整记录这段话的想法，在查看长篇笔记期间仍应继续朗读。", dialog = true)
+    }
+
+    private fun verifyNotePreviewKeepsNarration(note: String, dialog: Boolean) {
+        val start = chapters[0].indexOf("quiet")
+        val item = Annotation(bookId = "", chapterIndex = 0, pageIndex = 0,
+            characterOffset = start, endOffset = start + 5, quote = "quiet", note = note, kind = AnnotationKind.NOTE)
+        showReader(ReadingMode.PAGED, follow = true, notes = listOf(item))
+        startListening()
+        closeTools()
+        tapTextWord("quiet")
+        compose.onNodeWithTag("reader_note_popup").assertIsDisplayed()
+        compose.onNodeWithText(note, substring = false).assertIsDisplayed()
+        val previous = requireNotNull(position.get())
+        val target = voice.source.first { it.chapter == 0 && it.page > previous.page }
+        emit(0, target.offset + 3)
+        assertTrue(voice.playing.value)
+        assertEquals(0, voice.pauses)
+        assertEquals(1, voice.starts)
+        assertEquals(previous.page, position.get()?.page)
+        compose.onNodeWithText(note, substring = false).assertIsDisplayed()
+        if (dialog) compose.onNodeWithText("关闭", substring = false).performClick()
+        else compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        await { position.get()?.page == target.page }
+        assertTrue(voice.playing.value)
+        assertEquals(1, voice.starts)
+    }
+
+    @Config(shadows = [NoSurfaceMagnifier::class])
+    @Test fun writingANoteKeepsSelectionAndDraftWhileNarrationAdvancesAcrossPages() {
+        showReader(ReadingMode.PAGED, follow = true)
+        startListening()
+        closeTools()
+        tapTextWord("quiet", longPress = true)
+        compose.onNodeWithTag("reader_action_note").assertIsDisplayed()
+        val previous = requireNotNull(position.get())
+        val target = voice.source.first { it.chapter == 0 && it.page > previous.page }
+        emit(0, target.offset + 3)
+        compose.onNodeWithTag("reader_action_note").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("reader_note_input").performTextInput("朗读继续时写下的笔记")
+        emit(0, target.offset + 8)
+        compose.onNodeWithTag("reader_note_input").assertTextContains("朗读继续时写下的笔记")
+        assertTrue(voice.playing.value)
+        assertEquals(0, voice.pauses)
+        assertEquals(previous.page, position.get()?.page)
+        compose.onNodeWithTag("reader_action_save").performScrollTo().performClick()
+        await { position.get()?.page == target.page }
+        assertEquals("朗读继续时写下的笔记", annotations.value.single().note)
+        assertTrue(voice.playing.value)
+        assertEquals(1, voice.starts)
+    }
+
     @Test fun changingEngineKeepsTheSpeechAnchorAndNewEngineOwnsNavigation() {
         showReader(ReadingMode.PAGED, follow = false)
         startListening()
         val offset = paragraphOffset(0, 1) + 12
         emit(0, offset)
+        val audioSession = ReaderAudioService.owner
         val nextVoice = ControllableSpeech()
         compose.runOnUiThread { selectedVoice.value = nextVoice }
         drain()
         assertTrue(voice.released)
         assertFalse(voice.playing.value)
-        compose.onNodeWithContentDescription("继续朗读").performClick()
         await { nextVoice.starts == 1 && nextVoice.playing.value }
+        assertTrue("The engine switch must retain the existing media session", audioSession === ReaderAudioService.owner)
         assertEquals(offset, nextVoice.source.first().offset)
         compose.onNodeWithText("同步").performClick()
         closeTools()
@@ -158,6 +221,43 @@ class ReaderNarrationInteractionRobolectricTest {
         await { nextVoice.starts == 2 && nextVoice.playing.value }
         assertEquals(1, voice.starts)
         assertEquals(requireNotNull(position.get()).offset, nextVoice.source.first().offset)
+    }
+
+    @Test fun changingEngineWhilePausedKeepsItPausedUntilExplicitResumeAtTheOriginalAnchor() {
+        showReader(ReadingMode.PAGED, follow = false)
+        startListening()
+        val offset = paragraphOffset(0, 1) + 12
+        emit(0, offset)
+        compose.onNodeWithContentDescription("暂停朗读").performClick()
+        val nextVoice = ControllableSpeech()
+        compose.runOnUiThread { selectedVoice.value = nextVoice }
+        drain()
+        advanceBy(1_200)
+        assertTrue(voice.released)
+        assertFalse(nextVoice.playing.value)
+        assertEquals(0, nextVoice.starts)
+        compose.runOnUiThread { requireNotNull(audio).get().callbacks.onPlay() }
+        await { nextVoice.starts == 1 && nextVoice.playing.value }
+        assertEquals(offset, nextVoice.source.first().offset)
+    }
+
+    @Test fun changingEngineBeforeServiceStartReplacesThePendingAudioWithoutStartingTheOldEngine() {
+        showReader(ReadingMode.PAGED, follow = false)
+        autoDispatchAudio = false
+        compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(width / 2f, height * .18f)) }
+        compose.onNodeWithContentDescription("朗读").performClick()
+        await { ReaderAudioService.owner?.pending != null }
+        val session = ReaderAudioService.owner
+        val nextVoice = ControllableSpeech()
+        compose.runOnUiThread { selectedVoice.value = nextVoice }
+        await { voice.released && ReaderAudioService.owner?.pending != null }
+        assertEquals(0, voice.starts)
+        assertEquals(0, nextVoice.starts)
+        assertTrue(session === ReaderAudioService.owner)
+        autoDispatchAudio = true
+        await { nextVoice.starts == 1 && nextVoice.playing.value }
+        assertEquals(0, voice.starts)
+        assertQueueStartsAtCurrentPage(nextVoice)
     }
 
     @Test fun independentPromptCanConfirmOrReturnAndDisappearsAfterManualMovementSettles() {
@@ -283,7 +383,7 @@ class ReaderNarrationInteractionRobolectricTest {
         assertEquals(offset, position.get()?.offset)
     }
 
-    @Test fun returningToTheSameVisibleParagraphResumesTheOriginalNodeAfterManualNavigation() {
+    @Test fun returningToTheVisibleSpokenNodeAfterManualNavigationRestartsItsSentence() {
         voice.resumable = true
         showReader(ReadingMode.PAGED, follow = true)
         startListening()
@@ -296,12 +396,32 @@ class ReaderNarrationInteractionRobolectricTest {
         await { position.get()?.let { it.chapter == 0 && it.offset == 0 } == true }
         compose.onNodeWithContentDescription("继续朗读").performClick()
         await { voice.playing.value }
-        assertEquals("Same paragraph still contains the paused node; do not rebuild the queue", 1, voice.starts)
-        assertEquals(1, voice.resumes)
-        assertEquals(offset, position.get()?.offset)
+        val sentenceStart = chapters[0].indexOf("The quiet")
+        assertEquals("The visible node must restart at its sentence, not the paused word", 2, voice.starts)
+        assertEquals(0, voice.resumes)
+        assertEquals(sentenceStart, voice.source.first().offset)
+        assertEquals(sentenceStart, position.get()?.offset)
     }
 
-    @Test fun aSmallDragWithinTheSamePageContinuesThePausedNodeAfterOneSecond() {
+    @Test fun aVisibleSpokenNodeInAnotherParagraphOfTheSamePageRestartsItsOwnSentence() {
+        voice.resumable = true
+        showReader(ReadingMode.PAGED, follow = true)
+        startListening()
+        val offset = paragraphOffset(0, 1) + 12
+        emit(0, offset)
+        assertEquals("The second paragraph must still be on the first visible page", 0, position.get()?.page)
+        compose.onNodeWithContentDescription("暂停朗读").performClick()
+        compose.onNodeWithContentDescription("下一章").performClick()
+        await { position.get()?.chapter == 1 }
+        compose.onNodeWithContentDescription("上一章").performClick()
+        await { position.get()?.let { it.chapter == 0 && it.offset == 0 } == true }
+        compose.onNodeWithContentDescription("继续朗读").performClick()
+        await { voice.starts == 2 && voice.playing.value }
+        assertEquals(0, voice.resumes)
+        assertEquals(chapters[0].indexOf("The quiet", paragraphOffset(0, 1)), voice.source.first().offset)
+    }
+
+    @Test fun aSmallDragWithinTheSamePageRestartsTheSpokenSentenceAfterOneSecond() {
         voice.resumable = true
         showReader(ReadingMode.PAGED, follow = true)
         startListening()
@@ -315,14 +435,18 @@ class ReaderNarrationInteractionRobolectricTest {
             up()
         }
         drain()
-        advanceBy(1_200)
-        await { voice.playing.value }
+        advanceBy(600)
+        assertFalse(voice.playing.value)
         assertEquals(1, voice.starts)
-        assertEquals(1, voice.resumes)
-        assertEquals(12, position.get()?.offset)
+        advanceBy(600)
+        await { voice.playing.value }
+        assertEquals(2, voice.starts)
+        assertEquals(0, voice.resumes)
+        assertEquals(chapters[0].indexOf("The quiet"), voice.source.first().offset)
+        assertEquals(chapters[0].indexOf("The quiet"), position.get()?.offset)
     }
 
-    @Test fun scrollingWithinTheSameParagraphRetainsTheVisibleSpokenNode() {
+    @Test fun scrollingWithinTheSameParagraphRestartsTheVisibleSpokenSentence() {
         voice.resumable = true
         showReader(ReadingMode.SCROLL, follow = true)
         startListening()
@@ -338,8 +462,9 @@ class ReaderNarrationInteractionRobolectricTest {
         drain()
         advanceBy(1_200)
         await { voice.playing.value }
-        assertEquals("The visible paused node is still in the viewport's first paragraph", 1, voice.starts)
-        assertEquals(1, voice.resumes)
+        assertEquals("The visible paused node restarts its sentence after the scroll settles", 2, voice.starts)
+        assertEquals(0, voice.resumes)
+        assertEquals(chapters[0].indexOf("A reader"), voice.source.first().offset)
         emit(0, 75)
         assertTrue(voice.playing.value)
     }
@@ -443,13 +568,14 @@ class ReaderNarrationInteractionRobolectricTest {
     }
 
     private fun showReader(mode: ReadingMode, follow: Boolean, onSpeechSettings: () -> Unit = {}, startChapter: Int = 0,
-        chapterCount: Int = 2) {
+        chapterCount: Int = 2, notes: List<Annotation> = emptyList()) {
         val book = Book(title = "朗读交互回归", format = BookFormat.MOBI, mode = LibraryMode.NOVEL,
             chapterIndex = startChapter,
             chapters = chapters.take(chapterCount).mapIndexed { index, text ->
                 Chapter(title = "第 ${index + 1} 章", characterCount = text.length,
                     textPath = File(root, "$index.txt").apply { writeText(text) }.absolutePath)
             })
+        annotations.value = notes.map { it.copy(bookId = book.id) }
         settings.value = ReaderSettings(readingMode = mode, ttsFollowPage = follow, fontSize = 24f, lineHeight = 1.4f,
             showTime = false, showBattery = false)
         compose.setContent {
@@ -458,9 +584,10 @@ class ReaderNarrationInteractionRobolectricTest {
             CompositionLocalProvider(LocalDensity provides Density(1f, 1f), LocalReaderSpeechFactory provides factory) {
                 MaterialTheme {
                     Box(Modifier.width(360.dp).height(viewportHeight.value)) {
-                        ReaderScreen(book, settings.value, emptyList(), {},
+                        ReaderScreen(book, settings.value, annotations.value, {},
                             { chapter, page, offset, _, _ -> position.set(Position(chapter, page, offset)) },
-                            { settings.value = it }, {}, {}, {}, emptyFlow(), onSpeechSettings = onSpeechSettings)
+                            { settings.value = it }, { annotations.value = annotations.value + it },
+                            { id -> annotations.value = annotations.value.filterNot { it.id == id } }, {}, emptyFlow(), onSpeechSettings = onSpeechSettings)
                     }
                 }
             }
@@ -495,6 +622,17 @@ class ReaderNarrationInteractionRobolectricTest {
         drain()
     }
 
+    private fun tapTextWord(word: String, longPress: Boolean = false) {
+        val results = mutableListOf<TextLayoutResult>()
+        val text = compose.onNodeWithContentDescription("阅读正文")
+        text.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        val layout = results.single()
+        val index = layout.layoutInput.text.text.indexOf(word).also { require(it >= 0) }
+        val point = layout.getBoundingBox(index + 1).center
+        text.performTouchInput { if (longPress) longClick(point) else click(point) }
+        drain()
+    }
+
     private fun paragraphOffset(chapter: Int, paragraph: Int): Int =
         chapters[chapter].indexOf("CH${chapter}_P${paragraph.toString().padStart(2, '0')}.").also { require(it >= 0) }
 
@@ -515,10 +653,10 @@ class ReaderNarrationInteractionRobolectricTest {
         assertEquals((paragraphEnd - pageStart).coerceIn(0, rendered.length), highlighted.single().end)
     }
 
-    private fun assertQueueStartsAtCurrentPage() {
+    private fun assertQueueStartsAtCurrentPage(controller: ControllableSpeech = voice) {
         val actual = requireNotNull(position.get())
-        assertEquals(actual.chapter, voice.source.first().chapter)
-        assertEquals(actual.offset, voice.source.first().offset)
+        assertEquals(actual.chapter, controller.source.first().chapter)
+        assertEquals(actual.offset, controller.source.first().offset)
     }
 
     /** Robolectric does not deliver startForegroundService intents automatically. */
@@ -595,5 +733,11 @@ class ReaderNarrationInteractionRobolectricTest {
         }
         override fun stop() { playing.value = false }
         override fun release() { stop(); released = true }
+    }
+
+    /** Android 28's magnifier needs a real Surface; selection itself still uses the real long press. */
+    @Implements(android.widget.Magnifier::class)
+    class NoSurfaceMagnifier {
+        @Implementation fun show(sourceCenterX: Float, sourceCenterY: Float) = Unit
     }
 }

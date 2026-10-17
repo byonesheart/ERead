@@ -8,21 +8,25 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.eyue.reader.data.CloudRestoreConflict
 import com.eyue.reader.data.CloudRestoreSelection
+import com.eyue.reader.data.Book
 
 @Composable internal fun CloudRestoreDialog(conflicts: List<CloudRestoreConflict>, metered: Boolean, busy: Boolean,
-    onCancel: () -> Unit, onRestore: (Map<String, CloudRestoreSelection>, Boolean) -> Unit) {
-    var choices by remember(conflicts.map { it.remote.id to it.locals.map { local -> local.id } }) {
+    onCancel: () -> Unit, onRestore: (Map<String, CloudRestoreSelection>, Boolean) -> Unit, uploading: Boolean = false) {
+    var choices by remember(uploading, conflicts.map { it.remote.id to it.locals.map { local -> local.id } }) {
         mutableStateOf(conflicts.associate { it.remote.id to CloudRestoreSelection(it.locals.map { local -> local.id }.toSet(), true) })
     }
     var useMetered by remember { mutableStateOf(false) }
     val valid = choices.values.all { it.keepRemote || it.keepLocalIds.isNotEmpty() }
-    val changesCloud = choices.values.any { it.keepLocalIds.size + (if (it.keepRemote) 1 else 0) == 1 }
+    val changesCloud = uploading || choices.values.any { it.keepLocalIds.size + (if (it.keepRemote) 1 else 0) == 1 }
     AlertDialog(onDismissRequest = { if (!busy) onCancel() }, title = { Text("需要确认同名书籍") }, text = {
         Column {
-            Text("无法确定是否为同一本书，请勾选每组要保留的书籍，至少一本。保留一本会更新云端备份；保留多本不改云端。同一本地书在各组的选择同步，云端正文仍需手动下载。", style = MaterialTheme.typography.bodySmall)
+            Text(if (uploading) "无法确定是否为同一本书，请勾选每组要保留的书籍，至少一本。所选本地书会上传；保留多本时分别保存。未选中的书架或云端副本会移除，原始文件保留。"
+                else "无法确定是否为同一本书，请勾选每组要保留的书籍，至少一本。保留一本会更新云端备份；保留多本不改云端。同一本地书在各组的选择同步，云端正文仍需手动下载。", style = MaterialTheme.typography.bodySmall)
             LazyColumn(Modifier.fillMaxWidth().heightIn(max = 350.dp)) {
                 items(conflicts, key = { it.remote.id }) { conflict ->
                     Column(Modifier.padding(vertical = 10.dp)) {
@@ -36,16 +40,22 @@ import com.eyue.reader.data.CloudRestoreSelection
                                         else value
                                     }
                                 }, enabled = !busy, modifier = Modifier.testTag("cloud_restore_local_${conflict.remote.id}_${local.id}"))
-                                Text("本地 ${index + 1} · ${local.format} · ${(local.progress * 100).toInt()}%" +
-                                    local.author.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(), style = MaterialTheme.typography.bodySmall)
+                                Column(Modifier.weight(1f)) {
+                                    Text("本地 ${index + 1} · ${local.format} · ${(local.progress * 100).toInt()}%" +
+                                        local.author.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(), style = MaterialTheme.typography.bodySmall)
+                                    CloudConflictSource(local)
+                                }
                             }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(choices.getValue(conflict.remote.id).keepRemote, onCheckedChange = { checked ->
                                 choices = choices + (conflict.remote.id to choices.getValue(conflict.remote.id).copy(keepRemote = checked))
                             }, enabled = !busy, modifier = Modifier.testTag("cloud_restore_remote_${conflict.remote.id}"))
-                            Text("云端 · ${conflict.remote.format} · ${(conflict.remote.progress * 100).toInt()}%" +
-                                conflict.remote.author.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(), style = MaterialTheme.typography.bodySmall)
+                            Column(Modifier.weight(1f)) {
+                                Text("云端 · ${conflict.remote.format} · ${(conflict.remote.progress * 100).toInt()}%" +
+                                    conflict.remote.author.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(), style = MaterialTheme.typography.bodySmall)
+                                CloudConflictSource(conflict.remote)
+                            }
                         }
                     }
                 }
@@ -58,6 +68,15 @@ import com.eyue.reader.data.CloudRestoreSelection
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         }
     }, confirmButton = { TextButton(enabled = !busy && valid && (!metered || !changesCloud || useMetered),
-        modifier = Modifier.testTag("cloud_restore_confirm"), onClick = { onRestore(choices, useMetered) }) { Text("确认还原") } },
+        modifier = Modifier.testTag("cloud_restore_confirm"), onClick = { onRestore(choices, useMetered) }) { Text(if (uploading) "确认上传" else "确认还原") } },
         dismissButton = { TextButton(enabled = !busy, onClick = onCancel) { Text("取消") } })
+}
+
+@Composable private fun CloudConflictSource(book: Book) {
+    val context = LocalContext.current
+    val size = book.sourceFileBytes?.takeIf { it >= 0 }?.let { android.text.format.Formatter.formatShortFileSize(context, it) }
+    Text(book.sourceFileName ?: "原文件名未知", maxLines = 2, overflow = TextOverflow.Ellipsis,
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(if (size == null) "原书文件大小未知" else "原书文件 $size", style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
 }

@@ -82,4 +82,23 @@ class CloudBookIdentityRobolectricTest {
             renamed.copy(chapters = renamed.chapters.map { it.copy(pages = it.pages.reversed()) })))
         assertNull(cloudBookContentIdentity(context, novel(" ")))
     }
+
+    @Test fun exactOriginalFilenameAndSizeTakePriorityWithoutReadingChapterOrOriginalBytes() = runBlocking {
+        val local = Book(id = "local", title = "本地元数据书名", format = BookFormat.MOBI, mode = LibraryMode.NOVEL,
+            chapters = listOf(Chapter(title = "第一章", textPath = "unreadable-cache")),
+            sourceFileName = "原始文件.mobi", sourceFileBytes = 10_000_000L, sourcePath = "unreadable-source")
+        val remote = local.copy(id = "remote", title = "云端元数据书名", mode = LibraryMode.COMIC)
+        val result = CloudBackupService(context).restoreBookMatches(LibraryState(books = listOf(local)),
+            listOf(info(remote, "text-v1:${"f".repeat(64)}", "e".repeat(64))))
+        assertEquals(CloudBookMatch.SAME, result[local.id to remote.id])
+    }
+
+    @Test fun matchingSourceNameWithoutKnownSizeOrContentRemainsUnknown() = runBlocking {
+        val local = Book(id = "local", title = "不同元数据书名", format = BookFormat.MOBI, mode = LibraryMode.NOVEL,
+            chapters = listOf(Chapter(title = "第一章")), sourceFileName = "原始文件.mobi")
+        val remote = local.copy(id = "remote", title = "另一个标题", sourceFileBytes = 10_000_000L)
+        val result = CloudBackupService(context).restoreBookMatches(LibraryState(books = listOf(local)), listOf(info(remote)))
+        assertEquals(CloudBookMatch.UNKNOWN, result[local.id to remote.id])
+        assertEquals(CloudBookMatch.UNKNOWN, cloudBookSourceMatch(local.copy(sourceFileBytes = 10_000_000), remote.copy(sourceFileName = "原始文件.MOBI")))
+    }
 }

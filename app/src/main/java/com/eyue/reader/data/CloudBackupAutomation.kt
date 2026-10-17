@@ -62,6 +62,15 @@ internal class CloudBackupHistory(context: Context) {
         MessageDigest.getInstance("SHA-256").digest("$account\n$bookId".toByteArray()).joinToString("") { "%02x".format(it) }
     fun digest(account: String, bookId: String): String? = preferences.getString(key(account, bookId), null)
     fun uploadedDigest(account: String, bookId: String): String? = preferences.getString("uploaded-${key(account, bookId)}", null)
+    fun cloudBookId(account: String, bookId: String): String = preferences.getString("cloud-id-${key(account, bookId)}", null) ?: bookId
+    fun linkBook(account: String, bookId: String, cloudId: String) {
+        preferences.edit().putString("cloud-id-${key(account, bookId)}", cloudId).commit()
+    }
+    fun approvedCopies(account: String, bookId: String): Set<String> =
+        preferences.getStringSet("copies-${key(account, bookId)}", emptySet()).orEmpty().toSet()
+    fun approveCopies(account: String, bookId: String, remoteIds: Set<String>) {
+        preferences.edit().putStringSet("copies-${key(account, bookId)}", remoteIds).commit()
+    }
     fun record(account: String, bookId: String, digest: String, time: Long) {
         preferences.edit().putString(key(account, bookId), digest).putLong("time-${key(account, bookId)}", time)
             .putString("uploaded-${key(account, bookId)}", digest)
@@ -81,6 +90,7 @@ internal class CloudBackupHistory(context: Context) {
     fun forget(account: String, bookId: String) {
         preferences.edit().remove(key(account, bookId)).remove("time-${key(account, bookId)}")
             .remove("uploaded-${key(account, bookId)}")
+            .remove("cloud-id-${key(account, bookId)}").remove("copies-${key(account, bookId)}")
             .putBoolean("paused-${key(account, bookId)}", true).commit()
     }
     fun backupAt(account: String, bookId: String): Long = preferences.getLong("time-${key(account, bookId)}", 0)
@@ -125,6 +135,7 @@ internal object CloudBackupAutomation {
     internal const val KEY_STAGE = "stage"
     internal const val KEY_FRACTION = "fraction"
     internal const val KEY_ERROR = "error"
+    internal const val KEY_CONFLICT = "conflict"
     internal fun automaticConstraints(allowMetered: Boolean): Constraints = Constraints.Builder()
         .setRequiredNetworkType(if (allowMetered) NetworkType.CONNECTED else NetworkType.UNMETERED).build()
 
@@ -247,35 +258,8 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
             val state = cloudBackupHistoryState(repository.load()) { history.backupAt(account, it) }
             if (state.cloudIdentity != null && state.cloudIdentity != account) return@withContext Result.success()
             val books = if (manualBookId == null) cloudBackupBooks(state) else state.books.filter { it.id == manualBookId && !it.cloudOnly }
-            for (book in books) {
-                cloudOperationMutex.withBook(book.id) {
-                    if (manualBookId != null) setProgress(progressData("准备上传备份", null))
-                    currentCoroutineContext().ensureActive()
-                    require(service.identity() == account && service.configured()) { "WebDAV 配置已变更，请重新上传" }
-                    // Recheck opt-in and deletion after waiting for a manual transfer.
-                    val latest = cloudBackupHistoryState(repository.load()) { history.backupAt(account, it) }
-                    val current = (if (manualBookId == null) cloudBackupBooks(latest) else latest.books.filter { !it.cloudOnly })
-                        .find { it.id == book.id } ?: return@withBook
-                    if (manualBookId == null && history.automaticPaused(account, current.id)) return@withBook
-                    val fingerprint = cloudBackupFingerprint(repository, latest, current)
-                    if (manualBookId == null && history.digest(account, current.id) == fingerprint) return@withBook
-                    val info = try {
-                        service.upload(latest, current) {
-                            if (manualBookId == null && history.automaticPaused(account, current.id))
-                                throw CancellationException("已暂停本书自动备份")
-                        }
-                    } catch (cancelled: CancellationException) {
-                        currentCoroutineContext().ensureActive()
-                        if (manualBookId == null && history.automaticPaused(account, current.id)) return@withBook
-                        throw cancelled
-                    }
-                    currentCoroutineContext().ensureActive()
-                    if (manualBookId == null && history.automaticPaused(account, current.id)) return@withBook
-                    history.record(account, current.id, fingerprint, info.backupAt)
-                }
-            }
             if (manualBookId == null) history.error(null)
-            else setProgress(progressData("上传完成", 1f))
+            for (book in books) uploadBook(service, repository, history, account, book.id)
             Result.success()
         } catch (error: CancellationException) { throw error }
           catch (error: Exception) {
@@ -287,7 +271,72 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
             if (retryable && runAttemptCount < 5) {
                 if (manualBookId != null) setProgress(progressData("网络中断，等待重试", null))
                 Result.retry()
-            } else Result.failure(workDataOf(CloudBackupAutomation.KEY_ERROR to message.take(600)))
+            } else Result.failure(workDataOf(CloudBackupAutomation.KEY_ERROR to message.take(600),
+                CloudBackupAutomation.KEY_CONFLICT to (error is CloudUploadConflictException)))
+        }
+    }
+
+    private suspend fun uploadBook(service: CloudBackupService, repository: LibraryRepository,
+        history: CloudBackupHistory, account: String, bookId: String) {
+        fun currentBook(state: LibraryState): Book? =
+            (if (manualBookId == null) cloudBackupBooks(state) else state.books.filterNot { it.cloudOnly }).find { it.id == bookId }
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            val initial = cloudBackupHistoryState(repository.load()) { history.backupAt(account, it) }
+            val book = currentBook(initial) ?: return
+            if (manualBookId == null && (history.automaticPaused(account, bookId) ||
+                history.digest(account, bookId) == cloudBackupFingerprint(repository, initial, book))) return
+            val keys = cloudUploadIdentityKeys(account, hydrateBookSourceIdentity(applicationContext, book))
+            var completed = false
+            cloudOperationMutex.withUploadIdentity(keys) {
+                require(service.identity() == account && service.configured()) { "WebDAV 配置已变更，请重新上传" }
+                val beforeLock = currentBook(repository.load()) ?: run { completed = true; return@withUploadIdentity }
+                if (cloudUploadIdentityKeys(account, hydrateBookSourceIdentity(applicationContext, beforeLock)) != keys) return@withUploadIdentity
+                val catalog = service.list(account)
+                val identities = service.restoreBookMatches(LibraryState(books = listOf(beforeLock)), catalog)
+                val targetId = cloudUploadTargetId(beforeLock, catalog, identities, history.cloudBookId(account, bookId))
+                cloudOperationMutex.withBooks(listOf(bookId, targetId)) {
+                    if (manualBookId != null) setProgress(progressData("准备上传备份", null))
+                    // Recheck the source and catalog after waiting for a book lock: neither old matches nor old aliases authorize a write.
+                    val latest = cloudBackupHistoryState(repository.load()) { history.backupAt(account, it) }
+                    val current = currentBook(latest) ?: run { completed = true; return@withBooks }
+                    if (cloudUploadIdentityKeys(account, hydrateBookSourceIdentity(applicationContext, current)) != keys) return@withBooks
+                    val freshCatalog = service.list(account)
+                    val matches = service.restoreBookMatches(LibraryState(books = listOf(current)), freshCatalog)
+                    val freshTarget = cloudUploadTargetId(current, freshCatalog, matches, history.cloudBookId(account, bookId))
+                    if (freshTarget != targetId) return@withBooks
+                    completed = true
+                    if (manualBookId == null && history.automaticPaused(account, bookId)) return@withBooks
+                    val fingerprint = cloudBackupFingerprint(repository, latest, current)
+                    if (manualBookId == null && history.digest(account, bookId) == fingerprint) return@withBooks
+                    val conflicts = cloudUploadConflicts(latest, setOf(bookId), freshCatalog, matches).filterNot {
+                        it.remote.id == history.cloudBookId(account, bookId) || it.remote.id in history.approvedCopies(account, bookId)
+                    }
+                    if (conflicts.isNotEmpty()) {
+                        history.pauseAutomatic(account, bookId)
+                        val message = "《${current.title}》存在无法确认的同名云端书籍，请点击云图标选择要保留的版本"
+                        if (manualBookId != null) throw CloudUploadConflictException(message)
+                        history.error(message)
+                        return@withBooks
+                    }
+                    val (uploadState, uploadBook) = cloudUploadSnapshot(latest, current, targetId)
+                    val info = try {
+                        service.upload(uploadState, uploadBook) {
+                            if (manualBookId == null && history.automaticPaused(account, bookId))
+                                throw CancellationException("已暂停本书自动备份")
+                        }
+                    } catch (cancelled: CancellationException) {
+                        currentCoroutineContext().ensureActive()
+                        if (manualBookId == null && history.automaticPaused(account, bookId)) return@withBooks
+                        throw cancelled
+                    }
+                    currentCoroutineContext().ensureActive()
+                    if (manualBookId == null && history.automaticPaused(account, bookId)) return@withBooks
+                    history.linkBook(account, bookId, targetId)
+                    history.record(account, bookId, fingerprint, info.backupAt)
+                }
+            }
+            if (completed) return
         }
     }
 }

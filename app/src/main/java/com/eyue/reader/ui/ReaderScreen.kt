@@ -89,7 +89,7 @@ internal data class ReaderDocument(val text: List<String>, val pageText: List<Li
     val readyChapters: Set<Int> = emptySet(), val readText: (suspend (Int) -> String)? = null)
 internal data class ReaderSearchResult(val chapter: Int, val page: Int, val offset: Int, val snippet: String)
 internal data class ReaderSearchDraft(val query: String, val replacement: String)
-private enum class ReaderPanel { SETTINGS, MORE, FONTS, SPACING, CONTENTS, SEARCH, ANNOTATIONS }
+private enum class ReaderPanel { INTERFACE, SETTINGS, FONTS, SPACING, CONTENTS, SEARCH, ANNOTATIONS }
 private data class ReaderReturnPosition(val chapter: Int, val page: Int, val offset: Int, val imagePath: String?,
     val imageIndex: Int?, val title: String, val progress: Float, val forward: Boolean)
 private data class ReaderTextLayout(val result: TextLayoutResult, val offsets: OffsetMapping)
@@ -163,7 +163,7 @@ internal fun ReaderScreen(
     }
     val speechFactory = LocalReaderSpeechFactory.current
     val speech = remember(book.id, speechFactory) { speechFactory(context) }
-    val mediaAudio = remember(book.id, speech) { ReaderAudioSession(context, book.title) }
+    val mediaAudio = remember(book.id) { ReaderAudioSession(context, book.title) }
     val speaking by speech.playing.collectAsState()
     val speechError by speech.error.collectAsState()
     var speechResumePending by remember(book.id) { mutableStateOf(false) }
@@ -174,6 +174,7 @@ internal fun ReaderScreen(
     var pendingSpeechLocation by remember(book.id) { mutableStateOf<Pair<ReaderSpeechSegment, Int>?>(null) }
     var speechOwnsPosition by remember(book.id) { mutableStateOf(false) }
     var speechSessionActive by remember(book.id) { mutableStateOf(false) }
+    var restartSpeechForEngine by remember(book.id) { mutableStateOf(false) }
     var spokenLocation by remember(book.id) { mutableStateOf<Pair<ReaderSpeechSegment, Int>?>(null) }
     var followPagePrompt by remember(book.id) { mutableStateOf(false) }
     val latestNightMode by rememberUpdatedState(settings.nightMode)
@@ -200,6 +201,7 @@ internal fun ReaderScreen(
     var selectedPassage by remember(book.id) { mutableStateOf<ReaderSelectedPassage?>(null) }
     var txtSelection by remember(book.id) { mutableStateOf<ReaderSelectedPassage?>(null) }
     var tappedNoteIds by remember(book.id) { mutableStateOf<List<String>>(emptyList()) }
+    var activeTextSelections by remember(book.id) { mutableStateOf<Set<Pair<Int, Int>>>(emptySet()) }
     var annotationAnchor by remember(book.id) { mutableStateOf(Rect.Zero) }
     var pointerAnchor by remember(book.id) { mutableStateOf<Rect?>(null) }
     var bodyCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
@@ -301,9 +303,13 @@ internal fun ReaderScreen(
     fun pauseSpeech() { speechPreparation?.cancel(); speechPreparation = null; speechResumePending = false; pendingSpeechLocation = null; speechOwnsPosition = false; if (!speech.pause()) speech.stop(); mediaAudio.pause() }
     fun stopSpeech() { pauseSpeech(); speech.stop(); mediaAudio.stop(); speechTexts = emptyList(); speechSessionActive = false; spokenLocation = null; followPagePrompt = false }
     fun dismissAnnotationBubble() {
-        if (selectedPassage != null || tappedNoteIds.isNotEmpty()) {
-            selectedPassage = null; tappedNoteIds = emptyList(); selectionReset++
+        if (selectedPassage != null || tappedNoteIds.isNotEmpty() || activeTextSelections.isNotEmpty()) {
+            selectedPassage = null; tappedNoteIds = emptyList(); activeTextSelections = emptySet(); selectionReset++
         }
+    }
+    fun textSelectionChanged(sourceChapter: Int, sourcePage: Int, active: Boolean) {
+        val key = sourceChapter to sourcePage
+        activeTextSelections = if (active) activeTextSelections + key else activeTextSelections - key
     }
     fun pauseSpeechForNavigation() {
         dismissAnnotationBubble()
@@ -460,7 +466,7 @@ internal fun ReaderScreen(
         panel = value; chromeVisible = false
     }
     fun tapPage() {
-        if (panel == ReaderPanel.SETTINGS) { panel = null; chromeVisible = false }
+        if (panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS) { panel = null; chromeVisible = false }
         else chromeVisible = !chromeVisible
     }
     fun toggleBookmark() {
@@ -477,7 +483,6 @@ internal fun ReaderScreen(
         }
     }
     fun openSelection(selection: ReaderSelectedPassage, kind: AnnotationKind) {
-        pauseSpeech()
         tappedNoteIds = emptyList()
         selectedPassage = selection.copy(anchor = selection.anchor ?: pointerAnchor)
         editorKind = kind
@@ -497,7 +502,6 @@ internal fun ReaderScreen(
     }
     fun showNotes(notes: List<Annotation>, anchor: Rect?): Boolean {
         if (notes.isEmpty()) return false
-        pauseSpeech()
         selectionReset++
         selectedPassage = null
         annotationAnchor = anchor ?: pointerAnchor ?: Rect(view.width / 2f, view.height / 2f, view.width / 2f + 1, view.height / 2f + 1)
@@ -529,6 +533,10 @@ internal fun ReaderScreen(
         spokenLocation = segment to offset
         if (!settings.ttsFollowPage) return
         if (speechResumePending || manualDrag || document == null) return
+        if (selectedPassage != null || tappedNoteIds.isNotEmpty() || activeTextSelections.isNotEmpty()) {
+            pendingSpeechLocation = segment to offset
+            return
+        }
         if (!readerForeground || reflowing || settings.readingMode == ReadingMode.SCROLL && restoring) {
             pendingSpeechLocation = segment to offset
             return
@@ -637,18 +645,14 @@ internal fun ReaderScreen(
     }
     fun canResumeSpokenNode(): Boolean {
         val (segment, offset) = spokenLocation ?: return false
-        if (segment.chapter != chapterIndex) return false
         if (raster) return readerPageIsVisible(segment.chapter, segment.page, chapterIndex, pageIndex, dualPage)
-        val text = document?.text?.getOrNull(chapterIndex)?.takeIf { it.isNotEmpty() }
-            ?: speechTexts.getOrNull(chapterIndex).orEmpty()
-        if (!readerSpeechSameParagraph(text, characterOffset, offset)) return false
-        val spokenPage = locatePage(chapterIndex, offset)
+        val spokenPage = locatePage(segment.chapter, offset)
         if (settings.readingMode != ReadingMode.SCROLL)
             return readerPageIsVisible(segment.chapter, spokenPage, chapterIndex, pageIndex, dualPage)
-        val globalIndex = (chapterStarts.getOrNull(chapterIndex) ?: return false) + spokenPage
+        val globalIndex = (chapterStarts.getOrNull(segment.chapter) ?: return false) + spokenPage
         val visible = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == globalIndex } ?: return false
-        val layout = textLayouts[chapterIndex to spokenPage] ?: return false
-        val start = textPages.getOrNull(chapterIndex)?.getOrNull(spokenPage)?.start ?: return false
+        val layout = textLayouts[segment.chapter to spokenPage] ?: return false
+        val start = textPages.getOrNull(segment.chapter)?.getOrNull(spokenPage)?.start ?: return false
         val local = layout.offsets.originalToTransformed((offset - start).coerceIn(0,
             layout.offsets.transformedToOriginal(layout.result.layoutInput.text.length)))
         val line = layout.result.getLineForOffset(local)
@@ -661,8 +665,13 @@ internal fun ReaderScreen(
         if (latestTtsFollowPage && speechNavigationVersion != manualNavigationVersion) {
             if (settings.readingMode == ReadingMode.SCROLL && !restoring && !reflowing) latestSyncScrollPosition()
             if (!canResumeSpokenNode()) { startSpeech(); return }
-            speechNavigationVersion = manualNavigationVersion
-            speechResumePending = false
+            val (segment, offset) = requireNotNull(spokenLocation)
+            val text = if (raster) document?.pageText?.getOrNull(segment.chapter)?.getOrNull(segment.page).orEmpty()
+                else document?.text?.getOrNull(segment.chapter)?.takeIf { it.isNotEmpty() }
+                    ?: speechTexts.getOrNull(segment.chapter).orEmpty()
+            val sentenceStart = readerSpeechSentenceStart(text, offset)
+            startSpeechAt(segment.chapter, if (raster) segment.page else locatePage(segment.chapter, sentenceStart), sentenceStart)
+            return
         }
         mediaAudio.play {
             if (speech.resume()) { speechOwnsPosition = latestTtsFollowPage; mediaAudio.update(true, true, latestTtsSpeed) }
@@ -707,9 +716,22 @@ internal fun ReaderScreen(
         mediaAudio.update(speaking, speechSessionActive, settings.ttsSpeed)
     }
     DisposableEffect(speech, mediaAudio) { onDispose {
+        restartSpeechForEngine = speechSessionActive &&
+            (restartSpeechForEngine || speech.playing.value || speechPreparation?.isActive == true || mediaAudio.pending != null)
         speechPreparation?.cancel(); speechPreparation = null; speechOwnsPosition = false
-        mediaAudio.stop(); speech.release()
+        mediaAudio.pause(); speech.release()
     } }
+    DisposableEffect(mediaAudio) { onDispose { mediaAudio.stop() } }
+    LaunchedEffect(speech) {
+        if (restartSpeechForEngine) {
+            restartSpeechForEngine = false
+            if (speechSessionActive) {
+                val location = spokenLocation
+                if (location == null) startSpeech() else startSpeechAt(location.first.chapter,
+                    if (raster) location.first.page else locatePage(location.first.chapter, location.second), location.second)
+            }
+        }
+    }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, _ ->
             readerForeground = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
@@ -733,8 +755,10 @@ internal fun ReaderScreen(
     LaunchedEffect(readerForeground) {
         if (readerForeground && speaking) spokenLocation?.let { latestFollowSpeech(it.first, it.second) }
     }
-    LaunchedEffect(book.id, pendingSpeechLocation, restoring, reflowing, speechResumePending, manualDrag, speaking, readerForeground) {
-        if (readerForeground && !restoring && !reflowing && !speechResumePending && !manualDrag) {
+    LaunchedEffect(book.id, pendingSpeechLocation, restoring, reflowing, speechResumePending, manualDrag, speaking, readerForeground,
+        selectedPassage, tappedNoteIds, activeTextSelections) {
+        if (readerForeground && !restoring && !reflowing && !speechResumePending && !manualDrag &&
+            selectedPassage == null && tappedNoteIds.isEmpty() && activeTextSelections.isEmpty()) {
             val pending = pendingSpeechLocation
             pendingSpeechLocation = null
             if (pending != null) latestFollowSpeech(pending.first, pending.second)
@@ -764,9 +788,9 @@ internal fun ReaderScreen(
     LaunchedEffect(scrolling) { if (scrolling) dismissAnnotationBubble() }
     LaunchedEffect(chapterIndex, pageIndex) { dismissAnnotationBubble() }
     BackHandler(enabled = selectedPassage != null || tappedNoteIds.isNotEmpty()) { dismissAnnotationBubble() }
-    BackHandler(enabled = (panel == null || panel == ReaderPanel.SETTINGS) && selectedPassage == null && txtSelection == null &&
+    BackHandler(enabled = (panel == null || panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS) && selectedPassage == null && txtSelection == null &&
         tappedNoteIds.isEmpty() && speechError == null) {
-        if (panel == ReaderPanel.SETTINGS) panel = null
+        if (panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS) panel = null
         else if (chromeVisible) chromeVisible = false else { stopSpeech(); onClose() }
     }
     DisposableEffect(view, settings.keepScreenOn) {
@@ -1029,7 +1053,8 @@ internal fun ReaderScreen(
                                 onRole = onRoleSelection?.let { callback -> { passage -> selectionReset++; callback(passage.quote) } },
                                 selectionMenuEnabled = selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() && panel == null,
                                 paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter,
-                                sourceContext = document?.text?.getOrNull(sourceChapter))
+                                sourceContext = document?.text?.getOrNull(sourceChapter),
+                                onSelectionActive = { textSelectionChanged(sourceChapter, index, it) })
                         }
                         }
                     }
@@ -1082,7 +1107,8 @@ internal fun ReaderScreen(
                                 onEdit = if (editable && interactive) { selection -> openTxtEditor(selection) } else null,
                                 onRole = onRoleSelection?.let { callback -> { passage -> selectionReset++; callback(passage.quote) } },
                                 selectionMenuEnabled = interactive && selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() && panel == null,
-                                paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter, sourceContext = sourceText)
+                                paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter, sourceContext = sourceText,
+                                onSelectionActive = { textSelectionChanged(sourceChapter, sourcePage, it) })
                         }
                         }
                     }
@@ -1144,6 +1170,7 @@ internal fun ReaderScreen(
                             if (speechSessionActive) stopSpeech() else startSpeech()
                         }
                         ReaderToolbarAction("书签", Icons.Outlined.BookmarkBorder) { annotationKind = null; openPanel(ReaderPanel.ANNOTATIONS) }
+                        ReaderToolbarAction("界面设置", Icons.Outlined.Palette, "界面", tint = colors.onSurface) { openPanel(ReaderPanel.INTERFACE) }
                         ReaderToolbarAction("阅读设置", Icons.Outlined.Settings, "设置", tint = colors.onSurface) { openPanel(ReaderPanel.SETTINGS) }
                     }
                 }
@@ -1153,7 +1180,7 @@ internal fun ReaderScreen(
             Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp), color = colors.surfaceContainerHigh,
                 contentColor = colors.onSurface,
                 shadowElevation = 6.dp, modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp)
-                    .padding(bottom = if (panel == ReaderPanel.SETTINGS) halfScreen + 12.dp
+                    .padding(bottom = if (panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS || panel == ReaderPanel.FONTS) halfScreen + 12.dp
                         else if (chromeVisible) with(density) { toolbarHeight.toDp() } + 12.dp else 36.dp)
                     .onSizeChanged { speechBarHeight = it.height }
                     .testTag("reader_speech_bar")) {
@@ -1222,11 +1249,12 @@ internal fun ReaderScreen(
                 drawPath(path, ribbonColor)
             }
         }
-        if (panel == ReaderPanel.SETTINGS) {
+        if (panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS || panel == ReaderPanel.FONTS) {
             Surface(color = colors.surface, shadowElevation = 4.dp,
                 modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = halfScreen).testTag("reader_settings_sheet")) {
-                ReaderCompactSettings(settings, raster, onSettings,
-                    onImportFont, onImportBackground, { panel = ReaderPanel.MORE }, onFonts = { panel = ReaderPanel.FONTS }, onResetDefaults = onResetDefaults)
+                if (panel != ReaderPanel.SETTINGS) ReaderCompactSettings(settings, raster, onSettings,
+                    onImportFont, onImportBackground, onFonts = { panel = ReaderPanel.FONTS })
+                else ReaderPreferencesPanel(settings, onSettings, onResetDefaults)
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
@@ -1259,9 +1287,7 @@ internal fun ReaderScreen(
         }, onDismiss = { txtSelection = null; selectionReset++ }, overwriteSource = book.format in setOf(BookFormat.EPUB, BookFormat.MOBI))
     }
     when (panel) {
-        ReaderPanel.MORE -> ReaderMoreSettings(settings, onSettings, { panel = ReaderPanel.FONTS }, { panel = ReaderPanel.SPACING },
-            { panel = null }, onResetDefaults)
-        ReaderPanel.FONTS -> ReaderFontSettings(settings, onSettings, { panel = null; onImportFont() }, { panel = null })
+        ReaderPanel.FONTS -> ReaderFontSettings(settings, onSettings, { panel = ReaderPanel.INTERFACE; onImportFont() }, { panel = ReaderPanel.INTERFACE })
         ReaderPanel.SPACING -> ReaderSpacingSettings(settings, onSettings, { panel = null })
         ReaderPanel.CONTENTS -> {
             val speechStatus = rememberSpeechCacheStatus(importedBook, speechCacheConfig, speechCacheRevision, commonVoiceRoles)
@@ -1292,7 +1318,7 @@ internal fun ReaderScreen(
                 }
             }
         }
-        ReaderPanel.SETTINGS, null -> Unit
+        ReaderPanel.INTERFACE, ReaderPanel.SETTINGS, null -> Unit
     }
 }
 

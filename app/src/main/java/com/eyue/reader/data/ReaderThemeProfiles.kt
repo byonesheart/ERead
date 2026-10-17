@@ -78,9 +78,19 @@ fun ReaderSettings.applyAppearanceProfile(profile: ReaderThemeProfile): ReaderSe
         showBattery = showBattery, showChapter = showChapter, activeAppearanceProfileId = profile.id)
 }
 
-fun ReaderSettings.saveAppearanceProfile(): ReaderSettings {
+fun ReaderSettings.saveAppearanceProfile(profileId: String? = null): ReaderSettings {
+    if (profileId != null) {
+        if (appearanceProfiles.none { it.id == profileId }) return this
+        return copy(appearanceProfiles = appearanceProfiles.map { profile ->
+            if (profile.id == profileId) profile.copy(appearance = appearanceSnapshot()) else profile
+        }, activeAppearanceProfileId = profileId)
+    }
     val used = appearanceProfiles.map { it.name }.toSet()
     val number = generateSequence(1) { it + 1 }.first { "配置$it" !in used }
     val profile = ReaderThemeProfile(name = "配置$number", appearance = appearanceSnapshot())
     return copy(appearanceProfiles = appearanceProfiles + profile, activeAppearanceProfileId = profile.id)
 }
+
+fun ReaderSettings.removeAppearanceProfile(profileId: String): ReaderSettings = copy(
+    appearanceProfiles = appearanceProfiles.filterNot { it.id == profileId },
+    activeAppearanceProfileId = activeAppearanceProfileId.takeUnless { it == profileId })

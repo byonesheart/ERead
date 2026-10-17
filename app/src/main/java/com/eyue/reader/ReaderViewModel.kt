@@ -119,6 +119,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private var pendingRestoreMatches: Map<Pair<String, String>, CloudBookMatch> = emptyMap()
     val cloudRestoreConflicts: List<CloudRestoreConflict> get() = cloudRestoreConflicts(state, pendingCloudRestore.orEmpty(), pendingRestoreMatches)
     private var pendingRestoreIdentity: String? = null
+    var pendingCloudUpload by mutableStateOf<List<com.eyue.reader.data.cloud.CloudBookInfo>?>(null)
+        private set
+    private var pendingUploadBookIds by mutableStateOf<Set<String>>(emptySet())
+    private var pendingUploadMatches: Map<Pair<String, String>, CloudBookMatch> = emptyMap()
+    private var pendingUploadIdentity: String? = null
+    val cloudUploadConflicts: List<CloudRestoreConflict> get() =
+        cloudUploadConflicts(state, pendingUploadBookIds, pendingCloudUpload.orEmpty(), pendingUploadMatches)
     val meteredNetwork: Boolean get() = (getApplication<Application>().getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
         as android.net.ConnectivityManager).isActiveNetworkMetered
     var cloudConfigured by mutableStateOf(false)
@@ -246,10 +253,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 uploads.filter { it.state.isFinished && completed.add(it.id) }.forEach { upload ->
                     if (!first) {
                         val title = state.books.find { it.id == CloudBackupAutomation.bookId(upload) }?.title
-                        if (title != null) message = when (upload.state) {
-                            WorkInfo.State.SUCCEEDED -> "《$title》的内容和阅读记录已上传"
-                            WorkInfo.State.FAILED -> upload.outputData.getString(CloudBackupAutomation.KEY_ERROR) ?: "云端上传未完成，请稍后重试"
-                            else -> "《$title》的上传已取消"
+                        if (title != null && upload.state == WorkInfo.State.FAILED) {
+                            if (upload.outputData.getBoolean(CloudBackupAutomation.KEY_CONFLICT, false)) viewModelScope.launch {
+                                while (cloudBusy) delay(100)
+                                state.books.find { it.id == CloudBackupAutomation.bookId(upload) }?.let(::uploadCloudBook)
+                            } else message = upload.outputData.getString(CloudBackupAutomation.KEY_ERROR) ?: "云端上传未完成，请稍后重试"
                         }
                     }
                 }
@@ -369,11 +377,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             if (request.folder) acceptBook(taskImporter.importFolder(request.uris.single(), state.settings.chapterRule))
             else taskImporter.importFiles(request.uris, request.mode, state.settings.chapterRule, request.mimeType, ::acceptBook)
             notices += taskImporter.lastImportErrors + taskImporter.lastImportWarnings
-            message = when {
-                request.external -> notices.takeIf { it.isNotEmpty() }?.joinToString("\n")
-                notices.isEmpty() -> "已导入 $completed 本，去书架翻开看看"
-                else -> "已导入 $completed 本\n${notices.joinToString("\n")}"
-            }
+            message = notices.takeIf { it.isNotEmpty() }?.joinToString("\n")
         } finally { progressJob.cancelAndJoin() }
     }
 
@@ -579,7 +583,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 stopCloudUploadSubmission(book.id)
             }) { service ->
                 require(!meteredNetwork || allowMetered) { "网络已切换为计费网络，请重新确认" }
-                service.deleteBook(book.id)
+                service.deleteBook(service.identity()?.let { cloudHistory.cloudBookId(it, book.id) } ?: book.id)
                 service.identity()?.let { account -> withContext(Dispatchers.IO) { cloudHistory.forget(account, book.id) } }
                 removeLocalBook(book)
             }
@@ -647,11 +651,16 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun cloudOperation(bookId: String? = null, label: String,
+        allowImport: Boolean = false,
         beforeLock: suspend (CloudBackupService) -> Unit = {}, action: suspend (CloudBackupService) -> Unit) {
         if (cloudBusy) return
         if (bookId != null && cloudBookJobs.containsKey(bookId)) return
         if (!loading && !storageReady) { message = "书架未能加载，无法备份或还原，请先处理本地书架错误"; return }
-        if (loading || importing || rebuildingContents) { message = "请等待当前文件整理完成"; return }
+        if (loading || rebuildingContents || importing && bookId == null && !allowImport) { message = "请等待当前文件整理完成"; return }
+        if (bookId != null && state.books.none { it.id == bookId }) return
+        if (bookId != null && importing && activeImportId == null && activeBookId == bookId) {
+            message = "请等待这本书编辑完成"; return
+        }
         cloudMetadataEpoch++
         val requestedIdentity = cloudIdentity
         val generation = if (bookId == null) ++cloudGeneration else cloudGeneration
@@ -675,7 +684,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 beforeLock(service)
                 if (bookId == null) cloudOperationMutex.withLock { action(service) }
-                else cloudOperationMutex.withBook(bookId) {
+                else cloudOperationMutex.withBooks(listOf(bookId, requestedIdentity?.let { cloudHistory.cloudBookId(it, bookId) } ?: bookId)) {
                     require(withContext(Dispatchers.IO) { service.identity() } == requestedIdentity) { "WebDAV 配置已更改，请重新操作这本书" }
                     action(service)
                 }
@@ -970,7 +979,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         require(service.identity() == account) { "网盘配置已更改，请重新确认清理" }
                         ids.forEach { id ->
                             require(!meteredNetwork || allowMetered) { "网络已切换为计费网络，请重新确认" }
-                            service.clearBookRecords(id, kind)
+                            service.clearBookRecords(cloudHistory.cloudBookId(requireNotNull(account), id), kind)
                         }
                     }
                     if (kind == LibraryCleanupKind.AI_AUDIO) withContext(Dispatchers.IO) {
@@ -1000,10 +1009,47 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun uploadCloudBooks(books: List<Book>) {
         if (cloudBusy) return
-        if (!storageReady || loading || importing || rebuildingContents) { message = "请等待本地书架和文件整理完成"; return }
+        if (!storageReady || loading || rebuildingContents) { message = "请等待本地书架和文件整理完成"; return }
         if (!cloudConfigured) { message = "请先配置 WebDAV 网盘"; return }
-        val selected = books.mapNotNull { target -> state.books.find { it.id == target.id && !it.cloudOnly && it.id !in cloudTransfers } }.distinctBy { it.id }
+        val selected = books.mapNotNull { target -> state.books.find { it.id == target.id && !it.cloudOnly && it.id !in cloudTransfers &&
+            !(importing && activeImportId == null && it.id == activeBookId) } }.distinctBy { it.id }
         val account = cloudIdentity ?: return
+        if (selected.isEmpty()) return
+        selected.forEach { pendingCloudUploads = pendingCloudUploads + (it.id to CloudTransferProgress("检查同名云端书籍", cancellable = true)) }
+        viewModelScope.launch {
+            val submitted = mutableSetOf<String>()
+            try {
+                val service = CloudBackupService(getApplication())
+                val available = service.list(account)
+                val matches = service.restoreBookMatches(state, available)
+                while (cloudBusy) delay(100)
+                require(cloudIdentity == account) { "WebDAV 配置已变更，请重新上传" }
+                selected.forEach { original ->
+                    val book = state.books.find { it.id == original.id && !it.cloudOnly } ?: return@forEach
+                    if (book.id !in pendingCloudUploads || book.id in cancellingCloudUploads) return@forEach
+                    val conflicts = cloudUploadConflicts(state, setOf(book.id), available, matches)
+                        .filterNot { it.remote.id == cloudHistory.cloudBookId(account, book.id) }
+                    if (conflicts.isNotEmpty()) {
+                        pendingUploadIdentity = account
+                        pendingUploadBookIds = pendingUploadBookIds + book.id
+                        pendingUploadMatches = pendingUploadMatches + matches
+                        pendingCloudUpload = (pendingCloudUpload.orEmpty() + conflicts.mapNotNull { conflict ->
+                            available.find { it.book.id == conflict.remote.id }
+                        }).distinctBy { it.book.id }
+                    } else {
+                        val targetId = cloudUploadTargetId(book, available, matches, cloudHistory.cloudBookId(account, book.id))
+                        withContext(Dispatchers.IO) { cloudHistory.linkBook(account, book.id, targetId) }
+                        queueCloudUploads(listOf(book), account)
+                        submitted += book.id
+                    }
+                }
+            } catch (error: CancellationException) { throw error }
+              catch (error: Exception) { message = error.message ?: "云端上传检查失败，请重试" }
+            finally { pendingCloudUploads = pendingCloudUploads - (selected.map { it.id }.toSet() - submitted) }
+        }
+    }
+
+    private fun queueCloudUploads(selected: List<Book>, account: String) {
         selected.forEach { book ->
             pendingCloudUploads = pendingCloudUploads + (book.id to CloudTransferProgress("准备上传《${book.title}》", cancellable = true))
             val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
@@ -1027,10 +1073,74 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun cancelCloudUploadConflict() {
+        pendingCloudUpload = null
+        pendingUploadBookIds = emptySet()
+        pendingUploadMatches = emptyMap()
+        pendingUploadIdentity = null
+    }
+
+    fun resolveCloudUploadSelections(selections: Map<String, CloudRestoreSelection>, allowMetered: Boolean) {
+        val incoming = pendingCloudUpload ?: return
+        val account = pendingUploadIdentity ?: return
+        val conflicts = cloudUploadConflicts
+        val resolved = try { normalizedCloudRestoreSelections(conflicts, selections) }
+            catch (error: IllegalArgumentException) { message = error.message; return }
+        if (meteredNetwork && !allowMetered) { message = "当前为计费网络，请确认允许流量后更新云端"; return }
+        cloudOperation(label = "处理上传的同名书籍", allowImport = true) { service ->
+            require(service.identity() == account && pendingCloudUpload === incoming) { "网盘或待上传书籍已变化，请重新上传" }
+            val retainedLocalIds = resolved.values.flatMap { it.keepLocalIds }.toSet()
+            val retainedRemoteIds = resolved.filterValues { it.keepRemote }.keys
+            val uploadedIds = mutableSetOf<String>()
+            for (localId in retainedLocalIds) {
+                require(!meteredNetwork || allowMetered) { "网络已切换为计费网络，请确认后继续上传" }
+                val local = state.books.find { it.id == localId && !it.cloudOnly } ?: error("本地书籍已变化，请重新上传")
+                val replace = conflicts.firstOrNull { conflict -> resolved.getValue(conflict.remote.id).let {
+                    !it.keepRemote && it.keepLocalIds == setOf(local.id)
+                } }?.remote?.id
+                // Keeping both means the old cloud copy is read-only, including an old alias of this local book.
+                val linked = cloudHistory.cloudBookId(account, local.id)
+                val targetId = replace ?: linked.takeUnless { it in retainedRemoteIds } ?: local.id
+                val snapshot = state
+                val (uploadState, uploadBook) = cloudUploadSnapshot(snapshot, local, targetId)
+                val result = service.upload(uploadState, uploadBook) {
+                    require(!meteredNetwork || allowMetered) { "网络已切换为计费网络，请确认后继续上传" }
+                }
+                uploadedIds += targetId
+                withContext(Dispatchers.IO) {
+                    cloudHistory.linkBook(account, local.id, targetId)
+                    cloudHistory.record(account, local.id, cloudBackupFingerprint(repository, snapshot, local), result.backupAt)
+                    cloudHistory.approveCopies(account, local.id, retainedRemoteIds)
+                }
+                state = state.copy(books = state.books.map { if (it.id == local.id)
+                    it.copy(cloudEnabled = true, cloudBackupAt = result.backupAt) else it })
+            }
+            // Upload every retained local copy successfully before discarding any previous backup.
+            val discardedCloudIds = conflicts.filterNot { resolved.getValue(it.remote.id).keepRemote }.map { it.remote.id } +
+                conflicts.flatMap { it.locals }.filterNot { it.id in retainedLocalIds }.map { cloudHistory.cloudBookId(account, it.id) }
+            for (id in discardedCloudIds.distinct().filterNot { it in uploadedIds || it in retainedRemoteIds }) {
+                require(!meteredNetwork || allowMetered) { "网络已切换为计费网络，请确认后继续处理" }
+                service.deleteBook(id)
+            }
+            val restored = applyCloudUploadSelections(state, incoming, conflicts, resolved, pendingUploadMatches)
+            val discarded = state.books.filter { local -> !local.cloudOnly && restored.books.none { it.id == local.id } }
+            for (book in discarded) stopAiSpeechConversion(book.id)
+            changed(restored)
+            persistNow()
+            withContext(Dispatchers.IO) { discarded.forEach { book ->
+                cloudHistory.forget(account, book.id)
+                repository.removeBookFiles(book)
+                AiSpeechCache(getApplication()).clear(book.id)
+            } }
+            cancelCloudUploadConflict()
+        }
+    }
+
     fun cancelCloudUpload(book: Book) {
         if (cloudTransfers[book.id]?.cancellable != true || book.id in cancellingCloudUploads) return
         val account = cloudIdentity ?: return
         cancellingCloudUploads = cancellingCloudUploads + book.id
+        pendingCloudUploads = pendingCloudUploads - book.id
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) { cloudHistory.pauseAutomatic(account, book.id) }
@@ -1058,7 +1168,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }) { service ->
         val current = state.books.find { it.id == book.id && it.cloudEnabled } ?: return@cloudOperation
         val account = withContext(Dispatchers.IO) { requireNotNull(service.identity()) { "请先配置 WebDAV 网盘" } }
-        service.deleteBook(current.id)
+        service.deleteBook(cloudHistory.cloudBookId(account, current.id))
         withContext(Dispatchers.IO) { cloudHistory.forget(account, current.id) }
         if (current.cloudOnly) {
             state = state.copy(books = state.books.filterNot { it.id == current.id },
@@ -1073,7 +1183,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun restoreCloudBookInfo() {
         if (cloudMetadataJob?.isActive == true || cloudBusy) return
-        if (loading || importing || rebuildingContents || !storageReady) { message = "请等待本地书架和文件整理完成"; return }
+        if (loading || rebuildingContents || !storageReady) { message = "请等待本地书架和文件整理完成"; return }
         val account = cloudIdentity.takeIf { cloudConfigured } ?: run { message = "请先配置 WebDAV 网盘"; return }
         val epoch = cloudMetadataEpoch
         cloudMetadataJob = viewModelScope.launch {
@@ -1086,7 +1196,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 var needsDecision = false
                 cloudOperationMutex.withCatalog(account) {
                     val existingIds = service.catalogBookIds(account)
-                    require(cloudIdentity == account && cloudMetadataEpoch == epoch && !cloudBusy && !importing && !rebuildingContents) {
+                    require(cloudIdentity == account && cloudMetadataEpoch == epoch && !cloudBusy && !rebuildingContents) {
                         "书架或网盘配置已变化，请重新还原书籍信息"
                     }
                     val available = info.filter { it.book.id in existingIds }
@@ -1098,6 +1208,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     } else {
                         val before = state.books.size
                         // Merge the current state, preserving progress and notes changed during network reads.
+                        rememberCloudMatches(account, available, matches)
                         state = resolveCloudRestoreInformation(state, available, emptyMap(), matches)
                         added = state.books.size - before
                     }
@@ -1113,6 +1224,18 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun cancelCloudRestore() { pendingCloudRestore = null; pendingRestoreIdentity = null; pendingRestoreMatches = emptyMap() }
+
+    private suspend fun rememberCloudMatches(account: String, incoming: List<com.eyue.reader.data.cloud.CloudBookInfo>,
+        matches: Map<Pair<String, String>, CloudBookMatch>) {
+        val linked = state.books.filterNot { it.cloudOnly }.mapNotNull { local ->
+            incoming.firstOrNull { it.book.id == local.id || cloudRestoreBookMatch(local, it.book, matches) == CloudBookMatch.SAME }
+                ?.let { local.id to it }
+        }.toMap()
+        withContext(Dispatchers.IO) { linked.forEach { (id, info) -> cloudHistory.linkBook(account, id, info.book.id) } }
+        state = state.copy(books = state.books.map { local -> linked[local.id]?.let {
+            local.copy(cloudEnabled = true, cloudBackupAt = maxOf(local.cloudBackupAt, it.backupAt))
+        } ?: local })
+    }
 
     fun resolveCloudRestore(choices: Map<String, CloudRestoreChoice>, allowMetered: Boolean) {
         val selections = cloudRestoreConflicts.associate { conflict -> conflict.remote.id to when (choices[conflict.remote.id] ?: CloudRestoreChoice.BOTH) {
@@ -1137,8 +1260,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         if (updatesCloud && meteredNetwork && !allowMetered) { message = "当前为计费网络，请确认允许流量后更新云端"; return }
-        cloudOperation(label = "处理同名书籍并更新备份") { service ->
+        val confirmedBookIds = state.books.map { it.id }.toSet()
+        cloudOperation(label = "处理同名书籍并更新备份", allowImport = true) { service ->
             require(service.identity() == pendingRestoreIdentity) { "网盘配置已更改，请重新还原书籍信息" }
+            val retainedRemoteIds = resolved.filterValues { it.keepRemote }.keys
+            val uploadedTargets = mutableMapOf<String, String>()
             for (conflict in conflicts) {
                 val selection = resolved.getValue(conflict.remote.id)
                 val count = selection.keepLocalIds.size + if (selection.keepRemote) 1 else 0
@@ -1150,25 +1276,32 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         val local = state.books.find { it.id == selection.keepLocalIds.single() && !it.cloudOnly }
                             ?: error("本地书籍已变化，请重新还原书籍信息")
                         val snapshot = state
-                        val result = service.upload(snapshot, local) {
+                        val targetId = uploadedTargets[local.id] ?: conflict.remote.id
+                        val (uploadState, uploadBook) = cloudUploadSnapshot(snapshot, local, targetId)
+                        val result = service.upload(uploadState, uploadBook) {
                             require(!meteredNetwork || allowMetered) { "网络已切换为计费网络，请确认后继续上传" }
                         }
-                        service.deleteBook(conflict.remote.id)
+                        uploadedTargets[local.id] = targetId
+                        if (conflict.remote.id != targetId && conflict.remote.id !in retainedRemoteIds)
+                            service.deleteBook(conflict.remote.id)
                         val identity = requireNotNull(service.identity())
                         withContext(Dispatchers.IO) {
+                            cloudHistory.linkBook(identity, local.id, targetId)
                             cloudHistory.record(identity, local.id, cloudBackupFingerprint(repository, snapshot, local), result.backupAt)
-                            cloudHistory.forget(identity, conflict.remote.id)
+                            if (conflict.remote.id != targetId) cloudHistory.forget(identity, conflict.remote.id)
                         }
                         state = state.copy(books = state.books.map { if (it.id == local.id) it.copy(cloudEnabled = true, cloudBackupAt = result.backupAt) else it })
                 }
                 for (candidate in conflict.locals.filterNot { it.id in selection.keepLocalIds }) {
                         val local = state.books.find { it.id == candidate.id } ?: continue
                         withContext(Dispatchers.IO) { cloudHistory.pauseAutomatic(requireNotNull(service.identity()), local.id) }
-                        service.deleteBook(local.id)
+                        val cloudId = cloudHistory.cloudBookId(requireNotNull(service.identity()), local.id)
+                        if (cloudId !in retainedRemoteIds && cloudId !in uploadedTargets.values) service.deleteBook(cloudId)
                         withContext(Dispatchers.IO) { cloudHistory.forget(requireNotNull(service.identity()), local.id) }
                 }
             }
-            val restored = resolveCloudRestoreSelectionsInformation(state, info, resolved, pendingRestoreMatches)
+            val restored = resolveCloudRestoreSelectionsInformation(state, info, resolved, pendingRestoreMatches,
+                protectedLocalIds = state.books.map { it.id }.toSet() - confirmedBookIds)
             val discarded = state.books.filter { local -> !local.cloudOnly && restored.books.none { it.id == local.id } }
             for (book in discarded) stopAiSpeechConversion(book.id)
             changed(restored)
@@ -1184,7 +1317,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Keeping every copy changes only shelf metadata, so it must not queue behind book transfers. */
     private fun restoreKeepingAllCloudBooks(info: List<com.eyue.reader.data.cloud.CloudBookInfo>) {
-        if (cloudMetadataJob?.isActive == true || cloudBusy || importing || rebuildingContents) return
+        if (cloudMetadataJob?.isActive == true || cloudBusy || rebuildingContents) return
         val account = pendingRestoreIdentity ?: return
         val epoch = cloudMetadataEpoch
         cloudMetadataJob = viewModelScope.launch {
@@ -1194,7 +1327,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 cloudOperationMutex.withCatalog(account) {
                     val ids = service.catalogBookIds(account)
                     if (pendingCloudRestore !== info) return@withCatalog
-                    require(cloudIdentity == account && cloudMetadataEpoch == epoch && !cloudBusy && !importing && !rebuildingContents) {
+                    require(cloudIdentity == account && cloudMetadataEpoch == epoch && !cloudBusy && !rebuildingContents) {
                         "书架或网盘配置已变化，请重新还原书籍信息"
                     }
                     val available = info.filter { it.book.id in ids }
@@ -1202,6 +1335,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     val selections = cloudRestoreConflicts(state, available, pendingRestoreMatches).associate { conflict ->
                         conflict.remote.id to CloudRestoreSelection(conflict.locals.map { it.id }.toSet(), true)
                     }
+                    rememberCloudMatches(account, available, pendingRestoreMatches)
                     state = resolveCloudRestoreSelectionsInformation(state, available, selections, pendingRestoreMatches)
                     cancelCloudRestore()
                     applied = true

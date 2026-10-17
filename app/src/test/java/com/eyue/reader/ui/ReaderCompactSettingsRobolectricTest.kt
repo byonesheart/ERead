@@ -19,6 +19,7 @@ import com.eyue.reader.data.ImportedFont
 import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.PageTurnStyle
 import com.eyue.reader.data.ReadingMode
+import com.eyue.reader.data.saveAppearanceProfile
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -37,14 +38,17 @@ class ReaderCompactSettingsRobolectricTest {
     @get:Rule val compose = createComposeRule()
 
     @Config(qualifiers = "w360dp-h800dp-mdpi")
-    @Test fun tabsStayVisibleWhileHalfScreenSettingsScrollAndAllOptionsRemainReachable() {
+    @Test fun interfaceSaveStaysVisibleWhileHalfScreenSettingsScrollWithoutNestedTabs() {
         var dark by mutableStateOf(false)
+        var preferences by mutableStateOf(false)
+        var settings by mutableStateOf(ReaderSettings().saveAppearanceProfile())
         val host = java.util.concurrent.atomic.AtomicReference<android.view.View>()
         compose.setContent {
             host.set(LocalView.current)
             MaterialTheme(colorScheme = if (dark) DarkAppColors else LightAppColors) {
             Surface(Modifier.fillMaxWidth().height(400.dp).testTag("reader_half_panel")) {
-                ReaderCompactSettings(ReaderSettings(), false, {}, {}, {}, {})
+                if (preferences) ReaderPreferencesPanel(settings, { settings = it })
+                else ReaderCompactSettings(settings, false, { settings = it }, {}, {})
             }
         } }
         fun capture(name: String) {
@@ -65,12 +69,19 @@ class ReaderCompactSettingsRobolectricTest {
         }
         compose.onNodeWithTag("reader_save_theme").assertIsDisplayed()
         capture("reader-interface-light")
+        compose.onNodeWithText("配置1", substring = false).performTouchInput { longClick() }
+        compose.onNodeWithTag("reader_delete_theme_${settings.appearanceProfiles.single().id}").assertIsDisplayed()
+        capture("reader-interface-edit-light")
         compose.onNodeWithTag("reader_conversion_traditional").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("reader_mode_vertical_paged").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag("reader_settings_tab_preferences").assertIsDisplayed().performClick()
-        compose.onNodeWithTag("reader_reset_defaults").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag("reader_settings_tab_interface").assertIsDisplayed()
+        compose.onNodeWithTag("reader_save_theme").assertIsDisplayed()
+        compose.onNodeWithTag("reader_settings_tab_preferences").assertDoesNotExist()
+        compose.onNodeWithTag("reader_settings_tab_interface").assertDoesNotExist()
+        compose.onNodeWithTag("reader_reset_defaults").assertDoesNotExist()
         compose.runOnIdle { dark = true }
+        capture("reader-interface-dark")
+        compose.runOnIdle { preferences = true }
+        compose.onNodeWithText("音量键翻页").assertIsDisplayed()
         capture("reader-settings-dark")
     }
 
@@ -80,7 +91,7 @@ class ReaderCompactSettingsRobolectricTest {
         var moreFonts = false
         var imports = 0
         compose.setContent { MaterialTheme {
-            ReaderCompactSettings(settings, false, { settings = it }, { imports++ }, {}, {}, onFonts = { moreFonts = true })
+            ReaderCompactSettings(settings, false, { settings = it }, { imports++ }, {}, onFonts = { moreFonts = true })
         } }
         compose.onNodeWithText("自选字体").assertDoesNotExist()
         compose.onNodeWithText("等宽字体").assertDoesNotExist()
@@ -97,8 +108,7 @@ class ReaderCompactSettingsRobolectricTest {
 
     @Test fun readingModesAreImmediatelyAvailableForComicsWithoutOpeningMoreSettings() {
         var settings by mutableStateOf(ReaderSettings())
-        var openedMore = 0
-        compose.setContent { MaterialTheme { ReaderCompactSettings(settings, true, { settings = it }, {}, {}, { openedMore++ }) } }
+        compose.setContent { MaterialTheme { ReaderCompactSettings(settings, true, { settings = it }, {}, {}) } }
         compose.onNodeWithTag("reader_mode_paged").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(ReadingMode.PAGED, settings.readingMode) }
         compose.onNodeWithTag("reader_mode_vertical_paged").performClick()
@@ -106,7 +116,7 @@ class ReaderCompactSettingsRobolectricTest {
         compose.onNodeWithTag("reader_turn_curl").assertDoesNotExist()
         compose.onNodeWithTag("reader_turn_cover").assertDoesNotExist()
         compose.onNodeWithTag("reader_mode_scroll").performClick()
-        compose.runOnIdle { assertEquals(ReadingMode.SCROLL, settings.readingMode); assertEquals(0, openedMore) }
+        compose.runOnIdle { assertEquals(ReadingMode.SCROLL, settings.readingMode) }
     }
 
     @Test fun additionalFontDialogListsImportedFontsAndOwnsTheImportAction() {
@@ -136,12 +146,13 @@ class ReaderCompactSettingsRobolectricTest {
         compose.onNodeWithTag("reader_reset_defaults_confirm").assertDoesNotExist()
     }
 
-    @Test fun preferencesAreInlineInTheSecondTabAndResetKeepsItsConfirmation() {
+    @Test fun preferencesHaveTheirOwnPanelAndResetKeepsItsConfirmation() {
         var resets = 0
-        compose.setContent { MaterialTheme { ReaderCompactSettings(ReaderSettings(), false, {}, {}, {}, {},
+        compose.setContent { MaterialTheme { ReaderPreferencesPanel(ReaderSettings(), {},
             onResetDefaults = { resets++ }) } }
         compose.onNodeWithText("更多设置").assertDoesNotExist()
-        compose.onNodeWithTag("reader_settings_tab_preferences").performClick()
+        compose.onNodeWithTag("reader_settings_tab_preferences").assertDoesNotExist()
+        compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
         compose.onNodeWithText("时间", substring = false).assertIsDisplayed()
         compose.onNodeWithText("音量键翻页").assertIsDisplayed()
         compose.onNodeWithTag("reader_reset_defaults").performScrollTo().performClick()
@@ -189,13 +200,14 @@ class ReaderCompactSettingsRobolectricTest {
 
     @Test fun namedThemeThumbnailsSaveAndRestoreAppearanceWithoutChangingNarrationOrPaging() {
         var settings by mutableStateOf(ReaderSettings(ttsSpeed = 1.5f, readingMode = ReadingMode.PAGED, pageTurnStyle = PageTurnStyle.CURL))
-        compose.setContent { MaterialTheme { ReaderCompactSettings(settings, false, { settings = it }, {}, {}, {}) } }
+        compose.setContent { MaterialTheme { ReaderCompactSettings(settings, false, { settings = it }, {}, {}) } }
         compose.onNodeWithTag("reader_save_theme").performClick()
         compose.onNodeWithText("配置1").assertIsDisplayed()
         val firstId = settings.appearanceProfiles.first().id
         compose.onNodeWithContentDescription("阅读字号 增大").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(20f, settings.fontSize) }
-        compose.onNodeWithTag("reader_save_theme").performScrollTo().performClick()
+        compose.onNodeWithTag("reader_save_theme").performClick()
+        compose.onNodeWithText("主题", substring = false).performScrollTo()
         compose.onNodeWithText("配置2").assertIsDisplayed()
         compose.onNodeWithTag("reader_theme_$firstId").performClick()
         compose.runOnIdle {
@@ -205,5 +217,45 @@ class ReaderCompactSettingsRobolectricTest {
             assertEquals(PageTurnStyle.CURL, settings.pageTurnStyle)
             assertEquals(2, settings.appearanceProfiles.size)
         }
+    }
+
+    @Test fun longPressEditsTheSelectedThemeAndSavingDoesNotCreateAnotherProfile() {
+        var settings by mutableStateOf(ReaderSettings().saveAppearanceProfile().copy(fontSize = 24f).saveAppearanceProfile())
+        val firstId = settings.appearanceProfiles.first().id
+        val second = settings.appearanceProfiles.last()
+        compose.setContent { MaterialTheme { ReaderCompactSettings(settings, false, { settings = it }, {}, {}) } }
+        compose.onNodeWithTag("reader_delete_theme_$firstId").assertDoesNotExist()
+        compose.onNodeWithTag("reader_theme_$firstId").performTouchInput { longClick() }
+        compose.onNodeWithText("界面 · 配置1").assertIsDisplayed()
+        compose.onNodeWithTag("reader_delete_theme_$firstId").assertIsDisplayed()
+        compose.onNodeWithTag("reader_delete_theme_${second.id}").assertIsDisplayed()
+        compose.onNodeWithContentDescription("阅读字号 增大").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(19f, settings.appearanceProfiles.first().appearance.fontSize) }
+        compose.onNodeWithTag("reader_save_theme").performClick()
+        compose.runOnIdle {
+            assertEquals(2, settings.appearanceProfiles.size)
+            assertEquals(firstId, settings.activeAppearanceProfileId)
+            assertEquals(20f, settings.appearanceProfiles.first().appearance.fontSize)
+            assertEquals(second, settings.appearanceProfiles.last())
+        }
+        compose.onNodeWithTag("reader_finish_theme_edit").assertDoesNotExist()
+    }
+
+    @Test fun leavingThemeEditDoesNotOverwriteTheProfileAndDeletionRequiresConfirmation() {
+        var settings by mutableStateOf(ReaderSettings().saveAppearanceProfile())
+        val saved = settings.appearanceProfiles.single()
+        compose.setContent { MaterialTheme { ReaderCompactSettings(settings, false, { settings = it }, {}, {}) } }
+        compose.onNodeWithTag("reader_theme_${saved.id}").performTouchInput { longClick() }
+        compose.onNodeWithContentDescription("阅读字号 增大").performScrollTo().performClick()
+        compose.onNodeWithTag("reader_finish_theme_edit").performClick()
+        compose.runOnIdle { assertEquals(saved, settings.appearanceProfiles.single()); assertEquals(20f, settings.fontSize) }
+        compose.onNodeWithTag("reader_theme_${saved.id}").performScrollTo().performTouchInput { longClick() }
+        compose.onNodeWithTag("reader_delete_theme_${saved.id}").performClick()
+        compose.runOnIdle { assertEquals(1, settings.appearanceProfiles.size) }
+        compose.onNodeWithText("取消").performClick()
+        compose.runOnIdle { assertEquals(saved, settings.appearanceProfiles.single()) }
+        compose.onNodeWithTag("reader_delete_theme_${saved.id}").performClick()
+        compose.onNodeWithTag("reader_delete_theme_confirm").performClick()
+        compose.runOnIdle { assertTrue(settings.appearanceProfiles.isEmpty()); assertNull(settings.activeAppearanceProfileId) }
     }
 }

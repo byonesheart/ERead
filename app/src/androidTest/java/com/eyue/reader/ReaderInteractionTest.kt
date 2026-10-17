@@ -285,16 +285,19 @@ class ReaderInteractionTest {
         compose.waitUntil(10_000) { currentBook(novel.id).chapterIndex > chapterBeforeDrag }
         awaitReader(novel.id)
         revealTools()
-        val toolbarBottom = compose.onNodeWithContentDescription("阅读设置").fetchSemanticsNode().boundsInRoot.bottom
-        compose.onNodeWithContentDescription("阅读设置").performClick()
+        val toolbarBottom = compose.onNodeWithContentDescription("界面设置").fetchSemanticsNode().boundsInRoot.bottom
+        compose.onNodeWithContentDescription("阅读设置").assertIsDisplayed()
+        compose.onNodeWithContentDescription("界面设置").performClick()
         compose.onNodeWithTag("reader_settings_sheet").assertIsDisplayed()
         val sheetHeight = compose.onNodeWithTag("reader_settings_sheet").fetchSemanticsNode().boundsInRoot.height
         assertTrue(sheetHeight <= compose.activity.resources.displayMetrics.heightPixels / 2f + 2f)
         val sheetBounds = compose.onNodeWithTag("reader_settings_sheet").fetchSemanticsNode().boundsInRoot
         assertTrue(sheetBounds.bottom >= toolbarBottom)
         assertEquals(bodyBefore, compose.onNodeWithTag("reader_body").fetchSemanticsNode().boundsInRoot)
-        compose.onNodeWithTag("reader_settings_tab_interface").assertIsDisplayed()
-        compose.onNodeWithTag("reader_settings_tab_preferences").assertIsDisplayed()
+        compose.onNodeWithTag("reader_interface_title").assertIsDisplayed()
+        compose.onNodeWithTag("reader_save_theme").assertIsDisplayed()
+        compose.onNodeWithTag("reader_settings_tab_interface").assertDoesNotExist()
+        compose.onNodeWithTag("reader_settings_tab_preferences").assertDoesNotExist()
         compose.runOnIdle { vm.settings(vm.readerSettings.copy(brightness = 0.45f)) }
         compose.waitForIdle()
         assertEquals(0.45f, compose.activity.window.attributes.screenBrightness, 0.01f)
@@ -302,6 +305,8 @@ class ReaderInteractionTest {
         compose.onNodeWithTag("reader_settings_sheet").assertDoesNotExist()
         revealTools()
         compose.onNodeWithContentDescription("阅读设置").performClick()
+        compose.onNodeWithText("音量键翻页").assertIsDisplayed()
+        compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
         compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("reader_settings_sheet").fetchSemanticsNodes().isEmpty() }
         closeReader()

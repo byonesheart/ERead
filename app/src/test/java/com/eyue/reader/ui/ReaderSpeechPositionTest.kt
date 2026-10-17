@@ -4,13 +4,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ReaderSpeechPositionTest {
-    @Test fun resumingRequiresTheOriginalNodeToRemainInTheCurrentParagraph() {
-        val text = "第一段仍在读。\n第二段。"
-        assertTrue(readerSpeechSameParagraph(text, 0, 4))
-        assertTrue(readerSpeechSameParagraph(text, 5, 4))
-        assertFalse(readerSpeechSameParagraph(text, text.indexOf("第二"), 4))
-        assertFalse(readerSpeechSameParagraph(text, 0, text.length))
-        assertFalse(readerSpeechSameParagraph("", 0, 0))
+    @Test fun sentenceRestartUsesTheActualSentenceInsteadOfTheParagraphOrAudioChunk() {
+        val text = "第一段仍在读。\n  前一句。第二句包含😀表情。末句。"
+        assertEquals(text.indexOf("第二句"), readerSpeechSentenceStart(text, text.indexOf("表情")))
+        assertEquals(text.indexOf("前一句"), readerSpeechSentenceStart(text, text.indexOf("前一句") + 2))
+        assertEquals(0, readerSpeechSentenceStart("", 0))
+    }
+    @Test fun sentenceRestartKeepsClosingQuotesAndDecimalNumbersWithTheirSentence() {
+        val text = "“还要继续吗？！” 他答道：价格是3.14元。 Next sentence."
+        assertEquals(0, readerSpeechSentenceStart(text, text.indexOf('”')))
+        assertEquals(text.indexOf("他答道"), readerSpeechSentenceStart(text, text.indexOf("14")))
+        assertEquals(text.indexOf("Next"), readerSpeechSentenceStart(text, text.indexOf("sentence")))
+    }
+    @Test fun sentenceRestartAcrossTransportChunksKeepsOriginalUtf16Offsets() {
+        val text = "开头。" + "长句😀".repeat(100) + "。下一句。"
+        assertEquals(3, readerSpeechSentenceStart(text, 250))
+        assertEquals(text.indexOf("下一句"), readerSpeechSentenceStart(text, text.lastIndex - 1))
     }
     @Test fun spokenParagraphExcludesAdjacentParagraphsAndPreservesUtf16Offsets() {
         val text = "第一段😀。\n第二段。\n第三段。"

@@ -14,10 +14,44 @@ class CloudRestoreConflictTest {
         "revision", 10, "hash", emptyList())
     private fun state() = LibraryState(books = listOf(local), annotations = listOf(localNote))
 
+    @Test fun aRestoreDecisionCannotDiscardAnotherCopyImportedWhileCloudWorkWasRunning() {
+        val imported = local.copy(id = "imported-during-restore")
+        val importedNote = localNote.copy(id = "new-note", bookId = imported.id)
+        val latest = state().copy(books = listOf(local, imported), annotations = listOf(localNote, importedNote))
+        val restored = resolveCloudRestoreSelectionsInformation(latest, listOf(info()),
+            mapOf(remote.id to CloudRestoreSelection(emptySet(), true)), protectedLocalIds = setOf(imported.id))
+        assertEquals(setOf(imported.id, remote.id), restored.books.map { it.id }.toSet())
+        assertEquals(setOf(importedNote.id, remoteNote.id), restored.annotations.map { it.id }.toSet())
+    }
+
     @Test fun sameIdAndOtherModesDoNotCountAsDuplicates() {
         assertTrue(cloudRestoreConflicts(state(), listOf(info(local))).isEmpty())
         assertTrue(cloudRestoreConflicts(state(), listOf(info(remote.copy(mode = LibraryMode.COMIC)))).isEmpty())
         assertEquals(listOf(CloudRestoreConflict(local, remote)), cloudRestoreConflicts(state(), listOf(info())))
+    }
+
+    @Test fun exactSourceNameAndBytesDeduplicateEvenWhenMetadataTitlesDifferAndContentMatchSaysDifferent() {
+        val identified = local.copy(sourceFileName = "原始书名.txt", sourceFileBytes = 1234)
+        val cloud = remote.copy(title = "不同书名", sourceFileName = identified.sourceFileName, sourceFileBytes = identified.sourceFileBytes)
+        val before = state().copy(books = listOf(identified))
+        val matches = mapOf((identified.id to cloud.id) to CloudBookMatch.DIFFERENT)
+        assertTrue(cloudRestoreConflicts(before, listOf(info(cloud)), matches).isEmpty())
+        assertEquals(before, resolveCloudRestoreInformation(before, listOf(info(cloud)), emptyMap(), matches))
+    }
+
+    @Test fun sameSourceNameWithUnknownSizeAsksRatherThanSilentlyKeepingBoth() {
+        val identified = local.copy(sourceFileName = "原始书名.txt")
+        val cloud = remote.copy(title = "不同书名", sourceFileName = identified.sourceFileName, sourceFileBytes = 1234)
+        val conflicts = cloudRestoreConflicts(state().copy(books = listOf(identified)), listOf(info(cloud)))
+        assertEquals(listOf(CloudRestoreConflict(identified, cloud)), conflicts)
+    }
+
+    @Test fun lazyIdentityMatchKeysRemainCandidatesBeforeSourceMetadataHasBeenPersistedLocally() {
+        val cloud = remote.copy(title = "不同书名", sourceFileName = "原始书名.txt")
+        val unknown = mapOf((local.id to cloud.id) to CloudBookMatch.UNKNOWN)
+        assertEquals(listOf(CloudRestoreConflict(local, cloud)), cloudRestoreConflicts(state(), listOf(info(cloud)), unknown))
+        val same = mapOf((local.id to cloud.id) to CloudBookMatch.SAME)
+        assertEquals(state(), resolveCloudRestoreInformation(state(), listOf(info(cloud)), emptyMap(), same))
     }
     @Test fun provenSameKeepsLocalWhileProvenDifferentRestoresBothWithoutPrompt() {
         val same = mapOf((local.id to remote.id) to CloudBookMatch.SAME)

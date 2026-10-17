@@ -18,20 +18,35 @@ internal class CloudOperationCoordinator {
     private val exclusive = Mutex()
     private val books = ConcurrentHashMap<String, Mutex>()
     private val catalogs = ConcurrentHashMap<String, Mutex>()
-    private class Held(val book: String? = null, val all: Boolean = false) : AbstractCoroutineContextElement(Key) {
+    private val uploadIdentities = ConcurrentHashMap<String, Mutex>()
+    private class Held(val books: Set<String> = emptySet(), val all: Boolean = false) : AbstractCoroutineContextElement(Key) {
         companion object Key : CoroutineContext.Key<Held>
     }
 
-    suspend fun <T> withBook(bookId: String, action: suspend () -> T): T {
+    suspend fun <T> withBook(bookId: String, action: suspend () -> T): T = withBooks(listOf(bookId), action)
+
+    suspend fun <T> withBooks(bookIds: List<String>, action: suspend () -> T): T {
         val held = currentCoroutineContext()[Held]
-        if (held?.all == true || held?.book == bookId) return action()
-        return books.getOrPut(bookId) { Mutex() }.withLock {
-            slots.withPermit { withContext(Held(book = bookId)) { action() } }
-        }
+        val missing = bookIds.distinct().filterNot { it in held?.books.orEmpty() }.sorted()
+        if (held?.all == true || missing.isEmpty()) return action()
+        suspend fun locked(index: Int): T = if (index == missing.size) {
+            val context = Held(books = held?.books.orEmpty() + missing)
+            if (held != null) withContext(context) { action() }
+            else slots.withPermit { withContext(context) { action() } }
+        } else books.getOrPut(missing[index]) { Mutex() }.withLock { locked(index + 1) }
+        return locked(0)
     }
 
     suspend fun <T> withCatalog(account: String, action: suspend () -> T): T =
         catalogs.getOrPut(account) { Mutex() }.withLock { action() }
+
+    /** Preflight and publication for the same source/title share a gate, without occupying a transfer slot. */
+    suspend fun <T> withUploadIdentity(keys: List<String>, action: suspend () -> T): T {
+        val ordered = keys.distinct().sorted()
+        suspend fun locked(index: Int): T = if (index == ordered.size) action()
+            else uploadIdentities.getOrPut(ordered[index]) { Mutex() }.withLock { locked(index + 1) }
+        return locked(0)
+    }
 
     val isLocked: Boolean get() = exclusive.isLocked
 

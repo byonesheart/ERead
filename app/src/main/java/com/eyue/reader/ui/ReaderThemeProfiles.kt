@@ -3,7 +3,8 @@ package com.eyue.reader.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,15 +16,19 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,28 +46,45 @@ import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.ReaderThemeProfile
 import com.eyue.reader.data.appearanceSnapshot
 import com.eyue.reader.data.applyAppearanceProfile
-import com.eyue.reader.data.saveAppearanceProfile
+import com.eyue.reader.data.removeAppearanceProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
 @Composable
-internal fun ReaderThemeProfiles(settings: ReaderSettings, onSettings: (ReaderSettings) -> Unit) {
+internal fun ReaderThemeProfiles(settings: ReaderSettings, onSettings: (ReaderSettings) -> Unit,
+    editingProfileId: String?, onEditProfile: (String?) -> Unit) {
+    var deleting by remember { mutableStateOf<ReaderThemeProfile?>(null) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("主题", Modifier.width(34.dp), fontSize = 12.sp)
         LazyRow(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             items(settings.appearanceProfiles, key = { it.id }) { profile ->
                 ReaderThemeThumbnail(profile, settings.activeAppearanceProfileId == profile.id &&
-                    settings.appearanceSnapshot() == profile.appearance) { onSettings(settings.applyAppearanceProfile(profile)) }
+                    settings.appearanceSnapshot() == profile.appearance, editingProfileId != null,
+                    onClick = {
+                        if (editingProfileId != null) onEditProfile(profile.id)
+                        onSettings(settings.applyAppearanceProfile(profile))
+                    }, onLongClick = {
+                        onEditProfile(profile.id)
+                        onSettings(settings.applyAppearanceProfile(profile))
+                    }, onDelete = { deleting = profile })
             }
         }
-        IconButton(onClick = { onSettings(settings.saveAppearanceProfile()) }, modifier = Modifier.size(44.dp)
-            .testTag("reader_save_theme")) { Icon(Icons.Outlined.Add, "保存当前界面为主题") }
     }
+    deleting?.let { profile -> AlertDialog(onDismissRequest = { deleting = null },
+        title = { Text("删除${profile.name}？") }, text = { Text("删除此主题配置，当前阅读界面保持不变。") },
+        confirmButton = { TextButton(onClick = {
+            onSettings(settings.removeAppearanceProfile(profile.id))
+            if (editingProfileId == profile.id) onEditProfile(null)
+            deleting = null
+        }, modifier = Modifier.testTag("reader_delete_theme_confirm")) { Text("删除") } },
+        dismissButton = { TextButton(onClick = { deleting = null }) { Text("取消") } }) }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ReaderThemeThumbnail(profile: ReaderThemeProfile, selected: Boolean, onClick: () -> Unit) {
+private fun ReaderThemeThumbnail(profile: ReaderThemeProfile, selected: Boolean, editing: Boolean,
+    onClick: () -> Unit, onLongClick: () -> Unit, onDelete: () -> Unit) {
     val background = profile.appearance.background
     val path = profile.appearance.backgroundImagePath.takeIf { background == ReaderBackground.IMAGE }
     val bitmap by produceState<ImageBitmap?>(null, path) {
@@ -77,11 +99,19 @@ private fun ReaderThemeThumbnail(profile: ReaderThemeProfile, selected: Boolean,
         else -> Color(0xFFF6F6EF)
     }
     val shape = remember { RoundedCornerShape(8.dp) }
-    Box(Modifier.padding(end = 6.dp).width(62.dp).height(52.dp).clip(shape).background(color)
-        .border(if (selected) 2.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, shape)
-        .clickable(onClick = onClick).testTag("reader_theme_${profile.id}"), contentAlignment = Alignment.Center) {
-        bitmap?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-        Text(profile.name, Modifier.background(Color.White.copy(alpha = .85f), RoundedCornerShape(4.dp)).padding(horizontal = 3.dp),
-            fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Color.Black)
+    Box(Modifier.padding(end = 6.dp).width(62.dp).height(56.dp)) {
+        Box(Modifier.fillMaxSize().clip(shape).background(color)
+            .border(if (selected) 2.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, shape)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = "编辑${profile.name}")
+            .testTag("reader_theme_${profile.id}"), contentAlignment = Alignment.Center) {
+            bitmap?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+            Text(profile.name, Modifier.background(Color.White.copy(alpha = .85f), RoundedCornerShape(4.dp)).padding(horizontal = 3.dp),
+                fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Color.Black)
+        }
+        if (editing) IconButton(onClick = onDelete,
+            modifier = Modifier.align(Alignment.TopEnd).size(28.dp).testTag("reader_delete_theme_${profile.id}")) {
+            Icon(Icons.Outlined.Close, "删除${profile.name}", Modifier.size(16.dp)
+                .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp)), tint = MaterialTheme.colorScheme.onSurface)
+        }
     }
 }

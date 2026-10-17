@@ -31,6 +31,21 @@ import com.eyue.reader.data.cloud.CloudCredentials
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
 class CloudBackupAutomationRobolectricTest {
+    @Test fun cloudAliasesAndApprovedSeparateCopiesSurviveRestartButNotDeletionOrAccountChange() {
+        val context = RuntimeEnvironment.getApplication()
+        val account = "aliases@example.invalid"
+        val history = CloudBackupHistory(context)
+        history.linkBook(account, "local-alias", "remote-source")
+        history.approveCopies(account, "local-alias", setOf("other-edition"))
+        val restored = CloudBackupHistory(context)
+        assertEquals("remote-source", restored.cloudBookId(account, "local-alias"))
+        assertEquals(setOf("other-edition"), restored.approvedCopies(account, "local-alias"))
+        assertEquals("local-alias", restored.cloudBookId("different@example.invalid", "local-alias"))
+        restored.forget(account, "local-alias")
+        assertEquals("local-alias", CloudBackupHistory(context).cloudBookId(account, "local-alias"))
+        assertTrue(CloudBackupHistory(context).approvedCopies(account, "local-alias").isEmpty())
+    }
+
     private fun book() = Book(id = "durable-book", title = "持久上传", format = BookFormat.MOBI,
         mode = LibraryMode.NOVEL, chapters = listOf(Chapter(title = "第一章")),
         characterOffset = 321, progress = .45f, sourceUri = "content://documents/book.mobi", sourceLinked = true)

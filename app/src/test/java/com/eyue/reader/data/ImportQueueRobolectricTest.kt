@@ -130,6 +130,29 @@ class ImportQueueRobolectricTest {
         assertEquals(setOf("first", "held", "last"), vm.state.books.map { it.title }.toSet())
         assertEquals(imported.id, vm.activeBookId)
         assertEquals(3, LibraryRepository(app).load().books.size)
+        assertNull("Successful import should not show a toast", vm.message)
+    }
+
+    @Test fun importingAnotherBookDoesNotRejectAnExistingBooksCloudActionAtTheImportGate() {
+        val existing = source("existing.txt")
+        val held = source("held.txt", held = true)
+        openLibrary()
+        vm.importFiles(listOf(existing), LibraryMode.NOVEL)
+        await { !vm.importing && vm.state.books.size == 1 }
+        val book = vm.state.books.single()
+        vm.importFiles(listOf(held), LibraryMode.NOVEL)
+        await { "held.txt" in opened }
+        assertTrue(vm.importing)
+        vm.uploadCloudBook(book)
+        assertEquals("请先配置 WebDAV 网盘", vm.message)
+        vm.message = null
+        vm.deleteCloudBook(book.copy(cloudEnabled = true))
+        await { vm.cloudTransfers.isEmpty() && vm.message != null }
+        assertEquals("请先配置 WebDAV 网盘", vm.message)
+        assertTrue(vm.importing)
+        assertEquals(listOf(book), vm.state.books)
+        gates.getValue("held.txt").countDown()
+        await { !vm.importing && vm.state.books.size == 2 }
     }
 
     @Test fun aFailedFileDoesNotRemoveSuccessfulBooksOrLeakItsErrorsIntoTheNextBatch() {
@@ -145,7 +168,7 @@ class ImportQueueRobolectricTest {
         await { !vm.importing && vm.pendingImports.isEmpty() && vm.state.books.size == 3 }
         assertEquals(setOf("good", "held", "next"), vm.state.books.map { it.title }.toSet())
         assertFalse(vm.message.orEmpty().contains("broken"))
-        assertTrue(vm.message.orEmpty().contains("已导入 1 本"))
+        assertNull(vm.message)
     }
 
     @Test fun externalOpenKeepsRequestDeduplicationWhenItWaitsBehindAnotherImport() {
