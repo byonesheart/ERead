@@ -4,8 +4,8 @@
   "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.9.2",
   "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.9.2/ERead-1.9.2-debug.apk",
   "mirrors": [
-    { "name": "百度网盘", "url": "https://pan.baidu.com/s/17BayhJiqACiezUgw7HiOxQ?pwd=READ", "extractionCode": "READ" },
-    { "name": "夸克网盘", "url": "https://pan.quark.cn/s/9b41ad83cda5", "extractionCode": "Bh3p" }
+    { "name": "百度网盘", "url": "https://pan.baidu.com/s/1U9hUEYEfLaG8tsQ75Re3qQ?pwd=READ", "extractionCode": "READ" },
+    { "name": "夸克网盘", "url": "https://pan.quark.cn/s/5028a0f5ed77", "extractionCode": "WgXG" }
   ],
   "changelog": [
     "阅读工具栏独立显示界面和设置，主题支持长按编辑与确认删除。",
