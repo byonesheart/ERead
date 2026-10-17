@@ -40,7 +40,7 @@ https://raw.githubusercontent.com/byonesheart/ERead/main/update.json
 
 当前 `1.9.1` 对应标签为 `v1.9.1`，附件名为 `ERead-1.9.1-debug.apk`。发布前可先保存 Release 草稿；不要让更新文件指向尚未上传的安装包。
 
-本版更新清单已备好：[update-1.9.1.json](releases/update-1.9.1.json)。发布对应 APK 后，用它覆盖根目录 `update.json` 再提交推送。根目录当前保留上一版版本号，只补充网盘入口，避免提前宣告尚未发布的安装包。
+本版清单见 [update-1.9.1.json](releases/update-1.9.1.json)，根目录 `update.json` 与其保持一致。发布时先上传安装包、源码包并发布 Release，确认附件完整后，再推送主分支的新清单，避免提前宣告尚未发布的安装包。GitHub 登录授权有效时，可自动完成这套流程。
 
 `changelog` 只写核心功能变化，并以“更多功能请自行体验。”结尾；软件内通过「更新日志」按钮进入本次更新页。检查更新接受本仓库的 HTTPS Release 页面和 APK 链接，以及百度网盘、夸克网盘的 HTTPS 分享链接，不自动下载或安装。
 
