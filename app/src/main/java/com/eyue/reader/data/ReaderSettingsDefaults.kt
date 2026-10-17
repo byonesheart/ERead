@@ -4,6 +4,7 @@ package com.eyue.reader.data
 internal fun LibraryState.resetReaderPreferences(mode: LibraryMode): LibraryState {
     val current = if (mode == LibraryMode.COMIC) comicSettings else settings
     val defaults = ReaderSettings(nightMode = settings.nightMode, fonts = current.fonts,
-        chapterRule = current.chapterRule, chapterRules = current.chapterRules, activeChapterRuleId = current.activeChapterRuleId)
+        chapterRule = current.chapterRule, chapterRules = current.chapterRules, activeChapterRuleId = current.activeChapterRuleId,
+        appearanceProfiles = current.appearanceProfiles)
     return if (mode == LibraryMode.COMIC) copy(comicSettings = defaults) else copy(settings = defaults)
 }

@@ -219,6 +219,7 @@ class LibraryRepository(private val context: Context) {
             letterSpacing = json.optDouble("letterSpacing", defaults.letterSpacing.toDouble()).toFloat(),
             readingMode = enumValue(json.optString("readingMode"), defaults.readingMode),
             pageTurnStyle = enumValue(json.optString("pageTurnStyle"), defaults.pageTurnStyle),
+            chineseConversion = enumValue(json.optString("chineseConversion"), defaults.chineseConversion),
             showTime = json.optBoolean("showTime", defaults.showTime),
             showBattery = json.optBoolean("showBattery", defaults.showBattery),
             showChapter = json.optBoolean("showChapter", defaults.showChapter),
@@ -228,7 +229,9 @@ class LibraryRepository(private val context: Context) {
             ttsFollowPage = json.optBoolean("ttsFollowPage", false),
             chapterRule = selected.pattern,
             fonts = json.array("fonts").objects().map { ImportedFont(it.getString("name"), it.getString("path")) },
-            chapterRules = presets, activeChapterRuleId = selected.id
+            chapterRules = presets, activeChapterRuleId = selected.id,
+            appearanceProfiles = readReaderThemeProfiles(json.optJSONArray("appearanceProfiles")),
+            activeAppearanceProfileId = json.nullableString("activeAppearanceProfileId")
         )
     }
 
@@ -245,6 +248,7 @@ class LibraryRepository(private val context: Context) {
         .put("fontName", settings.fontName).put("fontPath", settings.fontPath).put("bold", settings.bold)
         .put("background", settings.background.name).put("readingMode", settings.readingMode.name)
         .put("pageTurnStyle", settings.pageTurnStyle.name)
+        .put("chineseConversion", settings.chineseConversion.name)
         .put("backgroundImagePath", settings.backgroundImagePath)
         .put("nightMode", settings.nightMode).put("brightness", settings.brightness.toDouble())
         .put("letterSpacing", settings.letterSpacing.toDouble())
@@ -252,6 +256,8 @@ class LibraryRepository(private val context: Context) {
         .put("volumePaging", settings.volumePaging).put("keepScreenOn", settings.keepScreenOn)
         .put("ttsSpeed", settings.ttsSpeed.toDouble()).put("chapterRule", pattern)
         .put("ttsFollowPage", settings.ttsFollowPage)
+        .put("appearanceProfiles", JSONArray(settings.appearanceProfiles.map { it.toJson() }))
+        .put("activeAppearanceProfileId", settings.activeAppearanceProfileId)
         .put("chapterRules", JSONArray(presets.map {
             JSONObject().put("id", it.id).put("name", it.name).put("pattern", it.pattern)
         })).put("activeChapterRuleId", selected.id)

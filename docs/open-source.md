@@ -4,6 +4,12 @@ E阅使用 Kotlin 与 Android Jetpack Compose 开发。项目源码遵循仓库�
 
 源码仓库：https://github.com/byonesheart/ERead
 
+## 简繁转换词库
+
+OpenCC 1.1.9 的 STCharacters、STPhrases、TSCharacters、TSPhrases 词库用于离线简繁体阅读显示转换。词库原样随软件分发，许可证：Apache-2.0，原许可证保留在软件内。该功能不修改源书籍。
+
+项目：https://github.com/BYVoid/OpenCC
+
 ## 界面与 Android 基础组件
 
 AndroidX Activity 1.10.1、Compose UI / Foundation / Runtime 1.8.2、Material 3 1.3.2、Material Icons 1.7.8：用于页面、排版、手势和图标。Compose BOM 2025.05.01 管理对应版本。许可证：Apache-2.0。

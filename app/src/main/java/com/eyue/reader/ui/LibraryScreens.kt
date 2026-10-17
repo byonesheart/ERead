@@ -45,7 +45,8 @@ import java.util.Locale
 @Composable fun ReadingHome(books: List<Book>, readingSeconds: Long, onOpen: (Book) -> Unit, onShelf: () -> Unit, onImport: () -> Unit,
     onCloud: ((Book) -> Unit)? = null, cloudBusy: Boolean = false, cloudBookId: String? = null,
     cloudTaskLabel: String = "", cloudFraction: Float? = null, onCancelCloud: ((Book) -> Unit)? = null,
-    cloudCanCancel: Boolean = false, cloudTransfers: Map<String, CloudTransferProgress> = emptyMap()) {
+    cloudCanCancel: Boolean = false, cloudTransfers: Map<String, CloudTransferProgress> = emptyMap(),
+    cloudDirtyBookIds: Set<String> = emptySet()) {
     fun transfer(book: Book) = cloudTransfers[book.id] ?: if (cloudBookId == book.id)
         CloudTransferProgress(cloudTaskLabel, cloudFraction, cloudCanCancel) else null
     val history = books.filter { it.lastReadAt > 0 }.sortedByDescending { it.lastReadAt }
@@ -55,7 +56,7 @@ import java.util.Locale
         item { if (featured != null) FeaturedBook(featured, history.isNotEmpty(), { onOpen(featured) },
             onCloud?.let { { it(featured) } }, cloudBusy || transfer(featured) != null, transfer(featured) != null,
             transfer(featured)?.stage.orEmpty(), transfer(featured)?.fraction,
-            onCancelCloud?.let { { it(featured) } }, transfer(featured)?.cancellable == true) else EmptyLibrary(onImport) }
+            onCancelCloud?.let { { it(featured) } }, transfer(featured)?.cancellable == true, featured.id in cloudDirtyBookIds) else EmptyLibrary(onImport) }
         item {
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(vertical = 17.dp), verticalAlignment = Alignment.CenterVertically) {
                 StatCell("${readingSeconds / 60}", "累计分钟", Modifier.weight(1f))
@@ -85,13 +86,13 @@ import java.util.Locale
         items(history.take(6), key = { it.id }) { book -> HistoryRow(book, { onOpen(book) },
             onCloud?.let { { it(book) } }, cloudBusy || transfer(book) != null, transfer(book) != null,
             transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
-            onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true) }
+            onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds) }
     }
 }
 
 @Composable private fun FeaturedBook(book: Book, resume: Boolean, onOpen: () -> Unit, onCloud: (() -> Unit)?,
     cloudBusy: Boolean, cloudInProgress: Boolean, cloudTaskLabel: String, cloudFraction: Float?,
-    onCancelCloud: (() -> Unit)?, cloudCanCancel: Boolean) {
+    onCancelCloud: (() -> Unit)?, cloudCanCancel: Boolean, cloudDirty: Boolean) {
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.primaryContainer).padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f).padding(end = 16.dp)) {
@@ -102,7 +103,7 @@ import java.util.Locale
                     fontSize = 11.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 16.dp))
             }
             BookCover(book, Modifier.width(90.dp).height(130.dp), onCloud, cloudBusy, cloudInProgress, cloudTaskLabel, cloudFraction,
-                onCancelCloud, cloudCanCancel)
+                onCancelCloud, cloudCanCancel, cloudDirty)
         }
         Spacer(Modifier.height(19.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -130,10 +131,10 @@ import java.util.Locale
 
 @Composable fun HistoryRow(book: Book, onOpen: () -> Unit, onCloud: (() -> Unit)? = null, cloudBusy: Boolean = false,
     cloudInProgress: Boolean = false, cloudTaskLabel: String = "", cloudFraction: Float? = null,
-    onCancelCloud: (() -> Unit)? = null, cloudCanCancel: Boolean = false) {
+    onCancelCloud: (() -> Unit)? = null, cloudCanCancel: Boolean = false, cloudDirty: Boolean = false) {
     Row(Modifier.fillMaxWidth().clickable(enabled = !book.cloudOnly, onClick = onOpen), verticalAlignment = Alignment.CenterVertically) {
         BookCover(book, Modifier.width(53.dp).height(74.dp), onCloud, cloudBusy, cloudInProgress, cloudTaskLabel, cloudFraction,
-            onCancelCloud, cloudCanCancel)
+            onCancelCloud, cloudCanCancel, cloudDirty)
         Column(Modifier.weight(1f).padding(start = 15.dp)) {
             Text(book.title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(listOf(book.author, chapterLabel(book)).filter { it.isNotBlank() }.joinToString(" · "),
@@ -160,7 +161,9 @@ private const val UNGROUPED_FILTER = "@ungrouped"
     onVoiceRoles: ((String) -> Unit)? = null, speechCacheRevision: Int = 0,
     onRemoveWithCloud: ((Book, Boolean) -> Unit)? = null, onClearSpeechWithCloud: ((Book, Boolean) -> Unit)? = null,
     cloudConfigured: Boolean = false, meteredNetwork: Boolean = false,
-    cloudTransfers: Map<String, CloudTransferProgress> = emptyMap()) {
+    cloudTransfers: Map<String, CloudTransferProgress> = emptyMap(),
+    cloudDirtyBookIds: Set<String> = emptySet(),
+    pendingImports: List<PendingImport> = listOfNotNull(pending)) {
     fun transfer(book: Book) = cloudTransfers[book.id] ?: if (cloudBookId == book.id)
         CloudTransferProgress(cloudTaskLabel, cloudFraction, cloudCanCancel) else null
     var selectingBackup by remember { mutableStateOf(false) }
@@ -258,7 +261,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
             }) { Text("上传备份") }
             TextButton(onClick = { selectingBackup = false; backupSelection = emptySet() }) { Text("取消") }
         }
-        if (displayed.isEmpty() && pending == null) {
+        if (displayed.isEmpty() && pendingImports.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                 if (books.isEmpty()) EmptyLibrary(onImport)
                 else Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -269,14 +272,14 @@ private const val UNGROUPED_FILTER = "@ungrouped"
         } else if (grid) {
             LazyVerticalGrid(GridCells.Fixed(2), contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                if (pending != null) item { PendingShelfBook(pending, grid = true) }
+                items(pendingImports, key = { "import-${it.id}" }) { PendingShelfBook(it, grid = true) }
                 items(displayed, key = { it.id }) { book ->
                     Column {
                         Box {
                             BookCover(book, Modifier.fillMaxWidth().aspectRatio(.72f).clickable(enabled = !book.cloudOnly) { if (selectingBackup) selectBackup(book) else onOpen(book) },
                                 onCloud?.let { { it(book) } }, cloudBusy || transfer(book) != null, transfer(book) != null,
                                 transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
-                                onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true)
+                                onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds)
                             Surface(Modifier.align(Alignment.TopStart).padding(8.dp), shape = RoundedCornerShape(5.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .9f)) {
                                 if (selectingBackup) Checkbox(book.id in backupSelection, { selectBackup(book) }, enabled = !book.cloudOnly,
                                     modifier = Modifier.testTag("backup_select_${book.id}"))
@@ -306,7 +309,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
             }
         } else {
             LazyColumn(contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                if (pending != null) item { PendingShelfBook(pending, grid = false) }
+                items(pendingImports, key = { "import-${it.id}" }) { PendingShelfBook(it, grid = false) }
                 items(displayed, key = { it.id }) { book ->
                     Column {
                         if (selectingBackup) Row(verticalAlignment = Alignment.CenterVertically) {
@@ -316,7 +319,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                         }
                         HistoryRow(book, { if (selectingBackup) selectBackup(book) else onOpen(book) }, onCloud?.let { { it(book) } }, cloudBusy || transfer(book) != null,
                             transfer(book) != null, transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
-                            onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true)
+                            onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds)
                         Row(Modifier.fillMaxWidth().padding(start = 68.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("最新 · ${book.chapters.lastOrNull()?.title.orEmpty()}", modifier = Modifier.weight(1f),
                                 color = Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -475,7 +478,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
 
 @Composable private fun PendingShelfBook(pending: PendingImport, grid: Boolean) {
     val fraction = pending.progress?.fraction?.coerceIn(0f, 1f)
-    val stage = pending.progress?.stage ?: "准备导入"
+    val stage = if (pending.queued) "等待导入" else pending.progress?.stage ?: "准备导入"
     val cover: @Composable () -> Unit = {
         Box((if (grid) Modifier.fillMaxWidth().aspectRatio(.72f) else Modifier.width(53.dp).height(74.dp))
             .clip(RoundedCornerShape(7.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh)
@@ -494,6 +497,8 @@ private const val UNGROUPED_FILTER = "@ungrouped"
         pending.progress?.currentItem?.takeIf { it.isNotBlank() }?.let {
             Text(it, fontSize = 10.sp, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
         }
+        if (pending.completed > 0) Text("已导入 ${pending.completed} 本，可直接阅读", fontSize = 10.sp, color = Olive,
+            modifier = Modifier.padding(top = 4.dp))
     }
     if (grid) Column(Modifier.testTag("pending_import_book")) {
         cover()
@@ -543,7 +548,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
 
 @Composable fun BookCover(book: Book, modifier: Modifier = Modifier, onCloud: (() -> Unit)? = null,
     cloudBusy: Boolean = false, cloudInProgress: Boolean = false, cloudTaskLabel: String = "", cloudFraction: Float? = null,
-    onCancelCloud: (() -> Unit)? = null, cloudCanCancel: Boolean = false) {
+    onCancelCloud: (() -> Unit)? = null, cloudCanCancel: Boolean = false, cloudDirty: Boolean = false) {
     val bitmap by produceState<android.graphics.Bitmap?>(null, book.coverPath) {
         value = withContext(Dispatchers.IO) {
             book.coverPath?.let { path ->
@@ -589,9 +594,13 @@ private const val UNGROUPED_FILTER = "@ungrouped"
         if (onCloud != null) {
             Surface(Modifier.align(Alignment.BottomEnd).padding(3.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .92f), shape = CircleShape) {
                 IconButton(onClick = onCloud, enabled = !cloudBusy, modifier = Modifier.size(32.dp).testTag("cloud_book_${book.id}")) {
-                    Icon(if (book.cloudOnly) Icons.Outlined.CloudDownload else if (book.cloudEnabled) Icons.Outlined.CloudDone else Icons.Outlined.CloudUpload,
-                        if (book.cloudOnly) "下载《${book.title}》" else "备份《${book.title}》",
-                        Modifier.size(19.dp), tint = if (book.cloudEnabled || book.cloudOnly) Olive else Muted)
+                    val needsUpdate = book.cloudEnabled && !book.cloudOnly && cloudDirty
+                    Icon(if (book.cloudOnly) Icons.Outlined.CloudDownload else if (needsUpdate) Icons.Outlined.CloudSync
+                        else if (book.cloudEnabled) Icons.Outlined.CloudDone else Icons.Outlined.CloudUpload,
+                        if (book.cloudOnly) "下载《${book.title}》" else if (needsUpdate) "更新《${book.title}》云端备份" else "备份《${book.title}》",
+                        Modifier.size(19.dp).testTag(if (needsUpdate) "cloud_book_dirty_${book.id}" else if (book.cloudEnabled && !book.cloudOnly)
+                            "cloud_book_synced_${book.id}" else "cloud_book_action_${book.id}"),
+                        tint = if (book.cloudEnabled || book.cloudOnly) Olive else Muted)
                 }
             }
         }

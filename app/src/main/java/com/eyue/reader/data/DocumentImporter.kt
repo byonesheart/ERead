@@ -45,7 +45,8 @@ class DocumentImporter(private val context: Context) {
     var lastImportWarnings: List<String> = emptyList()
         private set
 
-    suspend fun importFiles(uris: List<Uri>, mode: LibraryMode, rule: String, mimeType: String? = null): List<Book> = withContext(Dispatchers.IO) {
+    suspend fun importFiles(uris: List<Uri>, mode: LibraryMode, rule: String, mimeType: String? = null,
+                            onBookImported: suspend (Book) -> Unit = {}): List<Book> = withContext(Dispatchers.IO) {
         val work = currentCoroutineContext()
         importTask {
             if (mode == LibraryMode.NOVEL) TextParser.validateRule(rule)
@@ -67,12 +68,16 @@ class DocumentImporter(private val context: Context) {
             val imageSources = sources.filter { !it.isDirectory && kind(it) == BookFormat.IMAGES }
             val imageUris = imageSources.map { it.uri }
             if (imageUris.isNotEmpty()) {
-                runCatching { importImages(imageUris, LibraryMode.COMIC) }
-                    .onSuccess { books += it }
-                    .onFailure { rethrowCancellation(it); failures += "图片：${it.message ?: "导入失败"}" }
+                val imported = runCatching { importImages(imageUris, LibraryMode.COMIC) }
+                    .onFailure { rethrowCancellation(it); failures += "图片：${it.message ?: "导入失败"}" }.getOrNull()
+                if (imported != null) {
+                    onBookImported(imported)
+                    books += imported
+                }
             }
             sources.filterNot { it in imageSources }.forEach { item ->
-                runCatching {
+                work.ensureActive()
+                val imported = runCatching {
                     if (item.isDirectory) return@runCatching importComicFolder(item)
                     val format = kind(item) ?: throw IllegalArgumentException("不支持的文件格式")
                     val id = UUID.randomUUID().toString()
@@ -95,8 +100,11 @@ class DocumentImporter(private val context: Context) {
                         directory.deleteRecursively()
                         throw error
                     }
-                }.onSuccess { books += it }
-                    .onFailure { rethrowCancellation(it); failures += "${item.name}：${it.message ?: "导入失败"}" }
+                }.onFailure { rethrowCancellation(it); failures += "${item.name}：${it.message ?: "导入失败"}" }.getOrNull()
+                if (imported != null) {
+                    onBookImported(imported)
+                    books += imported
+                }
             }
             lastImportErrors = failures
             if (books.isEmpty() && failures.isNotEmpty()) throw IllegalArgumentException(failures.joinToString("\n"))

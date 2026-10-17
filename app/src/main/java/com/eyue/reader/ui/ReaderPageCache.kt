@@ -153,7 +153,7 @@ internal fun readerLayoutCacheKey(
     integer(width); integer(height)
     integer(density.density.toBits()); integer(density.fontScale.toBits())
     text(direction.name)
-    text(settings.fontName); file(settings.fontPath)
+    text(settings.fontName); file(settings.fontPath); text(settings.chineseConversion.name)
     integer(settings.fontSize.toBits()); integer(if (settings.bold) 1 else 0)
     integer(settings.lineHeight.toBits()); integer(settings.letterSpacing.toBits()); integer(settings.paragraphSpacing.toBits())
     integer(chapterTexts.size)

@@ -123,7 +123,7 @@ internal fun ReaderPageTurnFrame(
         }
         }
     }
-    if (einkMode) {
+    if (einkMode || vertical) {
         spread(anchor, true)
         return
     }

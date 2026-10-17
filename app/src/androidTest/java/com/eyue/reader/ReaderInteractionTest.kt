@@ -293,7 +293,8 @@ class ReaderInteractionTest {
         val sheetBounds = compose.onNodeWithTag("reader_settings_sheet").fetchSemanticsNode().boundsInRoot
         assertTrue(sheetBounds.bottom >= toolbarBottom)
         assertEquals(bodyBefore, compose.onNodeWithTag("reader_body").fetchSemanticsNode().boundsInRoot)
-        compose.onNodeWithText("更多设置").assertIsDisplayed()
+        compose.onNodeWithTag("reader_settings_tab_interface").assertIsDisplayed()
+        compose.onNodeWithTag("reader_settings_tab_preferences").assertIsDisplayed()
         compose.runOnIdle { vm.settings(vm.readerSettings.copy(brightness = 0.45f)) }
         compose.waitForIdle()
         assertEquals(0.45f, compose.activity.window.attributes.screenBrightness, 0.01f)

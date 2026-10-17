@@ -25,6 +25,26 @@ import org.junit.runner.RunWith
 class CloudBackupUiTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun changedUploadedBookShowsCloudUpdateArrowAndSuccessfulBackupRestoresCompletedCloud() {
+        var dirty by mutableStateOf(setOf("book"))
+        var updates = 0
+        compose.setContent {
+            MaterialTheme {
+                Bookshelf(listOf(book().copy(cloudEnabled = true)), "", {}, {}, {}, {}, onCloud = { updates++ }, cloudDirtyBookIds = dirty)
+            }
+        }
+        compose.onNodeWithTag("cloud_book_dirty_book", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("cloud_book_book").assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(1, updates); dirty = emptySet() }
+        compose.onNodeWithTag("cloud_book_dirty_book", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithTag("cloud_book_synced_book", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("cloud_book_book").assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(2, updates) }
+        compose.onNodeWithContentDescription("切换书架布局").performClick()
+        compose.runOnIdle { dirty = setOf("book") }
+        compose.onNodeWithTag("cloud_book_dirty_book", useUnmergedTree = true).assertExists()
+    }
+
     @Test fun parallelTransfersKeepTheirOwnProgressAndOtherBooksCloudActionsEnabled() {
         val books = listOf(book(), book().copy(id = "second", title = "第二本"), book().copy(id = "third", title = "第三本"))
         val cancelled = mutableListOf<String>()

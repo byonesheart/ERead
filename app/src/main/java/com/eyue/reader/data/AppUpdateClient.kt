@@ -20,8 +20,11 @@ data class AppUpdateResult(
     val changelog: String,
     val downloadUrl: String?,
     val releaseUrl: String,
-    val published: Boolean = true
+    val published: Boolean = true,
+    val mirrors: List<AppUpdateMirror> = emptyList()
 )
+
+data class AppUpdateMirror(val name: String, val url: String, val extractionCode: String = "")
 
 /** A manual, anonymous request; no book, device identifier or configured service credentials are sent. */
 class AppUpdateClient(private val client: OkHttpClient = OkHttpClient.Builder()
@@ -83,8 +86,26 @@ internal fun parseAppUpdate(text: String, currentVersionCode: Int): AppUpdateRes
         if (value is org.json.JSONArray) (0 until value.length()).joinToString("\n") { "• ${value.getString(it)}" }
         else json.optString("changelog")
     }
-    return AppUpdateResult(code > currentVersionCode, name, code, notes, download, release)
+    val mirrors = json.optJSONArray("mirrors")?.let { links ->
+        require(links.length() <= 8) { "更新下载链接过多" }
+        List(links.length()) { index ->
+            val link = links.getJSONObject(index)
+            val title = link.getString("name").trim()
+            val url = link.getString("url").trim()
+            val password = link.optString("extractionCode").trim()
+            require(title.isNotBlank() && title.length <= 40 && password.length <= 40 && safeMirrorLink(url)) { "网盘下载地址无效" }
+            AppUpdateMirror(title, url, password)
+        }
+    }.orEmpty()
+    return AppUpdateResult(code > currentVersionCode, name, code, notes, download, release, mirrors = mirrors)
 }
+
+private fun safeMirrorLink(value: String): Boolean = runCatching {
+    val uri = java.net.URI(value)
+    uri.scheme == "https" && uri.host in setOf("pan.baidu.com", "pan.quark.cn") &&
+        uri.rawUserInfo == null && uri.port == -1 && uri.rawFragment == null &&
+        uri.path.startsWith("/s/") && uri.path.length > 3 && !uri.path.split('/').any { it == "." || it == ".." }
+}.getOrDefault(false)
 
 private fun safeUpdateLink(value: String, download: Boolean): Boolean = runCatching {
     val uri = java.net.URI(value)

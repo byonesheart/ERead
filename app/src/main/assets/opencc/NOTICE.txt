@@ -1,0 +1,6 @@
+Chinese conversion dictionaries from OpenCC 1.1.9
+OpenCC contributors, maintained by BYVoid <byvoid@byvoid.com>
+Source: https://github.com/BYVoid/OpenCC/tree/ver.1.1.9/data/dictionary
+STCharacters.txt, STPhrases.txt, TSCharacters.txt, TSPhrases.txt are included unchanged.
+Licensed under Apache License 2.0. See legal/licenses/OpenCC-LICENSE.txt.
+ERead uses longest dictionary matches for offline reading display conversion.

@@ -9,6 +9,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import com.eyue.reader.data.InlineImage
+import com.eyue.reader.data.ChineseTextConverter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -32,6 +33,7 @@ internal suspend fun readerPaginate(
     sourceStyles: List<ReaderSourceStyles> = emptyList(),
     measurements: ReaderPaginationMeasurements? = null,
     paragraphSpacing: Float = ReaderParagraphGapEm,
+    chineseConverter: ChineseTextConverter? = null,
     onProgress: suspend (Float) -> Unit = {}
 ): List<List<ReaderTextPage>> = withContext(Dispatchers.Default) {
     val measurer = TextMeasurer(createFontFamilyResolver(context.applicationContext), density, direction, cacheSize = 0)
@@ -59,7 +61,7 @@ internal suspend fun readerPaginate(
                 val chunkStart = offset
                 measurements?.let { it.chunks++ }
                 val chunkDisplay = readerParagraphText(chapterStyles?.apply(text, chunkStart, chunkEnd, style, trimLastNewline = false)
-                    ?: AnnotatedString(text.substring(chunkStart, chunkEnd)), style, paragraphSpacing)
+                    ?: AnnotatedString(text.substring(chunkStart, chunkEnd)), style, paragraphSpacing, chineseConverter, text, chunkStart)
                 val layout = measurer.measure(chunkDisplay.text, style = style,
                     constraints = constraints, maxLines = chunkLines)
                 val complete = chunkEnd == segmentEnd && !layout.didOverflowHeight
@@ -79,7 +81,7 @@ internal suspend fun readerPaginate(
                     // An untrimmed whole chunk already has exactly the same text, styles and constraints as that page.
                     val reuseLayout = offset == chunkStart && proposedEnd == chunkEnd && !layout.didOverflowHeight && text[chunkEnd - 1] != '\n'
                     val pageDisplay = if (reuseLayout) chunkDisplay else readerParagraphText(chapterStyles?.apply(text, offset, proposedEnd, style)
-                        ?: AnnotatedString(text.substring(offset, proposedEnd).removeSuffix("\n")), style, paragraphSpacing)
+                        ?: AnnotatedString(text.substring(offset, proposedEnd).removeSuffix("\n")), style, paragraphSpacing, chineseConverter, text, offset)
                     val pageLayout = if (reuseLayout) layout else {
                             measurements?.let { it.pages++ }
                             measurer.measure(pageDisplay.text, style = style,

@@ -16,6 +16,7 @@ import com.eyue.reader.data.BookFormat
 import com.eyue.reader.data.LibraryMode
 import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.loadChapterContent
+import com.eyue.reader.data.ChineseTextConverter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -70,6 +71,7 @@ internal suspend fun prepaginateBook(context: Context, book: Book, settings: Rea
     onProgress(0f)
     val chapterIndex = book.chapterIndex.coerceIn(book.chapters.indices)
     val prepared = loadChapterContent(context, book, chapterIndex)
+    val chineseConverter = ChineseTextConverter.load(context, settings.chineseConversion)
     withContext(Dispatchers.Default) {
         val worker = currentCoroutineContext()
         val style = ReaderSourceStyles(prepared.text, prepared.chapter.sourceStyles) { worker.ensureActive() }
@@ -77,7 +79,7 @@ internal suspend fun prepaginateBook(context: Context, book: Book, settings: Rea
             spec.textWidth, spec.textHeight, prepared.text, prepared.chapter) {
             readerPaginate(context, listOf(prepared.text), spec.textStyle, spec.density, spec.layoutDirection,
                 spec.textWidth, spec.textHeight, inlineImages = listOf(prepared.chapter.inlineImages),
-                sourceStyles = listOf(style), paragraphSpacing = settings.paragraphSpacing, onProgress = onProgress).single()
+                sourceStyles = listOf(style), paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter, onProgress = onProgress).single()
         }
         worker.ensureActive()
     }

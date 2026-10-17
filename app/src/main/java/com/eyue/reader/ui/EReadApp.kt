@@ -89,8 +89,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
             } else if (target.cloudOnly) vm.downloadCloudBook(target)
             else vm.uploadCloudBook(target)
         }
-        LaunchedEffect(vm.pendingImport != null) {
-            vm.pendingImport?.let { tab = 1; vm.mode = it.mode }
+        LaunchedEffect(vm.pendingImports.lastOrNull()?.id) {
+            if (vm.activeBookId == null) vm.pendingImports.lastOrNull()?.let { tab = 1; vm.mode = it.mode }
         }
         val files = rememberLauncherForActivityResult(OpenBookDocuments()) {
             it.forEach { uri -> retainBookAccess(context, uri) }
@@ -207,18 +207,18 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
                 Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
                     Column(Modifier.fillMaxSize().widthIn(max = 720.dp)) {
                         if (tab != 2) ModeTabs(vm.mode, { vm.mode = it }, { showNotes = true }, { showImport = true },
-                            importEnabled = !vm.importing && !vm.loading, nightMode = dark, onToggleNight = vm::toggleNightMode)
+                            importEnabled = !vm.loading, nightMode = dark, onToggleNight = vm::toggleNightMode)
                         if (vm.loading) {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Olive) }
                         } else {
                             val pending = vm.pendingImport?.takeIf { it.mode == vm.mode }
-                            val books = state.books.filter { it.mode == vm.mode && it.id !in vm.pendingImport?.bookIds.orEmpty() }
+                            val books = state.books.filter { it.mode == vm.mode }
                             when (tab) {
                                 0 -> ReadingHome(books, state.readingSeconds, vm::open, { tab = 1 }, { showImport = true },
                                     onCloud = ::cloudBook, cloudBusy = vm.cloudBusy, cloudBookId = vm.cloudBookId,
                                     cloudTaskLabel = vm.cloudTaskLabel, cloudFraction = vm.cloudFraction,
                                     onCancelCloud = vm::cancelCloudUpload, cloudCanCancel = vm.cloudUploadCancellable,
-                                    cloudTransfers = vm.cloudTransfers)
+                                    cloudTransfers = vm.cloudTransfers, cloudDirtyBookIds = vm.cloudDirtyBookIds)
                                 1 -> key(vm.mode) {
                                     Bookshelf(books, query, { query = it }, vm::open, vm::deleteBook, { showImport = true },
                                         state.groups.filter { it.mode == vm.mode }, vm::createGroup, vm::renameGroup,
@@ -235,7 +235,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
                                         onVoiceRoles = { id -> selectedRoleText = null; voiceRolesBookId = id },
                                         onRemoveWithCloud = vm::removeBook, onClearSpeechWithCloud = { book, _ -> vm.clearAiSpeechCache(book) },
                                         cloudConfigured = vm.cloudConfigured, meteredNetwork = vm.meteredNetwork,
-                                        speechCacheRevision = vm.aiSpeechCacheRevision, cloudTransfers = vm.cloudTransfers)
+                                        speechCacheRevision = vm.aiSpeechCacheRevision, cloudTransfers = vm.cloudTransfers,
+                                        cloudDirtyBookIds = vm.cloudDirtyBookIds, pendingImports = vm.pendingImports.filter { it.mode == vm.mode })
                                 }
                                 else -> SettingsScreen(state, { vm.settings(vm.readerSettings.copy(nightMode = it.nightMode)) }, vm::saveChapterRule,
                                     ::importFont, vm::clearHistory, mode = LibraryMode.NOVEL, cloudAccount = vm.cloudAccount,

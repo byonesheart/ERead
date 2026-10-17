@@ -108,6 +108,56 @@ class CloudBackupAutomationRobolectricTest {
         assertEquals(book().id, CloudBackupAutomation.bookId(queued))
     }
 
+    @Test fun dirtyBooksCompareTheirOwnProgressNotesRolesAndSettingsButIgnoreReadingTimeAndOpenTimestamp() {
+        val context = RuntimeEnvironment.getApplication()
+        val repository = LibraryRepository(context)
+        val history = CloudBackupHistory(context)
+        val account = "dirty-books@example.invalid"
+        val a = book().copy(id = "dirty-a", cloudEnabled = true, cloudBackupAt = 100)
+        val b = book().copy(id = "dirty-b", cloudEnabled = true, cloudBackupAt = 100)
+        val clean = LibraryState(books = listOf(a, b), readingSeconds = 10)
+        clean.books.forEach { history.record(account, it.id, cloudBackupFingerprint(repository, clean, it), 100) }
+        val onlyTimeChanged = clean.copy(readingSeconds = 2000, books = listOf(a.copy(lastReadAt = 9999), b))
+        assertTrue(cloudDirtyBookIds(repository, onlyTimeChanged, account, history).isEmpty())
+        val moved = clean.copy(books = listOf(a.copy(characterOffset = 999, progress = .8f), b))
+        assertEquals(setOf(a.id), cloudDirtyBookIds(repository, moved, account, history))
+        val note = Annotation(bookId = b.id, chapterIndex = 0, pageIndex = 0, note = "新笔记")
+        assertEquals(setOf(b.id), cloudDirtyBookIds(repository, clean.copy(annotations = listOf(note)), account, history))
+        val role = BookVoiceRole(name = "角色", nameRegex = "角色", voice = "低沉")
+        assertEquals(setOf(a.id), cloudDirtyBookIds(repository, clean.copy(books = listOf(a.copy(voiceRoles = listOf(role)), b)), account, history))
+        assertEquals(setOf(a.id, b.id), cloudDirtyBookIds(repository, clean.copy(settings = clean.settings.copy(fontSize = 26f)), account, history))
+    }
+
+    @Test fun successfulBackgroundSnapshotClearsDirtyButLaterLocalProgressStaysPending() = runBlocking<Unit> {
+        val context = RuntimeEnvironment.getApplication()
+        val repository = LibraryRepository(context)
+        val history = CloudBackupHistory(context)
+        val account = "updated-snapshot@example.invalid"
+        val old = book().copy(cloudEnabled = true, cloudBackupAt = 100)
+        val original = LibraryState(books = listOf(old))
+        history.record(account, old.id, cloudBackupFingerprint(repository, original, old), 100)
+        val current = old.copy(characterOffset = 555, progress = .7f)
+        val updated = original.copy(books = listOf(current))
+        assertEquals(setOf(old.id), cloudDirtyBookIds(repository, updated, account, history))
+        withContext(kotlinx.coroutines.Dispatchers.IO) {
+            CloudBackupHistory(context).record(account, current.id, cloudBackupFingerprint(repository, updated, current), 200)
+        }
+        assertTrue(cloudDirtyBookIds(repository, updated, account, history).isEmpty())
+        val later = current.copy(characterOffset = 888, progress = .9f)
+        assertEquals(setOf(old.id), cloudDirtyBookIds(repository, updated.copy(books = listOf(later)), account, history))
+    }
+
+    @Test fun localOnlyCleanupSuppressesAutomaticUploadWithoutPretendingTheCloudSnapshotWasUpdated() {
+        val context = RuntimeEnvironment.getApplication()
+        val history = CloudBackupHistory(context)
+        val account = "cleanup-baseline@example.invalid"
+        history.record(account, "book", "uploaded-records", 100)
+        history.rememberAutomaticBaseline(account, "book", "locally-cleared-records")
+        assertEquals("locally-cleared-records", history.digest(account, "book"))
+        assertEquals("uploaded-records", history.uploadedDigest(account, "book"))
+        assertEquals(100, history.backupAt(account, "book"))
+    }
+
     @Test fun completedUploadSurvivesReconstructionAndPreservesNewerReadingProgress() {
         val context = RuntimeEnvironment.getApplication()
         val original = LibraryState(books = listOf(book()), cloudAutoBackup = true, readingSeconds = 999)

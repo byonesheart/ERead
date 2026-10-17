@@ -37,7 +37,7 @@ import kotlinx.coroutines.launch
 private enum class SettingsPage(val title: String) {
     SPEECH("朗读引擎"), CLOUD("WebDAV 备份与还原"), CACHE("清理缓存"),
     FEEDBACK("问题反馈"), SUPPORT("支持作者"), ABOUT("关于"), AUTHOR("作者"),
-    PRIVACY("隐私政策"), TERMS("用户协议"), OPEN_SOURCE("开源相关")
+    PRIVACY("隐私政策"), TERMS("用户协议"), OPEN_SOURCE("开源相关"), CHANGELOG("更新日志")
 }
 
 @Suppress("UNUSED_PARAMETER")
@@ -156,7 +156,7 @@ private enum class SettingsPage(val title: String) {
                 }
                 SettingsPage.ABOUT -> {
                     SettingsCard {
-                        AboutIntro(onCheckUpdate)
+                        AboutIntro(onCheckUpdate, onOpenChangelog = { open(SettingsPage.CHANGELOG) })
                     }
                     SettingsCard {
                         listOf(SettingsPage.AUTHOR, SettingsPage.PRIVACY, SettingsPage.TERMS, SettingsPage.OPEN_SOURCE).forEachIndexed { index, destination ->
@@ -171,6 +171,7 @@ private enum class SettingsPage(val title: String) {
                 SettingsPage.PRIVACY -> LegalDocumentContent("privacy")
                 SettingsPage.TERMS -> LegalDocumentContent("terms")
                 SettingsPage.OPEN_SOURCE -> OpenSourceContent()
+                SettingsPage.CHANGELOG -> CurrentChangelogContent()
             }
         }
     }

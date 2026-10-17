@@ -40,6 +40,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.channels.awaitClose
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
@@ -59,14 +61,26 @@ internal class CloudBackupHistory(context: Context) {
     private fun key(account: String, bookId: String): String =
         MessageDigest.getInstance("SHA-256").digest("$account\n$bookId".toByteArray()).joinToString("") { "%02x".format(it) }
     fun digest(account: String, bookId: String): String? = preferences.getString(key(account, bookId), null)
+    fun uploadedDigest(account: String, bookId: String): String? = preferences.getString("uploaded-${key(account, bookId)}", null)
     fun record(account: String, bookId: String, digest: String, time: Long) {
         preferences.edit().putString(key(account, bookId), digest).putLong("time-${key(account, bookId)}", time)
+            .putString("uploaded-${key(account, bookId)}", digest)
             .remove("paused-${key(account, bookId)}").commit()
+    }
+    fun rememberAutomaticBaseline(account: String, bookId: String, digest: String) {
+        preferences.edit().putString(key(account, bookId), digest).commit()
+    }
+    fun changes(): Flow<Unit> = callbackFlow {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> trySend(Unit) }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        trySend(Unit)
+        awaitClose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
     }
     fun pauseAutomatic(account: String, bookId: String) { preferences.edit().putBoolean("paused-${key(account, bookId)}", true).commit() }
     fun automaticPaused(account: String, bookId: String): Boolean = preferences.getBoolean("paused-${key(account, bookId)}", false)
     fun forget(account: String, bookId: String) {
         preferences.edit().remove(key(account, bookId)).remove("time-${key(account, bookId)}")
+            .remove("uploaded-${key(account, bookId)}")
             .putBoolean("paused-${key(account, bookId)}", true).commit()
     }
     fun backupAt(account: String, bookId: String): Long = preferences.getLong("time-${key(account, bookId)}", 0)
@@ -77,22 +91,28 @@ internal class CloudBackupHistory(context: Context) {
 internal fun cloudBackupFingerprint(repository: LibraryRepository, state: LibraryState, book: Book): String {
     val digest = MessageDigest.getInstance("SHA-256")
     fun add(value: String) { digest.update(value.toByteArray()); digest.update(0) }
-    add(state.readingSeconds.toString())
-    add(repository.writeBook(book.copy(cloudBackupAt = 0, cloudEnabled = true, cloudOnly = false)).toString())
-    state.annotations.filter { it.bookId == book.id }.forEach { add(repository.writeAnnotation(it).toString()) }
+    add(repository.writeBook(book.copy(cloudBackupAt = 0, cloudEnabled = true, cloudOnly = false, lastReadAt = 0)).toString())
+    state.annotations.filter { it.bookId == book.id }.sortedBy { it.id }.forEach { add(repository.writeAnnotation(it).toString()) }
     val settings = if (book.mode == LibraryMode.COMIC) state.comicSettings else state.settings
     add(repository.writeSettings(settings).toString())
     state.groups.find { it.id == book.groupId }?.let { add("${it.id}\n${it.name}\n${it.mode}") }
     val files = listOfNotNull(book.sourcePath, book.coverPath) + book.chapters.flatMap { chapter ->
         listOfNotNull(chapter.textPath) + chapter.inlineImages.map { it.path } +
             chapter.pages.flatMap { listOfNotNull(it.path, it.textPath) }
-    } + settings.fonts.map { it.path } + listOfNotNull(settings.fontPath, settings.backgroundImagePath)
+    } + settings.fonts.map { it.path } + listOfNotNull(settings.fontPath, settings.backgroundImagePath) +
+        settings.appearanceProfiles.flatMap { listOfNotNull(it.appearance.fontPath, it.appearance.backgroundImagePath) }
     files.distinct().forEach { path ->
         val file = File(path)
         if (!path.startsWith("content:")) add("$path\n${file.length()}\n${file.lastModified()}")
     }
-    return digest.digest().joinToString("") { "%02x".format(it) }
+    return "records-v2:" + digest.digest().joinToString("") { "%02x".format(it) }
 }
+
+internal fun cloudDirtyBookIds(repository: LibraryRepository, state: LibraryState, account: String,
+                              history: CloudBackupHistory, check: () -> Unit = {}): Set<String> = state.books.filter { book ->
+    check()
+    book.cloudEnabled && !book.cloudOnly && cloudBackupFingerprint(repository, state, book) != history.uploadedDigest(account, book.id)
+}.map { it.id }.toSet()
 
 internal object CloudBackupAutomation {
     private const val PERIODIC = "eread-cloud-periodic"

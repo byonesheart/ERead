@@ -10,6 +10,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.eyue.reader.data.Book
 import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.loadChapterContent
+import com.eyue.reader.data.ChineseTextConverter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -31,7 +32,7 @@ internal fun rememberReaderPageProgress(book: Book, settings: ReaderSettings, sp
                                        chapter: Int, offset: Int, imageIndex: Int? = null): ReaderPageProgress {
     val context = LocalContext.current
     val latestChapter by rememberUpdatedState(chapter)
-    val catalog by key(book.id, book.contentVersion, book.chapters, spec, settings.paragraphSpacing) {
+    val catalog by key(book.id, book.contentVersion, book.chapters, spec, settings.paragraphSpacing, settings.chineseConversion) {
         produceState(ReaderPageCatalog()) {
             if (spec.textWidth <= 1 || spec.textHeight <= 1) return@produceState
             try {
@@ -60,6 +61,7 @@ internal fun rememberReaderPageProgress(book: Book, settings: ReaderSettings, sp
 internal suspend fun readerProgressChapterPages(context: Context, book: Book, settings: ReaderSettings,
                                                spec: ReaderLayoutSpec, chapter: Int): List<ReaderTextPage> {
     val prepared = loadChapterContent(context, book, chapter)
+    val chineseConverter = ChineseTextConverter.load(context, settings.chineseConversion)
     return withContext(Dispatchers.Default) {
         val worker = currentCoroutineContext()
         val styles = ReaderSourceStyles(prepared.text, prepared.chapter.sourceStyles) { worker.ensureActive() }
@@ -67,7 +69,7 @@ internal suspend fun readerProgressChapterPages(context: Context, book: Book, se
             spec.textWidth, spec.textHeight, prepared.text, prepared.chapter) {
             readerPaginate(context, listOf(prepared.text), spec.textStyle, spec.density, spec.layoutDirection,
                 spec.textWidth, spec.textHeight, inlineImages = listOf(prepared.chapter.inlineImages),
-                sourceStyles = listOf(styles), paragraphSpacing = settings.paragraphSpacing).single()
+                sourceStyles = listOf(styles), paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter).single()
         }
     }
 }

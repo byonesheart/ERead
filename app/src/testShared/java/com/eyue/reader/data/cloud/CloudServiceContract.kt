@@ -72,6 +72,23 @@ abstract class CloudServiceContract {
         assertTrue(restoredImage.isFile)
     }
 
+    @Test fun savedAppearanceProfilesBackUpTheirOwnUnusedFontsAndBackgroundsWithPortablePaths() = runBlocking {
+        val (book, state) = novel()
+        val background = File(root, "theme-background.png").apply { writeBytes(byteArrayOf(8, 7, 6)) }
+        val font = File(root, "theme-font.ttf").apply { writeBytes(byteArrayOf(4, 5, 6)) }
+        val profile = ReaderThemeProfile(name = "保存的主题", appearance = ReaderAppearance(fontName = "主题字体",
+            fontPath = sourcePath(font), background = ReaderBackground.IMAGE, backgroundImagePath = sourcePath(background)))
+        service.upload(state.copy(settings = state.settings.copy(appearanceProfiles = listOf(profile))), book)
+        val listed = service.list().single()
+        val portable = listed.settings.appearanceProfiles.single().appearance
+        assertFalse(requireNotNull(portable.fontPath).contains(root.absolutePath))
+        assertFalse(requireNotNull(portable.backgroundImagePath).contains(root.absolutePath))
+        val restored = service.download(listed).settings.appearanceProfiles.single()
+        assertEquals(profile.name, restored.name)
+        assertArrayEquals(font.readBytes(), File(requireNotNull(restored.appearance.fontPath)).readBytes())
+        assertArrayEquals(background.readBytes(), File(requireNotNull(restored.appearance.backgroundImagePath)).readBytes())
+    }
+
     @Test fun legacyManifestWithoutContentIdentityStillRestoresAndDetectsSameOriginal() = runBlocking {
         val (book, state) = novel()
         service.upload(state, book)

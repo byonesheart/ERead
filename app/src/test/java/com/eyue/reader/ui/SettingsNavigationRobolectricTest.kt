@@ -8,6 +8,7 @@ import com.eyue.reader.data.LibraryState
 import com.eyue.reader.data.ThemeMode
 import com.eyue.reader.BuildConfig
 import com.eyue.reader.data.AppUpdateResult
+import com.eyue.reader.data.AppUpdateMirror
 import com.eyue.reader.data.cloud.DEFAULT_WEBDAV_SERVER
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
@@ -27,6 +28,24 @@ import org.robolectric.annotation.LooperMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class SettingsNavigationRobolectricTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun updateNotesOpenASecondaryPageAndNewVersionsOfferCloudDownloads() {
+        compose.setContent { MaterialTheme { SettingsScreen(LibraryState(), {}, {}, {}, {}, onCheckUpdate = {
+            AppUpdateResult(true, "next", 99, "本次核心更新", null, "https://github.com/byonesheart/ERead/releases",
+                mirrors = listOf(AppUpdateMirror("百度网盘", "https://pan.baidu.com/s/example", "READ"),
+                    AppUpdateMirror("夸克网盘", "https://pan.quark.cn/s/example", "Jhr4")))
+        }) } }
+        compose.onNodeWithTag("settings_about").performScrollTo().performClick()
+        compose.onNodeWithTag("settings_current_changelog").assertDoesNotExist()
+        compose.onNodeWithTag("settings_open_changelog").performScrollTo().performClick()
+        compose.onNodeWithTag("settings_current_changelog").assertExists()
+        compose.onNodeWithText("更多功能请自行体验。").assertExists()
+        compose.onNodeWithTag("settings_back").performClick()
+        compose.onNodeWithTag("settings_check_update").performScrollTo().performClick()
+        compose.onNodeWithTag("update_github_download").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("update_mirror_0").performScrollTo().assertTextContains("提取码 READ", substring = true)
+        compose.onNodeWithTag("update_mirror_1").performScrollTo().assertTextContains("提取码 Jhr4", substring = true)
+    }
 
     @Test fun mainSettingsUseCompactEntriesWithInlineDisplayChoicesWithoutServiceForms() {
         compose.setContent { MaterialTheme { SettingsScreen(LibraryState(), {}, {}, {}, {}) } }

@@ -4,10 +4,10 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.sp
+import com.eyue.reader.data.ChineseTextConverter
 
 internal const val ReaderParagraphGapEm = 0.8f
 
@@ -23,12 +23,15 @@ internal fun readerParagraphGapAfter(text: String, end: Int): Boolean {
 }
 
 /** Display-only paragraph gaps keep persisted text, selections and reading positions unchanged. */
-internal fun readerParagraphText(text: AnnotatedString, style: TextStyle, gapEm: Float = ReaderParagraphGapEm): TransformedText {
+internal fun readerParagraphText(source: AnnotatedString, style: TextStyle, gapEm: Float = ReaderParagraphGapEm,
+                                 converter: ChineseTextConverter? = null, context: String? = null, sourceStart: Int = 0): TransformedText {
+    val converted = readerChineseText(source, converter, context, sourceStart)
+    val text = converted.text
     val positions = ArrayList<Int>()
     for (index in 1 until text.length - 1) {
         if (text[index] == '\n' && readerParagraphGapAfter(text.text, index + 1)) positions += index
     }
-    if (positions.isEmpty()) return TransformedText(text, OffsetMapping.Identity)
+    if (positions.isEmpty()) return converted
     val displayed = text.text.toCharArray()
     positions.forEach { displayed[it] = '\u200B' }
     // ParagraphStyle supplies both paragraph boundaries itself. A literal newline here would
@@ -41,5 +44,5 @@ internal fun readerParagraphText(text: AnnotatedString, style: TextStyle, gapEm:
         result.addStyle(SpanStyle(fontSize = 1.sp), start, start + 1)
         result.addStyle(gapStyle, start, start + 1)
     }
-    return TransformedText(result.toAnnotatedString(), OffsetMapping.Identity)
+    return TransformedText(result.toAnnotatedString(), converted.offsetMapping)
 }

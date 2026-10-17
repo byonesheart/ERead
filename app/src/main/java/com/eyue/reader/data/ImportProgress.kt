@@ -8,10 +8,14 @@ data class ImportProgress(
     val fraction: Float? = null
 )
 
-/** A temporary shelf item; parsed books are saved separately and revealed when the task finishes. */
+/** One queued batch. Completed books leave this placeholder and are immediately available on the shelf. */
 data class PendingImport(
     val title: String,
     val mode: LibraryMode,
     val progress: ImportProgress? = null,
-    val bookIds: Set<String> = emptySet()
+    val bookIds: Set<String> = emptySet(),
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val queued: Boolean = false,
+    val completed: Int = 0,
+    val total: Int = 1
 )

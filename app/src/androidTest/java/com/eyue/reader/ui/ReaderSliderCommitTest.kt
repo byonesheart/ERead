@@ -53,15 +53,16 @@ class ReaderSliderCommitTest {
         }
     }
 
-    @Test fun brightnessStillUpdatesBeforeTheFingerIsReleased() {
+    @Test fun brightnessAlsoWaitsUntilTheFingerIsReleased() {
         compactSettings()
         val slider = beginDrag("阅读亮度")
         compose.runOnIdle {
-            assertTrue(commits > 0)
-            assertTrue(settings.brightness > .4f)
+            assertEquals(0, commits)
+            assertEquals(.4f, settings.brightness)
             assertEquals(19f, settings.fontSize)
         }
         slider.performTouchInput { up() }
+        compose.runOnIdle { assertEquals(1, commits); assertTrue(settings.brightness > .4f) }
     }
 
     @Test fun lineAndLetterSpacingEachSubmitOnlyTheirFinalValue() {

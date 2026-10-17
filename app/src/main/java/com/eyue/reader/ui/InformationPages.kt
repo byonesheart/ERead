@@ -105,7 +105,7 @@ internal fun openAuthorLink(context: Context, url: String) {
     }
 }
 
-@Composable internal fun AboutIntro(onCheckUpdate: (suspend () -> AppUpdateResult)? = null) {
+@Composable internal fun AboutIntro(onCheckUpdate: (suspend () -> AppUpdateResult)? = null, onOpenChangelog: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val client = remember { AppUpdateClient() }
@@ -141,14 +141,25 @@ internal fun openAuthorLink(context: Context, url: String) {
                     }
                     if (update.available) {
                         if (update.changelog.isNotBlank()) Text(update.changelog, style = MaterialTheme.typography.bodySmall)
-                        TextButton(onClick = { openAuthorLink(context, update.downloadUrl ?: update.releaseUrl) }) { Text("在浏览器查看并下载") }
+                        BrowserLink("GitHub Releases · 下载", update.downloadUrl ?: update.releaseUrl, "update_github_download")
+                        update.mirrors.forEachIndexed { index, mirror ->
+                            BrowserLink(mirror.name + if (mirror.extractionCode.isBlank()) "" else " · 提取码 ${mirror.extractionCode}",
+                                mirror.url, "update_mirror_$index")
+                        }
                     }
                 }
             }
         }
         Text("本地小说与漫画阅读器，支持 EPUB、TXT、MOBI、PDF、图片和漫画文件夹。管理个人书架，记录书签笔记，使用系统或 AI 语音朗读，并可选用 WebDAV 备份。", style = MaterialTheme.typography.bodyMedium)
-        Text("更新日志", style = MaterialTheme.typography.titleSmall)
-        Text("1.9.0\n新增覆盖、滑动与仿真翻页；支持墨水屏及平板横屏双页；支持多本书并行云备份。\n更多功能请自行体验。", style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = onOpenChangelog, modifier = Modifier.testTag("settings_open_changelog")) { Text("更新日志") }
+    }
+}
+
+@Composable internal fun CurrentChangelogContent() {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
+        Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
+        Text("• 阅读设置新增界面、设置分栏，支持保存和切换多个主题。\n• 新增简繁体阅读显示转换。\n• 支持连续追加导入，逐本显示完成的书籍。\n• 云端上传期间可还原书籍信息，阅读记录变化后可手动更新备份。", style = MaterialTheme.typography.bodyMedium)
+        Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

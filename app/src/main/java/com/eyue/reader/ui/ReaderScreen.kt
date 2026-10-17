@@ -60,6 +60,8 @@ import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.ReadingMode
 import com.eyue.reader.data.AiSpeechConfig
 import com.eyue.reader.data.UnderlineStyle
+import com.eyue.reader.data.ChineseConversion
+import com.eyue.reader.data.ChineseTextConverter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -132,6 +134,11 @@ internal fun ReaderScreen(
     tabletDualPage: Boolean = false
 ) {
     val context = LocalContext.current
+    val chineseDisplay by produceState<Pair<ChineseConversion, ChineseTextConverter?>?>(null, settings.chineseConversion) {
+        value = settings.chineseConversion to ChineseTextConverter.load(context, settings.chineseConversion)
+    }
+    val chineseConverter = chineseDisplay?.takeIf { it.first == settings.chineseConversion }?.second
+    val conversionReady = settings.chineseConversion == ChineseConversion.ORIGINAL || chineseConverter != null
     val importedBook = book
     var document by remember(book.id) { mutableStateOf<ReaderDocument?>(null) }
     val book = importedBook.copy(chapters = document?.chapters?.takeIf { it.size == importedBook.chapters.size } ?: importedBook.chapters)
@@ -222,7 +229,7 @@ internal fun ReaderScreen(
     val listState = rememberLazyListState()
     val scrolling by remember { derivedStateOf { listState.isScrollInProgress } }
     val textLayouts = remember(book.id, settings.fontSize, settings.fontPath, settings.fontName,
-        settings.bold, settings.lineHeight, settings.letterSpacing, pageViewport, settings.readingMode,
+        settings.bold, settings.lineHeight, settings.letterSpacing, settings.paragraphSpacing, chineseConverter, pageViewport, settings.readingMode,
         density, layoutDirection) { linkedMapOf<Pair<Int, Int>, ReaderTextLayout>() }
     val measurer = rememberTextMeasurer(cacheSize = 0)
     val layoutSpec = remember(settings.fontPath, settings.fontName, settings.fontSize, settings.bold,
@@ -352,7 +359,7 @@ internal fun ReaderScreen(
     fun rememberLayout(sourceChapter: Int, sourcePage: Int, layout: TextLayoutResult) {
         val source = document?.text?.getOrNull(sourceChapter).orEmpty()
         val page = textPages.getOrNull(sourceChapter)?.getOrNull(sourcePage) ?: return
-        val offsets = readerParagraphText(AnnotatedString(readerPageText(source, page)), textStyle, settings.paragraphSpacing).offsetMapping
+        val offsets = readerParagraphText(AnnotatedString(readerPageText(source, page)), textStyle, settings.paragraphSpacing, chineseConverter, source, page.start).offsetMapping
         textLayouts[sourceChapter to sourcePage] = ReaderTextLayout(layout, offsets)
         if (textLayouts.size > 16) textLayouts.remove(textLayouts.keys.first())
     }
@@ -374,7 +381,7 @@ internal fun ReaderScreen(
             val text = document?.text?.getOrNull(chapterIndex).orEmpty()
             val measured = textLayouts[chapterIndex to pageIndex] ?: page?.takeIf { it.imageIndex < 0 }?.let {
                 val rendered = readerParagraphText(document?.sourceStyles?.getOrNull(chapterIndex)?.apply(text, it.start, it.end, textStyle)
-                    ?: AnnotatedString(readerPageText(text, it)), textStyle, settings.paragraphSpacing)
+                    ?: AnnotatedString(readerPageText(text, it)), textStyle, settings.paragraphSpacing, chineseConverter, text, it.start)
                 ReaderTextLayout(measurer.measure(rendered.text, style = textStyle, constraints = Constraints(maxWidth = textWidth)), rendered.offsetMapping)
             }
             ((page?.start ?: 0) + (measured?.let { it.offsets.transformedToOriginal(it.result.getOffsetForPosition(Offset(0f, scrollOffset.toFloat()))) } ?: 0)).coerceAtMost(page?.end ?: 0)
@@ -806,7 +813,8 @@ internal fun ReaderScreen(
         document?.errors?.firstOrNull()?.let { snackbar.showSnackbar(it) }
     }
     LaunchedEffect(book.id, textWidth, textHeight, settings.fontSize, settings.lineHeight,
-        settings.letterSpacing, settings.paragraphSpacing, settings.fontPath, settings.fontName, settings.bold, density, layoutDirection, settings.readingMode) {
+        settings.letterSpacing, settings.paragraphSpacing, settings.fontPath, settings.fontName, settings.bold, density, layoutDirection,
+        settings.readingMode, settings.chineseConversion, chineseConverter) {
         if (raster) return@LaunchedEffect
         layoutImageHint = textPages.getOrNull(chapterIndex)?.getOrNull(pageIndex)?.imageIndex?.takeIf { it >= 0 }
         textPages = if (directScroll) document?.scrollBlocks ?: List(book.chapters.size) { emptyList() }
@@ -815,8 +823,8 @@ internal fun ReaderScreen(
         restoring = true
         layoutGeneration++
     }
-    LaunchedEffect(book.id, document?.scrollIndex, chapterIndex, layoutGeneration, viewport) {
-        if (document == null) return@LaunchedEffect
+    LaunchedEffect(book.id, document?.scrollIndex, chapterIndex, layoutGeneration, viewport, conversionReady) {
+        if (document == null || !conversionReady) return@LaunchedEffect
         if (raster || viewport.width == 0 || viewport.height == 0) return@LaunchedEffect
         val target = chapterIndex
         val ready = if (directScroll) target in document!!.readyChapters && textPages[target].isNotEmpty()
@@ -834,7 +842,8 @@ internal fun ReaderScreen(
                 val pages = if (directScroll) loaded.blocks else readerCachedChapterPages(context, importedBook, index,
                     settings, workerDensity, layoutDirection, textWidth, textHeight, loaded.text, loaded.chapter) {
                     readerPaginate(context, listOf(loaded.text), textStyle, workerDensity, layoutDirection, textWidth, textHeight,
-                        inlineImages = listOf(loaded.chapter.inlineImages), sourceStyles = listOf(loaded.styles), paragraphSpacing = settings.paragraphSpacing) { fraction ->
+                        inlineImages = listOf(loaded.chapter.inlineImages), sourceStyles = listOf(loaded.styles), paragraphSpacing = settings.paragraphSpacing,
+                        chineseConverter = chineseConverter) { fraction ->
                         if (index == target) withContext(Dispatchers.Main) { paginationProgress = fraction }
                     }.single()
                 }
@@ -897,7 +906,7 @@ internal fun ReaderScreen(
                 val visible = readerPageText(currentText, page)
                 val local = (characterOffset - page.start).coerceIn(0, visible.length)
                 val rendered = readerParagraphText(document?.sourceStyles?.getOrNull(chapterIndex)?.apply(currentText, page.start, page.end, textStyle)
-                    ?: AnnotatedString(visible), textStyle, settings.paragraphSpacing)
+                    ?: AnnotatedString(visible), textStyle, settings.paragraphSpacing, chineseConverter, currentText, page.start)
                 val measured = measurer.measure(rendered.text, style = textStyle, constraints = Constraints(maxWidth = textWidth))
                 measured.getLineTop(measured.getLineForOffset(rendered.offsetMapping.originalToTransformed(local))).toInt().coerceAtLeast(0)
             } ?: 0
@@ -963,7 +972,7 @@ internal fun ReaderScreen(
             .onGloballyPositioned { bodyCoordinates = it }.testTag("reader_body").then(tapObserver)) {
             when {
                 book.chapters.isEmpty() -> Text("这本书没有可阅读的章节", Modifier.align(Alignment.Center), color = muted)
-                paginationError != null || document == null || (!raster && (chapterIndex !in document!!.readyChapters ||
+                paginationError != null || document == null || (!raster && (!conversionReady || chapterIndex !in document!!.readyChapters ||
                     !directScroll && chapterIndex !in paginatedChapters || textPages.isEmpty() || reflowing)) -> {
                     Column(Modifier.align(Alignment.Center).padding(24.dp).testTag("reader_loading"),
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -1019,7 +1028,8 @@ internal fun ReaderScreen(
                                 onTextTap = { offset, anchor -> tapText(sourceChapter, offset, anchor) }, onEdit = if (editable) { selection -> openTxtEditor(selection) } else null,
                                 onRole = onRoleSelection?.let { callback -> { passage -> selectionReset++; callback(passage.quote) } },
                                 selectionMenuEnabled = selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() && panel == null,
-                                paragraphSpacing = settings.paragraphSpacing)
+                                paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter,
+                                sourceContext = document?.text?.getOrNull(sourceChapter))
                         }
                         }
                     }
@@ -1072,7 +1082,7 @@ internal fun ReaderScreen(
                                 onEdit = if (editable && interactive) { selection -> openTxtEditor(selection) } else null,
                                 onRole = onRoleSelection?.let { callback -> { passage -> selectionReset++; callback(passage.quote) } },
                                 selectionMenuEnabled = interactive && selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() && panel == null,
-                                paragraphSpacing = settings.paragraphSpacing)
+                                paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter, sourceContext = sourceText)
                         }
                         }
                     }
@@ -1216,7 +1226,7 @@ internal fun ReaderScreen(
             Surface(color = colors.surface, shadowElevation = 4.dp,
                 modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = halfScreen).testTag("reader_settings_sheet")) {
                 ReaderCompactSettings(settings, raster, onSettings,
-                    onImportFont, onImportBackground, { panel = ReaderPanel.MORE }, onFonts = { panel = ReaderPanel.FONTS })
+                    onImportFont, onImportBackground, { panel = ReaderPanel.MORE }, onFonts = { panel = ReaderPanel.FONTS }, onResetDefaults = onResetDefaults)
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))

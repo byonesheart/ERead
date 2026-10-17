@@ -14,6 +14,20 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class AppUpdateClientRobolectricTest {
+    @Test fun includesValidatedCloudMirrorsAndExtractionCodes() {
+        val update = parseAppUpdate("""{"versionCode":31,"versionName":"next","mirrors":[
+            {"name":"百度网盘","url":"https://pan.baidu.com/s/example?pwd=READ","extractionCode":"READ"},
+            {"name":"夸克网盘","url":"https://pan.quark.cn/s/example?pwd=Jhr4","extractionCode":"Jhr4"}]}""", 30)
+        assertTrue(update.available)
+        assertEquals(listOf("READ", "Jhr4"), update.mirrors.map { it.extractionCode })
+        assertTrue(parseAppUpdate(manifest(), 29).mirrors.isEmpty())
+        listOf("https://pan.baidu.com.evil.invalid/s/x", "http://pan.quark.cn/s/x", "https://user@pan.baidu.com/s/x").forEach { invalid ->
+            assertThrows(IllegalArgumentException::class.java) {
+                parseAppUpdate("""{"versionCode":31,"versionName":"next","mirrors":[{"name":"网盘","url":"$invalid"}]}""", 30)
+            }
+        }
+    }
+
     private fun manifest(code: Int = 30, url: String = "https://github.com/byonesheart/ERead/releases/download/v1.9.1/ERead.apk") =
         """{"versionCode":$code,"versionName":"1.9.1","downloadUrl":"$url","changelog":["更新一","更新二"]}"""
 

@@ -6,6 +6,7 @@ enum class LibraryMode { NOVEL, COMIC }
 enum class BookFormat { EPUB, TXT, MOBI, PDF, IMAGES }
 enum class ReadingMode { SCROLL, PAGED, VERTICAL_PAGED }
 enum class PageTurnStyle { COVER, SLIDE, CURL }
+enum class ChineseConversion { ORIGINAL, SIMPLIFIED, TRADITIONAL }
 enum class ReaderBackground { PAPER, WHITE, GREEN, DARK, IMAGE }
 enum class AnnotationKind { BOOKMARK, NOTE, HIGHLIGHT, UNDERLINE }
 enum class UnderlineStyle { STRAIGHT, WAVY }
@@ -92,6 +93,7 @@ data class ReaderSettings(
     val letterSpacing: Float = 0f,
     val readingMode: ReadingMode = ReadingMode.SCROLL,
     val pageTurnStyle: PageTurnStyle = PageTurnStyle.SLIDE,
+    val chineseConversion: ChineseConversion = ChineseConversion.ORIGINAL,
     val showTime: Boolean = true,
     val showBattery: Boolean = true,
     val showChapter: Boolean = true,
@@ -102,7 +104,9 @@ data class ReaderSettings(
     val chapterRule: String = DEFAULT_CHAPTER_RULE,
     val fonts: List<ImportedFont> = emptyList(),
     val chapterRules: List<ChapterRulePreset> = listOf(ChapterRulePreset("default", "默认规则", DEFAULT_CHAPTER_RULE)),
-    val activeChapterRuleId: String = "default"
+    val activeChapterRuleId: String = "default",
+    val appearanceProfiles: List<ReaderThemeProfile> = emptyList(),
+    val activeAppearanceProfileId: String? = null
 )
 
 internal const val LEGACY_DEFAULT_CHAPTER_RULE = "^\\s*(第[零〇一二三四五六七八九十百千万两0-9]+[章节卷回部篇].*|[Cc][Hh][Aa][Pp][Tt][Ee][Rr]\\s+\\d+.*|序章.*|序言.*|前言.*|楔子.*|尾声.*|后记.*)\\s*$"

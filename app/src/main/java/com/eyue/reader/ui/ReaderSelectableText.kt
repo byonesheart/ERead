@@ -34,6 +34,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import com.eyue.reader.data.AnnotationKind
+import com.eyue.reader.data.ChineseTextConverter
 
 internal data class ReaderSelectedPassage(
     val chapter: Int,
@@ -62,7 +63,9 @@ internal fun ReaderSelectableText(
     onEdit: ((ReaderSelectedPassage) -> Unit)? = null,
     selectionMenuEnabled: Boolean = true,
     paragraphSpacing: Float = ReaderParagraphGapEm,
-    onRole: ((ReaderSelectedPassage) -> Unit)? = null
+    onRole: ((ReaderSelectedPassage) -> Unit)? = null,
+    chineseConverter: ChineseTextConverter? = null,
+    sourceContext: String? = null
 ) {
     var value by remember(chapter, pageStart, text.text) { mutableStateOf(TextFieldValue(text)) }
     var toolbarVisible by remember(chapter, pageStart) { mutableStateOf(false) }
@@ -81,8 +84,12 @@ internal fun ReaderSelectableText(
     val clipboard = LocalClipboardManager.current
     val focus = LocalFocusManager.current
     val view = LocalView.current
-    val paragraphTransformation = remember(style.fontSize, paragraphSpacing) {
-        VisualTransformation { readerParagraphText(it, style, paragraphSpacing) }
+    val paragraphTransformation = remember(style.fontSize, paragraphSpacing, chineseConverter, sourceContext, pageStart) {
+        var previous: Pair<AnnotatedString, androidx.compose.ui.text.input.TransformedText>? = null
+        VisualTransformation { input ->
+            previous?.takeIf { it.first == input }?.second ?: readerParagraphText(input, style, paragraphSpacing, chineseConverter, sourceContext, pageStart)
+                .also { previous = input to it }
+        }
     }
     LaunchedEffect(selectionReset) {
         toolbarVisible = false
@@ -146,7 +153,8 @@ internal fun ReaderSelectableText(
                         val place = coordinates
                         if (layout != null && place?.isAttached == true) readerTextTapOffset(layout, down.position)?.let { offset ->
                             val glyph = layout.getBoundingBox(offset)
-                            latestTap(pageStart + offset, Rect(place.localToWindow(glyph.topLeft), place.localToWindow(glyph.bottomRight)))
+                            val originalOffset = paragraphTransformation.filter(text).offsetMapping.transformedToOriginal(offset)
+                            latestTap(pageStart + originalOffset, Rect(place.localToWindow(glyph.topLeft), place.localToWindow(glyph.bottomRight)))
                         }
                     }
                 }

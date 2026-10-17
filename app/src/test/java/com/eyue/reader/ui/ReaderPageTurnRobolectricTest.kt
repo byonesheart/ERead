@@ -125,6 +125,21 @@ class ReaderPageTurnRobolectricTest {
         compose.onNodeWithTag("reader_animation_curl").assertDoesNotExist()
     }
 
+    @Test fun verticalPagingNeverAppliesHorizontalCoverSlideOrCurlEffects() {
+        val anchor = mutableStateOf(ReaderPageLocation(0, 0))
+        compose.setContent {
+            MaterialTheme { ReaderPageTurnFrame(anchor.value, false, listOf(2), PageTurnStyle.CURL, true, false, Color.White) { _, page, interactive ->
+                assertTrue(interactive)
+                Text("vertical:$page")
+            } }
+        }
+        compose.onNodeWithText("vertical:0").assertExists()
+        compose.runOnIdle { anchor.value = ReaderPageLocation(0, 1) }
+        compose.onNodeWithText("vertical:1").assertExists()
+        compose.onNodeWithText("vertical:0").assertDoesNotExist()
+        compose.onNodeWithTag("reader_animation_curl").assertDoesNotExist()
+    }
+
     /** PixelCopy waits for a real vsync, which a paused Robolectric looper does not produce.
      * Drawing the actual Compose host into a native Canvas keeps the fold's clipping/gradient pixel assertions. */
     private fun captureDrawnPage(view: View, style: PageTurnStyle): Bitmap {

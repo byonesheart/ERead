@@ -9,6 +9,7 @@ import com.eyue.reader.data.LibraryMode
 import com.eyue.reader.data.ReaderBackground
 import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.ReadingMode
+import com.eyue.reader.data.ChineseConversion
 import com.eyue.reader.data.SourceTextStyle
 import com.eyue.reader.data.SourceTextAlignment
 import org.junit.Assert.assertEquals
@@ -40,7 +41,8 @@ class ReaderPageCacheKeyTest {
     @Test fun everyTypographyAndViewportInputInvalidatesLayout() {
         val expected = key()
         listOf(settings.copy(fontSize = 22f), settings.copy(fontName = "系统宋体"), settings.copy(bold = true),
-            settings.copy(lineHeight = 1.6f), settings.copy(letterSpacing = 1.2f), settings.copy(paragraphSpacing = 1.2f)).forEach {
+            settings.copy(lineHeight = 1.6f), settings.copy(letterSpacing = 1.2f), settings.copy(paragraphSpacing = 1.2f),
+            settings.copy(chineseConversion = ChineseConversion.TRADITIONAL), settings.copy(chineseConversion = ChineseConversion.SIMPLIFIED)).forEach {
             assertNotEquals(expected, key(settings = it))
         }
         assertNotEquals(expected, key(width = 601))

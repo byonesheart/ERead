@@ -1,0 +1,17 @@
+{
+  "versionCode": 30,
+  "versionName": "1.9.1",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.9.1",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.9.1/ERead-1.9.1-debug.apk",
+  "mirrors": [
+    { "name": "百度网盘", "url": "https://pan.baidu.com/s/1zCzS3A4ju9589lukRwk9Yg?pwd=READ", "extractionCode": "READ" },
+    { "name": "夸克网盘", "url": "https://pan.quark.cn/s/3d4954570712?pwd=Jhr4", "extractionCode": "Jhr4" }
+  ],
+  "changelog": [
+    "阅读设置新增界面、设置分栏，支持保存和切换多个主题。",
+    "新增简繁体阅读显示转换。",
+    "支持连续追加导入，逐本显示完成的书籍。",
+    "云端上传期间可还原书籍信息，阅读记录变化后可手动更新备份。",
+    "更多功能请自行体验。"
+  ]
+}

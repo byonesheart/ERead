@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
@@ -31,6 +32,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import java.io.File
 
 class ReaderViewModel(application: Application) : AndroidViewModel(application) {
@@ -63,12 +66,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private var cancellingCloudUploads by mutableStateOf<Set<String>>(emptySet())
     private val cloudUploadQueueMutex = Mutex()
     private var cloudGeneration = 0
+    private var cloudMetadataJob: Job? = null
+    private var cloudMetadataEpoch = 0
     private val cloudHistory = CloudBackupHistory(application)
     private var openJob: Job? = null
     private var sessionStarted = 0L
     private var foreground = false
     private val saveMutex = Mutex()
-    private val externalFiles = Channel<Triple<List<Uri>, String?, String?>>(Channel.UNLIMITED)
+    private data class ImportRequest(val id: String, val uris: List<Uri>, val mode: LibraryMode,
+        val folder: Boolean = false, val external: Boolean = false, val mimeType: String? = null, val requestId: String? = null)
+    private val importRequests = Channel<ImportRequest>(Channel.UNLIMITED)
+    private var activeImportId: String? = null
     private val externalRequestIds = mutableSetOf<String>()
     private var storageReady = false
     private data class ReaderViewport(val size: IntSize, val density: Density, val direction: LayoutDirection)
@@ -84,8 +92,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         private set
     var importProgress by mutableStateOf<ImportProgress?>(null)
         private set
-    var pendingImport by mutableStateOf<PendingImport?>(null)
+    var pendingImports by mutableStateOf<List<PendingImport>>(emptyList())
         private set
+    val pendingImport: PendingImport? get() = pendingImports.firstOrNull()
     var message by mutableStateOf<String?>(null)
     var activeBookId by mutableStateOf<String?>(null)
         private set
@@ -94,7 +103,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         private set
     var cloudServerUrl by mutableStateOf(com.eyue.reader.data.cloud.DEFAULT_WEBDAV_SERVER)
         private set
-    private var cloudIdentity: String? = null
+    private var cloudIdentity by mutableStateOf<String?>(null)
+    var cloudDirtyBookIds by mutableStateOf<Set<String>>(emptySet())
+        private set
     var aiSpeechConfig by mutableStateOf<AiSpeechConfig?>(null)
         private set
     var aiSpeechProfiles by mutableStateOf<List<AiSpeechConfig>>(emptyList())
@@ -129,6 +140,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (selectedMode == LibraryMode.COMIC) state.comicSettings.copy(nightMode = state.settings.nightMode) else state.settings
 
     init {
+        viewModelScope.launch {
+            combine(snapshotFlow { state to cloudIdentity.takeIf { cloudConfigured } }, cloudHistory.changes()) { snapshot, _ -> snapshot }
+                .collectLatest { (snapshot, account) ->
+                    delay(120)
+                    val dirty = if (account == null) emptySet() else withContext(Dispatchers.IO) {
+                        val job = kotlinx.coroutines.currentCoroutineContext()
+                        cloudDirtyBookIds(repository, snapshot, account, cloudHistory) { job.ensureActive() }
+                    }
+                    if (state == snapshot && cloudIdentity.takeIf { cloudConfigured } == account) cloudDirtyBookIds = dirty
+                }
+        }
         viewModelScope.launch {
             while (loading) delay(100)
             if (!storageReady) return@launch
@@ -169,7 +191,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         }
-        viewModelScope.launch { importer.progress.collect { if (!preparingLayout) updateImportProgress(it) } }
         viewModelScope.launch {
             val loaded = runCatching {
                 val original = withContext(Dispatchers.IO) { repository.load() }
@@ -239,51 +260,26 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         viewModelScope.launch {
-            for ((uris, mimeType, requestId) in externalFiles) {
-                while (loading || importing) delay(100)
+            for (request in importRequests) {
+                while (loading || importing || rebuildingContents || cleaningLibrary || savingBookVoiceRoles) delay(100)
                 if (!storageReady) {
-                    message = "书架未能加载，无法打开文件"
+                    pendingImports = pendingImports.filterNot { it.id == request.id }
+                    message = "书架未能加载，无法导入文件"
                     continue
                 }
+                activeImportId = request.id
                 importing = true
+                pendingImports = pendingImports.map { if (it.id == request.id) it.copy(queued = false) else it }
                 try {
-                    val completedBookId = if (requestId == null) null else withContext(Dispatchers.IO) {
-                        val prefs = application.getSharedPreferences("external_open", 0)
-                        if (prefs.getString("request_id", null) == requestId) prefs.getString("book_id", null) else null
-                    }
-                    val existing = state.books.find { it.id == completedBookId }
-                    if (existing != null) {
-                        open(existing)
-                        continue
-                    }
-                    val extension = uris.first().lastPathSegment.orEmpty().substringAfterLast('.').lowercase()
-                    val selectedMode = when {
-                        mimeType?.startsWith("image/") == true -> LibraryMode.COMIC
-                        extension in setOf("mobi", "epub", "txt") || mimeType in setOf("application/x-mobipocket-ebook", "application/epub+zip", "text/plain") -> LibraryMode.NOVEL
-                        else -> mode
-                    }
-                    beginImport(uris, selectedMode)
-                    val books = importer.importFiles(uris, selectedMode, state.settings.chapterRule, mimeType).map {
-                        if (it.format == BookFormat.IMAGES) it.copy(mode = LibraryMode.COMIC) else it
-                    }
-                    pendingImport = pendingImport?.copy(mode = books.first().mode, bookIds = books.map { it.id }.toSet())
-                    if (mode == selectedMode) mode = books.first().mode
-                    changed(state.copy(books = state.books + books))
-                    persistNow()
-                    val layoutNotices = prepareImportedBooks(books)
-                    if (requestId != null) withContext(Dispatchers.IO) {
-                        application.getSharedPreferences("external_open", 0).edit()
-                            .putString("request_id", requestId).putString("book_id", books.first().id).commit()
-                    }
-                    open(books.first())
-                    message = (importer.lastImportErrors + importer.lastImportWarnings + layoutNotices).takeIf { it.isNotEmpty() }?.joinToString("\n")
+                    processImport(request)
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
-                    message = error.message ?: "文件打开失败，请确认文件可读取"
+                    message = error.message ?: "导入失败，请确认文件可读取"
                 } finally {
                     importing = false
-                    pendingImport = null
                     updateImportProgress(null)
+                    pendingImports = pendingImports.filterNot { it.id == request.id }
+                    activeImportId = null
                 }
             }
         }
@@ -291,7 +287,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun openExternalFiles(uris: List<Uri>, mimeType: String? = null, requestId: String? = null) {
         if (uris.isEmpty() || (requestId != null && !externalRequestIds.add(requestId))) return
-        externalFiles.trySend(Triple(uris.distinct(), mimeType, requestId))
+        val extension = uris.first().lastPathSegment.orEmpty().substringAfterLast('.').lowercase()
+        val selectedMode = when {
+            mimeType?.startsWith("image/") == true -> LibraryMode.COMIC
+            extension in setOf("mobi", "epub", "txt") || mimeType in setOf("application/x-mobipocket-ebook", "application/epub+zip", "text/plain") -> LibraryMode.NOVEL
+            else -> mode
+        }
+        enqueueImport(uris, selectedMode, external = true, mimeType = mimeType, requestId = requestId)
     }
 
     fun setReaderViewport(size: IntSize, density: Density, direction: LayoutDirection) {
@@ -300,11 +302,23 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun updateImportProgress(progress: ImportProgress?) {
         importProgress = progress
-        pendingImport = pendingImport?.copy(progress = progress)
+        pendingImports = pendingImports.map { if (it.id == activeImportId) it.copy(progress = progress) else it }
     }
 
-    private suspend fun beginImport(uris: List<Uri>, selectedMode: LibraryMode) {
-        pendingImport = PendingImport(if (uris.size == 1) "正在读取文件" else "导入 ${uris.size} 个文件", selectedMode)
+    private fun enqueueImport(uris: List<Uri>, selectedMode: LibraryMode, folder: Boolean = false,
+                              external: Boolean = false, mimeType: String? = null, requestId: String? = null) {
+        if (uris.isEmpty()) return
+        val id = java.util.UUID.randomUUID().toString()
+        val sources = uris.distinct()
+        val title = if (sources.size == 1) sources.single().lastPathSegment?.substringAfterLast('/')
+            ?.substringAfterLast(':')?.substringBeforeLast('.')?.ifBlank { null } ?: "正在读取文件"
+            else "导入 ${sources.size} 个文件"
+        pendingImports = pendingImports + PendingImport(title, selectedMode, id = id, queued = true, total = sources.size)
+        if (importRequests.trySend(ImportRequest(id, sources, selectedMode, folder, external, mimeType, requestId)).isFailure)
+            pendingImports = pendingImports.filterNot { it.id == id }
+    }
+
+    private suspend fun beginImport(uris: List<Uri>) {
         if (uris.size == 1) {
             val uri = uris.single()
             val title = withContext(Dispatchers.IO) {
@@ -314,8 +328,53 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: "正在读取文件"
             }
-            pendingImport = pendingImport?.copy(title = title.substringBeforeLast('.').ifBlank { title })
+            pendingImports = pendingImports.map { if (it.id == activeImportId) it.copy(title = title.substringBeforeLast('.').ifBlank { title }) else it }
         }
+    }
+
+    private suspend fun processImport(request: ImportRequest) {
+        val application = getApplication<Application>()
+        val completedBookId = request.requestId?.let { requestId -> withContext(Dispatchers.IO) {
+            val prefs = application.getSharedPreferences("external_open", 0)
+            if (prefs.getString("request_id", null) == requestId) prefs.getString("book_id", null) else null
+        } }
+        state.books.find { it.id == completedBookId }?.let { open(it); return }
+        beginImport(request.uris)
+        // A fresh importer keeps errors, warnings and progress scoped to this batch, including during font/metadata work.
+        val taskImporter = DocumentImporter(application)
+        val progressJob = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            taskImporter.progress.collect { if (activeImportId == request.id && !preparingLayout) updateImportProgress(it) }
+        }
+        val notices = mutableListOf<String>()
+        var completed = 0
+        suspend fun acceptBook(imported: Book) = withContext(Dispatchers.Main) {
+            val book = if (imported.format == BookFormat.IMAGES) imported.copy(mode = LibraryMode.COMIC) else imported
+            notices += prepareImportedBooks(listOf(book))
+            changed(state.copy(books = state.books + book))
+            persistNow()
+            completed++
+            pendingImports = pendingImports.map { if (it.id == request.id) it.copy(mode = book.mode, completed = completed) else it }
+            if (completed == 1) {
+                if (activeBookId == null && mode == request.mode) mode = book.mode
+                if (request.external) {
+                    request.requestId?.let { requestId -> withContext(Dispatchers.IO) {
+                        application.getSharedPreferences("external_open", 0).edit()
+                            .putString("request_id", requestId).putString("book_id", book.id).commit()
+                    } }
+                    open(book)
+                }
+            }
+        }
+        try {
+            if (request.folder) acceptBook(taskImporter.importFolder(request.uris.single(), state.settings.chapterRule))
+            else taskImporter.importFiles(request.uris, request.mode, state.settings.chapterRule, request.mimeType, ::acceptBook)
+            notices += taskImporter.lastImportErrors + taskImporter.lastImportWarnings
+            message = when {
+                request.external -> notices.takeIf { it.isNotEmpty() }?.joinToString("\n")
+                notices.isEmpty() -> "已导入 $completed 本，去书架翻开看看"
+                else -> "已导入 $completed 本\n${notices.joinToString("\n")}"
+            }
+        } finally { progressJob.cancelAndJoin() }
     }
 
     private suspend fun prepareImportedBooks(books: List<Book>): List<String> {
@@ -512,6 +571,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteBook(book: Book) = removeBook(book, false)
 
     fun removeBook(book: Book, removeCloud: Boolean) {
+        cloudMetadataEpoch++
         if (removeCloud) {
             val allowMetered = meteredNetwork
             cloudOperation(book.id, "移除《${book.title}》及云端备份", beforeLock = {
@@ -592,6 +652,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (bookId != null && cloudBookJobs.containsKey(bookId)) return
         if (!loading && !storageReady) { message = "书架未能加载，无法备份或还原，请先处理本地书架错误"; return }
         if (loading || importing || rebuildingContents) { message = "请等待当前文件整理完成"; return }
+        cloudMetadataEpoch++
         val requestedIdentity = cloudIdentity
         val generation = if (bookId == null) ++cloudGeneration else cloudGeneration
         if (bookId == null) {
@@ -897,6 +958,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val allowMetered = meteredNetwork
         val ids = state.books.map { it.id }.toSet()
         cleaningLibrary = true
+        cloudMetadataEpoch++
         viewModelScope.launch {
             try {
                 if (kind == LibraryCleanupKind.ROLES || kind == LibraryCleanupKind.AI_AUDIO) ids.forEach { stopAiSpeechConversion(it) }
@@ -919,7 +981,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     // Do not immediately upload the local-only cleanup as an automatic backup change.
                     if (account != null) withContext(Dispatchers.IO) {
                         state.books.filter { it.id in ids && it.cloudEnabled && !it.cloudOnly && !cloudHistory.automaticPaused(account, it.id) }.forEach {
-                            cloudHistory.record(account, it.id, cloudBackupFingerprint(repository, state, it), it.cloudBackupAt)
+                            val fingerprint = cloudBackupFingerprint(repository, state, it)
+                            // Cleanup changes selected record fields; it is not a full upload of newer local progress.
+                            cloudHistory.rememberAutomaticBaseline(account, it.id, fingerprint)
                         }
                     }
                     persistNow()
@@ -1007,19 +1071,45 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         message = "《${book.title}》的云端文件已删除，本书自动备份已关闭"
     }
 
-    fun restoreCloudBookInfo() = cloudOperation(label = "还原云端书籍信息") { service ->
-        val info = service.list()
-        val matches = service.restoreBookMatches(state, info)
-        if (cloudRestoreConflicts(state, info, matches).isNotEmpty()) {
-            pendingRestoreIdentity = service.identity()
-            pendingRestoreMatches = matches
-            pendingCloudRestore = info
-            return@cloudOperation
+    fun restoreCloudBookInfo() {
+        if (cloudMetadataJob?.isActive == true || cloudBusy) return
+        if (loading || importing || rebuildingContents || !storageReady) { message = "请等待本地书架和文件整理完成"; return }
+        val account = cloudIdentity.takeIf { cloudConfigured } ?: run { message = "请先配置 WebDAV 网盘"; return }
+        val epoch = cloudMetadataEpoch
+        cloudMetadataJob = viewModelScope.launch {
+            try {
+                val service = CloudBackupService(getApplication())
+                // Metadata reads deliberately use no transfer slot, even when all three uploads are busy.
+                val info = service.list(account)
+                val matches = service.restoreBookMatches(state, info)
+                var added = 0
+                var needsDecision = false
+                cloudOperationMutex.withCatalog(account) {
+                    val existingIds = service.catalogBookIds(account)
+                    require(cloudIdentity == account && cloudMetadataEpoch == epoch && !cloudBusy && !importing && !rebuildingContents) {
+                        "书架或网盘配置已变化，请重新还原书籍信息"
+                    }
+                    val available = info.filter { it.book.id in existingIds }
+                    if (cloudRestoreConflicts(state, available, matches).isNotEmpty()) {
+                        pendingRestoreIdentity = account
+                        pendingRestoreMatches = matches
+                        pendingCloudRestore = available
+                        needsDecision = true
+                    } else {
+                        val before = state.books.size
+                        // Merge the current state, preserving progress and notes changed during network reads.
+                        state = resolveCloudRestoreInformation(state, available, emptyMap(), matches)
+                        added = state.books.size - before
+                    }
+                }
+                if (!needsDecision) {
+                    persistNow()
+                    message = "已还原云端信息，新增 $added 本；请点击云图标逐本下载，本地已有书籍保留"
+                }
+            } catch (error: CancellationException) { throw error }
+              catch (error: Exception) { message = error.message ?: "还原云端书籍信息失败，请稍后重试" }
+            finally { cloudMetadataJob = null }
         }
-        val before = state.books.size
-        changed(resolveCloudRestoreInformation(state, info, emptyMap(), matches))
-        persistNow()
-        message = "已还原云端信息，新增 ${state.books.size - before} 本；请点击云图标逐本下载，本地已有书籍保留"
     }
 
     fun cancelCloudRestore() { pendingCloudRestore = null; pendingRestoreIdentity = null; pendingRestoreMatches = emptyMap() }
@@ -1039,6 +1129,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val resolved = try { cloudRestoreSelectionsForState(state, info, selections, pendingRestoreMatches) }
             catch (error: IllegalArgumentException) { message = error.message; return }
         val updatesCloud = resolved.values.any { it.keepLocalIds.size + (if (it.keepRemote) 1 else 0) == 1 }
+        val keepAll = !updatesCloud && conflicts.all { conflict ->
+            resolved[conflict.remote.id]?.let { it.keepRemote && it.keepLocalIds.containsAll(conflict.locals.map { local -> local.id }) } == true
+        }
+        if (keepAll) {
+            restoreKeepingAllCloudBooks(info)
+            return
+        }
         if (updatesCloud && meteredNetwork && !allowMetered) { message = "当前为计费网络，请确认允许流量后更新云端"; return }
         cloudOperation(label = "处理同名书籍并更新备份") { service ->
             require(service.identity() == pendingRestoreIdentity) { "网盘配置已更改，请重新还原书籍信息" }
@@ -1085,6 +1182,40 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** Keeping every copy changes only shelf metadata, so it must not queue behind book transfers. */
+    private fun restoreKeepingAllCloudBooks(info: List<com.eyue.reader.data.cloud.CloudBookInfo>) {
+        if (cloudMetadataJob?.isActive == true || cloudBusy || importing || rebuildingContents) return
+        val account = pendingRestoreIdentity ?: return
+        val epoch = cloudMetadataEpoch
+        cloudMetadataJob = viewModelScope.launch {
+            try {
+                val service = CloudBackupService(getApplication())
+                var applied = false
+                cloudOperationMutex.withCatalog(account) {
+                    val ids = service.catalogBookIds(account)
+                    if (pendingCloudRestore !== info) return@withCatalog
+                    require(cloudIdentity == account && cloudMetadataEpoch == epoch && !cloudBusy && !importing && !rebuildingContents) {
+                        "书架或网盘配置已变化，请重新还原书籍信息"
+                    }
+                    val available = info.filter { it.book.id in ids }
+                    // Rebuild from the latest shelf: a newly imported local copy must also be kept.
+                    val selections = cloudRestoreConflicts(state, available, pendingRestoreMatches).associate { conflict ->
+                        conflict.remote.id to CloudRestoreSelection(conflict.locals.map { it.id }.toSet(), true)
+                    }
+                    state = resolveCloudRestoreSelectionsInformation(state, available, selections, pendingRestoreMatches)
+                    cancelCloudRestore()
+                    applied = true
+                }
+                if (applied) {
+                    persistNow()
+                    message = "已保留全部书籍，云端备份未修改；请点击云图标下载需要阅读的书籍"
+                }
+            } catch (error: CancellationException) { throw error }
+              catch (error: Exception) { message = error.message ?: "还原云端书籍信息失败，请稍后重试" }
+            finally { cloudMetadataJob = null }
+        }
+    }
+
     fun downloadCloudBook(book: Book) = cloudOperation(book.id, "准备下载《${book.title}》") { service ->
         if (state.books.none { it.id == book.id && it.cloudOnly }) { message = "这本书已在本地，可直接阅读"; return@cloudOperation }
         val restored = service.download(book.id)
@@ -1104,51 +1235,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun importFiles(uris: List<Uri>, selectedMode: LibraryMode) {
-        if (uris.isEmpty() || importing) return
-        viewModelScope.launch {
-            importing = true
-            try {
-                beginImport(uris, selectedMode)
-                runCatching {
-                    val books = importer.importFiles(uris, selectedMode, state.settings.chapterRule)
-                    pendingImport = pendingImport?.copy(mode = books.first().mode, bookIds = books.map { it.id }.toSet())
-                    if (mode == selectedMode) mode = books.first().mode
-                    changed(state.copy(books = state.books + books))
-                    persistNow()
-                    val notices = importer.lastImportErrors + importer.lastImportWarnings + prepareImportedBooks(books)
-                    message = if (notices.isEmpty()) "已导入 ${books.size} 本，去书架翻开看看" else
-                        "已导入 ${books.size} 本\n${notices.joinToString("\n")}"
-                }.onFailure {
-                    if (it is CancellationException) throw it
-                    message = it.message ?: "导入失败，请确认文件可读取"
-                }
-            } finally {
-                importing = false
-                pendingImport = null
-                updateImportProgress(null)
-            }
-        }
+        enqueueImport(uris, selectedMode)
     }
 
     fun importFolder(uri: Uri) {
-        if (importing) return
-        viewModelScope.launch {
-            importing = true
-            try {
-                beginImport(listOf(uri), LibraryMode.COMIC)
-                runCatching { importer.importFolder(uri, state.settings.chapterRule) }.onSuccess {
-                    changed(state.copy(books = state.books + it)); mode = LibraryMode.COMIC
-                    message = (listOf("《${it.title}》已导入，共 ${it.chapters.size} 章") + importer.lastImportWarnings).joinToString("\n")
-                }.onFailure {
-                    if (it is CancellationException) throw it
-                    message = it.message ?: "文件夹导入失败"
-                }
-            } finally {
-                importing = false
-                pendingImport = null
-                updateImportProgress(null)
-            }
-        }
+        enqueueImport(listOf(uri), LibraryMode.COMIC, folder = true)
     }
 
     fun importBackground(uri: Uri, selectedMode: LibraryMode = mode) {
@@ -1165,12 +1256,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun importFont(uri: Uri, selectedMode: LibraryMode = mode) {
         viewModelScope.launch {
-            runCatching { importer.importFont(uri) }.onSuccess { font ->
-                val settings = profileSettings(selectedMode)
-                applySettings(settings.copy(fontName = font.name, fontPath = font.path,
-                    fonts = settings.fonts.filterNot { it.name == font.name } + font), selectedMode)
-                message = "已应用字体「${font.name}」"
-            }.onFailure { message = it.message ?: "字体导入失败，请选择 TTF 或 OTF 字体" }
+            while (loading || importing || rebuildingContents || cleaningLibrary || savingBookVoiceRoles) delay(100)
+            if (!storageReady) { message = "书架未能加载，无法导入字体"; return@launch }
+            importing = true
+            try {
+                runCatching { importer.importFont(uri) }.onSuccess { font ->
+                    val settings = profileSettings(selectedMode)
+                    applySettings(settings.copy(fontName = font.name, fontPath = font.path,
+                        fonts = settings.fonts.filterNot { it.name == font.name } + font), selectedMode)
+                    message = "已应用字体「${font.name}」"
+                }.onFailure { if (it is CancellationException) throw it; message = it.message ?: "字体导入失败，请选择 TTF 或 OTF 字体" }
+            } finally { importing = false }
         }
     }
 

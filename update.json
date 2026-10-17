@@ -8,5 +8,17 @@
     "支持墨水屏模式与平板横屏双页阅读。",
     "支持多本书并行云端备份。",
     "更多功能请自行体验。"
+  ],
+  "mirrors": [
+    {
+      "extractionCode": "READ",
+      "url": "https://pan.baidu.com/s/1zCzS3A4ju9589lukRwk9Yg?pwd=READ",
+      "name": "百度网盘"
+    },
+    {
+      "extractionCode": "Jhr4",
+      "url": "https://pan.quark.cn/s/3d4954570712?pwd=Jhr4",
+      "name": "夸克网盘"
+    }
   ]
 }

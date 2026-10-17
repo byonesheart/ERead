@@ -31,9 +31,6 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.SwapHoriz
-import androidx.compose.material.icons.outlined.SwapVert
-import androidx.compose.material.icons.outlined.UnfoldMore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Button
@@ -85,10 +82,7 @@ import com.eyue.reader.data.LibraryMode
 import com.eyue.reader.data.AnnotationKind
 import com.eyue.reader.data.Book
 import com.eyue.reader.data.BookFormat
-import com.eyue.reader.data.ReaderBackground
 import com.eyue.reader.data.ReaderSettings
-import com.eyue.reader.data.ReadingMode
-import com.eyue.reader.data.PageTurnStyle
 import com.eyue.reader.data.UnderlineStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -105,129 +99,26 @@ internal val ReaderMarkColors = listOf(
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-internal fun ReaderCompactSettings(
-    settings: ReaderSettings, raster: Boolean, onSettings: (ReaderSettings) -> Unit,
-    onImportFont: () -> Unit, onImportBackground: () -> Unit, onMore: () -> Unit,
-    onFonts: () -> Unit = onImportFont
-) {
-    var fontSizeDraft by remember(settings.fontSize) { mutableFloatStateOf(settings.fontSize) }
-    var lineHeightDraft by remember(settings.lineHeight) { mutableFloatStateOf(settings.lineHeight) }
-    var paragraphSpacingDraft by remember(settings.paragraphSpacing) { mutableFloatStateOf(settings.paragraphSpacing) }
-    var letterSpacingDraft by remember(settings.letterSpacing) { mutableFloatStateOf(settings.letterSpacing) }
-    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("阅读设置", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 4.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("背景", Modifier.width(48.dp), fontSize = 13.sp)
-            FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf(ReaderBackground.PAPER to "纸白", ReaderBackground.WHITE to "纯白", ReaderBackground.GREEN to "护眼").forEach { (value, name) ->
-                FilterChip(!settings.nightMode && settings.background == value, { onSettings(settings.copy(background = value, nightMode = false)) }, { Text(name, fontSize = 12.sp) },
-                    modifier = Modifier.height(34.dp))
-            }
-            if (settings.backgroundImagePath != null) FilterChip(settings.background == ReaderBackground.IMAGE,
-                { onSettings(settings.copy(background = ReaderBackground.IMAGE)) }, { Text("图片", fontSize = 12.sp) }, Modifier.height(34.dp))
-            TextButton(onClick = onImportBackground, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("导入图片", fontSize = 12.sp) }
-            }
-        }
-        Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("亮度", Modifier.width(48.dp), fontSize = 13.sp)
-            Slider(if (settings.brightness < 0f) 0.5f else settings.brightness, { onSettings(settings.copy(brightness = it)) },
-                Modifier.weight(1f).semantics { contentDescription = "阅读亮度" }, valueRange = 0.01f..1f)
-            TextButton(onClick = { onSettings(settings.copy(brightness = -1f)) }, contentPadding = PaddingValues(horizontal = 6.dp)) {
-                Text(if (settings.brightness < 0f) "随系统" else "系统", fontSize = 11.sp)
-            }
-        }
-        if (!raster) {
-            Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("字号", Modifier.width(48.dp), fontSize = 13.sp)
-                Slider(fontSizeDraft, { fontSizeDraft = it },
-                    Modifier.weight(1f).semantics { contentDescription = "阅读字号" }, valueRange = 12f..36f, steps = 23,
-                    onValueChangeFinished = { if (fontSizeDraft != settings.fontSize) onSettings(settings.copy(fontSize = fontSizeDraft)) })
-                Text("${fontSizeDraft.toInt()}", Modifier.width(28.dp), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
-            }
-            Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("行距", Modifier.width(48.dp), fontSize = 13.sp)
-                Slider(lineHeightDraft, { lineHeightDraft = it }, Modifier.weight(1f).semantics { contentDescription = "阅读行间距" },
-                    valueRange = 1.2f..2.4f, onValueChangeFinished = {
-                        if (lineHeightDraft != settings.lineHeight) onSettings(settings.copy(lineHeight = lineHeightDraft)) })
-                Text(String.format(Locale.getDefault(), "%.2f", lineHeightDraft), Modifier.width(34.dp), fontSize = 12.sp)
-            }
-            Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("段距", Modifier.width(48.dp), fontSize = 13.sp)
-                Slider(paragraphSpacingDraft, { paragraphSpacingDraft = it }, Modifier.weight(1f).semantics { contentDescription = "阅读段间距" },
-                    valueRange = 0f..2f, onValueChangeFinished = {
-                        if (paragraphSpacingDraft != settings.paragraphSpacing) onSettings(settings.copy(paragraphSpacing = paragraphSpacingDraft)) })
-                Text(String.format(Locale.getDefault(), "%.1f", paragraphSpacingDraft), Modifier.width(34.dp), fontSize = 12.sp)
-            }
-            Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("字距", Modifier.width(48.dp), fontSize = 13.sp)
-                Slider(letterSpacingDraft, { letterSpacingDraft = it }, Modifier.weight(1f).semantics { contentDescription = "阅读字间距" },
-                    valueRange = -0.2f..3f, onValueChangeFinished = {
-                        if (letterSpacingDraft != settings.letterSpacing) onSettings(settings.copy(letterSpacing = letterSpacingDraft)) })
-                Text(String.format(Locale.getDefault(), "%.1f", letterSpacingDraft), Modifier.width(34.dp), fontSize = 12.sp)
-            }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("字体", Modifier.width(48.dp), fontSize = 13.sp)
-                FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf("跟随系统" to "系统", "系统宋体" to "宋体", "系统黑体" to "黑体").forEach { (name, label) ->
-                        FilterChip(settings.fontPath == null && settings.fontName == name,
-                            { onSettings(settings.copy(fontName = name, fontPath = null)) }, { Text(label, fontSize = 12.sp) }, Modifier.height(34.dp))
-                    }
-                    FilterChip(settings.bold, { onSettings(settings.copy(bold = !settings.bold)) }, { Text("加粗", fontSize = 12.sp) }, Modifier.height(34.dp))
-                    TextButton(onClick = onFonts, contentPadding = PaddingValues(horizontal = 6.dp),
-                        modifier = Modifier.testTag("reader_more_fonts")) { Text("更多", fontSize = 12.sp) }
-                }
-            }
-        } else {
-            Text("保持原页排版，双指可缩放", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("模式", Modifier.width(48.dp), fontSize = 13.sp)
-            FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf(Triple(ReadingMode.SCROLL, "滚动", Icons.Outlined.UnfoldMore),
-                    Triple(ReadingMode.PAGED, "翻页", Icons.Outlined.SwapHoriz),
-                    Triple(ReadingMode.VERTICAL_PAGED, "上下", Icons.Outlined.SwapVert)).forEach { (mode, label, icon) ->
-                    FilterChip(settings.readingMode == mode, { onSettings(settings.copy(readingMode = mode)) },
-                        { Text(label, fontSize = 12.sp) }, Modifier.height(34.dp).testTag("reader_mode_${mode.name.lowercase()}"),
-                        leadingIcon = { Icon(icon, null, Modifier.size(16.dp)) })
-                }
-            }
-        }
-        if (settings.readingMode != ReadingMode.SCROLL) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("翻页", Modifier.width(48.dp), fontSize = 13.sp)
-            FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf(PageTurnStyle.COVER to "覆盖", PageTurnStyle.SLIDE to "滑动", PageTurnStyle.CURL to "仿真").forEach { (style, label) ->
-                    FilterChip(settings.pageTurnStyle == style, { onSettings(settings.copy(pageTurnStyle = style)) },
-                        { Text(label, fontSize = 12.sp) }, Modifier.height(34.dp).testTag("reader_turn_${style.name.lowercase()}"))
-                }
-            }
-        }
-        TextButton(onClick = onMore, modifier = Modifier.align(Alignment.End)) { Text("更多设置") }
-    }
-}
-
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
 internal fun ReaderMoreSettings(settings: ReaderSettings, onSettings: (ReaderSettings) -> Unit,
     onFonts: () -> Unit, onSpacing: () -> Unit, onClose: () -> Unit,
     onResetDefaults: () -> Unit = {}) {
+    ReaderDialogFrame("阅读设置", settings, onClose) { ReaderPreferenceSettings(settings, onSettings, onResetDefaults) }
+}
+
+@Composable
+internal fun ReaderPreferenceSettings(settings: ReaderSettings, onSettings: (ReaderSettings) -> Unit,
+    onResetDefaults: () -> Unit = {}) {
     var confirmReset by remember { mutableStateOf(false) }
-    ReaderDialogFrame("更多阅读设置", settings, onClose) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         ReaderToggle("时间", settings.showTime) { onSettings(settings.copy(showTime = it)) }
         ReaderToggle("电量", settings.showBattery) { onSettings(settings.copy(showBattery = it)) }
         ReaderToggle("章节名称", settings.showChapter) { onSettings(settings.copy(showChapter = it)) }
         ReaderToggle("音量键翻页", settings.volumePaging) { onSettings(settings.copy(volumePaging = it)) }
         ReaderToggle("阅读时保持亮屏", settings.keepScreenOn) { onSettings(settings.copy(keepScreenOn = it)) }
         HorizontalDivider()
-        ReaderSettingLabel("系统朗读语速", String.format(Locale.getDefault(), "%.1f×", settings.ttsSpeed))
+        ReaderAdjustableSlider("语速", "系统朗读语速", settings.ttsSpeed, .5f..2f, .1f,
+            { onSettings(settings.copy(ttsSpeed = it)) }, { String.format(Locale.getDefault(), "%.1f×", it) })
         ReaderToggle("朗读与阅读页面同步", settings.ttsFollowPage) { onSettings(settings.copy(ttsFollowPage = it)) }
-        Slider(settings.ttsSpeed, { onSettings(settings.copy(ttsSpeed = it)) }, valueRange = 0.5f..2f, steps = 14)
-        Text("使用系统文字转语音引擎，从当前阅读位置开始。", style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = onFonts) { Text("字体与导入") }
-            TextButton(onClick = onSpacing) { Text("字距与行距") }
-        }
         HorizontalDivider()
         TextButton(onClick = { confirmReset = true }, modifier = Modifier.testTag("reader_reset_defaults")) { Text("恢复本模式默认设置") }
     }

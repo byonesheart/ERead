@@ -7,6 +7,12 @@ import com.eyue.reader.data.BookFormat
 import com.eyue.reader.data.Chapter
 import com.eyue.reader.data.LibraryMode
 import com.eyue.reader.data.LibraryState
+import com.eyue.reader.data.Annotation
+import com.eyue.reader.data.cloudOperationMutex
+import com.eyue.reader.data.resolveCloudRestoreInformation
+import com.eyue.reader.data.CloudRestoreSelection
+import com.eyue.reader.data.cloudRestoreConflicts
+import com.eyue.reader.data.resolveCloudRestoreSelectionsInformation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
@@ -75,6 +81,69 @@ class CloudParallelTransfersRobolectricTest {
         withTimeout(10_000) { (first + fourth).awaitAll() }
         assertEquals(books.map { it.id }.toSet(), server.catalog())
         assertEquals(4, service.list().size)
+    }
+
+    @Test fun metadataRestoreReadsAndMergesLatestLocalRecordsWhileAllThreeTransfersAreBusy() = fixture { service, server, book ->
+        val original = book("metadata-existing").copy(progress = .2f)
+        service.upload(LibraryState(books = listOf(original)), original)
+        val uploading = (1..3).map { book("metadata-busy-$it") }
+        server.held.addAll(uploading.map { it.id })
+        val uploads = uploading.map { async(Dispatchers.IO) { service.upload(LibraryState(books = listOf(it)), it) } }
+        assertTrue(server.threeStarted.await(5, TimeUnit.SECONDS))
+        try {
+            val listed = withTimeout(3_000) { service.list(requireNotNull(service.identity())) }
+            val note = Annotation(bookId = original.id, chapterIndex = 0, pageIndex = 0, quote = "最新", note = "读取元信息期间写下的笔记")
+            val latest = LibraryState(books = listOf(original.copy(progress = .9f, characterOffset = 11)) + uploading, annotations = listOf(note))
+            val restored = withTimeout(3_000) {
+                cloudOperationMutex.withCatalog(requireNotNull(service.identity())) {
+                    val ids = service.catalogBookIds(requireNotNull(service.identity()))
+                    resolveCloudRestoreInformation(latest, listed.filter { it.book.id in ids }, emptyMap())
+                }
+            }
+            assertEquals(.9f, restored.books.first { it.id == original.id }.progress)
+            assertEquals(11, restored.books.first { it.id == original.id }.characterOffset)
+            assertEquals(listOf(note), restored.annotations)
+            assertEquals(4, restored.books.size)
+            assertEquals(3, server.active.get())
+        } finally { server.release.countDown() }
+        withTimeout(10_000) { uploads.awaitAll() }
+    }
+
+    @Test fun keepingAllUncertainSameTitleCopiesDoesNotWaitForUploadsOrModifyAnyCloudBackup() = fixture { service, server, book ->
+        val remote = book("keep-all-remote").copy(title = "同名书籍")
+        service.upload(LibraryState(books = listOf(remote)), remote)
+        val uploading = (1..3).map { book("keep-all-busy-$it") }
+        server.held.addAll(uploading.map { it.id })
+        val uploads = uploading.map { async(Dispatchers.IO) { service.upload(LibraryState(books = listOf(it)), it) } }
+        assertTrue(server.threeStarted.await(5, TimeUnit.SECONDS))
+        try {
+            val incoming = service.list(requireNotNull(service.identity()))
+            val catalog = requireNotNull(server.files["catalog.json"]).copyOf()
+            val manifest = requireNotNull(server.files["books/${remote.id}/manifest.json"]).copyOf()
+            val first = remote.copy(id = "keep-all-local", progress = .8f, characterOffset = 12)
+            val newlyImported = remote.copy(id = "keep-all-new-local", progress = .4f)
+            val note = Annotation(bookId = first.id, chapterIndex = 0, pageIndex = 0, note = "最新笔记")
+            val latest = LibraryState(books = listOf(first, newlyImported) + uploading, annotations = listOf(note))
+            val restored = withTimeout(3_000) {
+                cloudOperationMutex.withCatalog(requireNotNull(service.identity())) {
+                    val ids = service.catalogBookIds(requireNotNull(service.identity()))
+                    val available = incoming.filter { it.book.id in ids }
+                    val keepAll = cloudRestoreConflicts(latest, available).associate { conflict ->
+                        conflict.remote.id to CloudRestoreSelection(conflict.locals.map { it.id }.toSet(), true)
+                    }
+                    resolveCloudRestoreSelectionsInformation(latest, available, keepAll)
+                }
+            }
+            assertEquals(6, restored.books.size)
+            assertEquals(.8f, restored.books.first { it.id == first.id }.progress)
+            assertEquals(listOf(note), restored.annotations)
+            assertTrue(restored.books.any { it.id == newlyImported.id })
+            assertTrue(restored.books.first { it.id == remote.id }.cloudOnly)
+            assertArrayEquals(catalog, server.files["catalog.json"])
+            assertArrayEquals(manifest, server.files["books/${remote.id}/manifest.json"])
+            assertEquals(3, server.active.get())
+        } finally { server.release.countDown() }
+        withTimeout(10_000) { uploads.awaitAll() }
     }
 
     @Test fun blockedBookDoesNotPreventAnotherBooksDeletionOrUploadAndCancellationIsIndependent() = fixture { service, server, book ->

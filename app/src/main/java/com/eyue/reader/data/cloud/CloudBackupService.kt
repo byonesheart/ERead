@@ -216,14 +216,21 @@ class CloudBackupService(
         } finally { cancellationWatcher.cancel(); transport.cancel() }
     } }
 
-    suspend fun list(): List<CloudBookInfo> = withContext(Dispatchers.IO) {
+    suspend fun list(expectedIdentity: String? = null): List<CloudBookInfo> = withContext(Dispatchers.IO) {
         val job = currentCoroutineContext()
-        val check = { job.ensureActive() }
         val credentials = requireNotNull(credentialStore.read()) { "请先配置 WebDAV 服务器、账户与密码" }
+        require(expectedIdentity == null || credentials.identity == expectedIdentity) { "WebDAV 配置已更改，请重新还原书籍信息" }
+        val check = {
+            job.ensureActive()
+            require(credentialStore.read()?.identity == credentials.identity) { "WebDAV 配置已更改，请重新还原书籍信息" }
+        }
         val transport = transportFactory(credentials, check)
         transport.ensureCollection("")
         transport.ensureCollection("books/")
-        val ids = transport.metadata("catalog.json")?.let(::readCatalog) ?: legacyIds(transport)
+        val ids = cloudOperationMutex.withCatalog(credentials.identity) {
+            check()
+            transport.metadata("catalog.json")?.let(::readCatalog) ?: legacyIds(transport)
+        }
         val covers = cloudCoverDirectory(credentials).apply { check(mkdirs() || isDirectory) }
         ids.mapIndexedNotNull { index, id ->
             check()
@@ -246,6 +253,16 @@ class CloudBackupService(
             manifest.info.copy(book = manifest.info.book.copy(coverPath = cover, cloudOnly = true,
                 cloudEnabled = true, sourceUri = null, sourceLinked = false, cloudBackupAt = manifest.info.backupAt))
         }
+    }
+
+    /** The caller may hold the short catalog lock while validating and merging a metadata snapshot. */
+    suspend fun catalogBookIds(expectedIdentity: String): Set<String> = withContext(Dispatchers.IO) {
+        val job = currentCoroutineContext()
+        val credentials = requireNotNull(credentialStore.read()) { "请先配置 WebDAV 网盘" }
+        require(credentials.identity == expectedIdentity) { "WebDAV 配置已更改，请重新还原书籍信息" }
+        val transport = transportFactory(credentials) { job.ensureActive() }
+        try { (transport.metadata("catalog.json")?.let(::readCatalog) ?: legacyIds(transport)).toSet() }
+        finally { transport.cancel() }
     }
 
     suspend fun deleteBook(bookId: String) = cloudOperationMutex.withBook(bookId) { withContext(Dispatchers.IO) {
@@ -528,7 +545,8 @@ class CloudBackupService(
 
     private fun remapSettings(settings: ReaderSettings, path: (String?) -> String?): ReaderSettings {
         val fonts = settings.fonts.map { ImportedFont(it.name, requireNotNull(path(it.path))) }
-        return settings.copy(fonts = fonts, fontPath = path(settings.fontPath), backgroundImagePath = path(settings.backgroundImagePath))
+        return settings.copy(fonts = fonts, fontPath = path(settings.fontPath), backgroundImagePath = path(settings.backgroundImagePath),
+            appearanceProfiles = settings.appearanceProfiles.map { it.mapPaths(path) })
     }
 
     private fun contentBook(book: Book): Book = book.copy(title = "", author = "", chapterIndex = 0, pageIndex = 0,
