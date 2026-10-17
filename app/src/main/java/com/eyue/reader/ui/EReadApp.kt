@@ -1,0 +1,349 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+package com.eyue.reader.ui
+
+import android.app.Activity
+import android.Manifest
+import android.os.Build
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import android.content.ContextWrapper
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
+import com.eyue.reader.ReaderViewModel
+import com.eyue.reader.data.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withTimeoutOrNull
+
+@Composable
+fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
+    val systemDark = isSystemInDarkTheme()
+    SideEffect { vm.updateSystemTheme(systemDark) }
+    val dark = vm.state.themeMode.isDark(systemDark)
+    MaterialTheme(colorScheme = if (vm.state.einkMode) einkAppColors(dark) else if (dark) DarkAppColors else LightAppColors) {
+        val state = vm.state.withResolvedTheme(systemDark)
+        val settings = vm.readerSettings.copy(nightMode = dark)
+        val density = LocalDensity.current
+        val context = LocalContext.current
+        val direction = LocalLayoutDirection.current
+        var safeViewport by remember { mutableStateOf(IntSize.Zero) }
+        Box(Modifier.fillMaxSize().safeDrawingPadding().onSizeChanged { safeViewport = it })
+        SideEffect {
+            vm.setReaderViewport(readerBodyViewport(density, safeViewport),
+                Density(density.density, density.fontScale), direction)
+        }
+        var tab by rememberSaveable { mutableIntStateOf(0) }
+        var query by rememberSaveable { mutableStateOf("") }
+        var showImport by remember { mutableStateOf(false) }
+        var showNotes by remember { mutableStateOf(false) }
+        var showChapterRules by remember { mutableStateOf(false) }
+        var voiceRolesBookId by remember { mutableStateOf<String?>(null) }
+        var commonVoiceRolesOpen by remember { mutableStateOf(false) }
+        var selectedRoleText by remember { mutableStateOf<String?>(null) }
+        var pendingNotificationTask by remember { mutableStateOf<(() -> Unit)?>(null) }
+        val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val action = pendingNotificationTask; pendingNotificationTask = null
+            if (!granted) vm.message = "通知权限未开启，转化进度可在目录查看"
+            action?.invoke()
+        }
+        fun startNotifiedTask(action: () -> Unit) {
+            if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                pendingNotificationTask = action; notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else action()
+        }
+        var selectedImportMode by rememberSaveable { mutableStateOf(vm.mode) }
+        var selectedFontMode by rememberSaveable { mutableStateOf(vm.mode) }
+        var selectedBackgroundMode by rememberSaveable { mutableStateOf(vm.mode) }
+        fun cloudBook(target: Book) {
+            if (!vm.cloudConfigured) {
+                tab = 2
+                vm.message = "请先在设置中配置 WebDAV 网盘"
+            } else if (target.cloudOnly) vm.downloadCloudBook(target)
+            else vm.uploadCloudBook(target)
+        }
+        LaunchedEffect(vm.pendingImport != null) {
+            vm.pendingImport?.let { tab = 1; vm.mode = it.mode }
+        }
+        val files = rememberLauncherForActivityResult(OpenBookDocuments()) {
+            it.forEach { uri -> retainBookAccess(context, uri) }
+            if (it.isNotEmpty()) vm.mode = selectedImportMode
+            vm.importFiles(it, selectedImportMode)
+        }
+        val sourceWriteAccess = rememberLauncherForActivityResult(GrantBookWriteAccess()) { uri ->
+            if (uri == null) vm.cancelSourceWrite() else {
+                retainBookAccess(context, uri)
+                vm.resumeSourceWrite(uri)
+            }
+        }
+        var sourceWritePickerOpen by rememberSaveable { mutableStateOf(false) }
+        LaunchedEffect(vm.pendingSourceWriteUri) {
+            val uri = vm.pendingSourceWriteUri
+            if (uri == null) sourceWritePickerOpen = false
+            else if (!sourceWritePickerOpen) {
+                sourceWritePickerOpen = true
+                sourceWriteAccess.launch(uri)
+            }
+        }
+        val folder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { it?.let(vm::importFolder) }
+        val font = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { uri -> vm.importFont(uri, selectedFontMode) } }
+        fun importFont() { selectedFontMode = vm.mode; font.launch(arrayOf("*/*")) }
+        val backgroundImage = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
+            it?.let { uri -> vm.importBackground(uri, selectedBackgroundMode) }
+        }
+        fun importBackground() { selectedBackgroundMode = vm.mode; backgroundImage.launch(arrayOf("image/*")) }
+        val snack = remember { SnackbarHostState() }
+        LaunchedEffect(vm.message) {
+            vm.message?.let { message ->
+                if (vm.activeBookId != null) withTimeoutOrNull(1000) { snack.showSnackbar(message) }
+                else snack.showSnackbar(message)
+                if (vm.message == message) vm.message = null
+            }
+        }
+        val book = state.books.find { it.id == vm.activeBookId }
+        val view = LocalView.current
+        val window = remember(view) {
+            var context = view.context
+            while (context is ContextWrapper && context !is Activity) context = context.baseContext
+            (context as? Activity)?.window
+        }
+        SideEffect {
+            if (book == null && window != null) {
+                WindowCompat.getInsetsController(window, view).apply {
+                    isAppearanceLightStatusBars = !state.settings.nightMode
+                    isAppearanceLightNavigationBars = !state.settings.nightMode
+                }
+            }
+        }
+        if (book != null) {
+            var showSpeechSettings by remember(book.id) { mutableStateOf(false) }
+            var resumeSearch by remember(book.id) { mutableStateOf<ReaderSearchDraft?>(null) }
+            key(book.id, book.contentVersion, book.chapters) {
+                val speechFactory: (android.content.Context) -> ReaderSpeechController = remember(state.speechEngine, vm.aiSpeechConfig, state.aiSpeechFallback,
+                    if (state.speechEngine == SpeechEngine.AI && vm.aiSpeechConfig?.rolePromptEnabled == true) book.voiceRoles else null,
+                    if (state.speechEngine == SpeechEngine.AI && vm.aiSpeechConfig?.rolePromptEnabled == true) state.commonVoiceRoles else null) {
+                    { context: android.content.Context -> if (state.speechEngine == SpeechEngine.AI) AiReaderSpeech(context, bookId = book.id,
+                        fallbackEnabled = state.aiSpeechFallback, rolesProvider = { book.voiceRoles }, commonRolesProvider = { state.commonVoiceRoles },
+                        bookProvider = { book }, onCacheChanged = vm::notifyAiSpeechCacheChanged) else ReaderSpeech(context) }
+                }
+                CompositionLocalProvider(LocalReaderSpeechFactory provides speechFactory) {
+                ReaderScreen(book, settings, state.annotations.filter { it.bookId == book.id },
+                    onClose = vm::close,
+                    onProgress = { chapter, page, offset, progress, imagePath -> vm.progress(chapter, page, offset, progress, book.id, imagePath) },
+                    onSettings = vm::settings,
+                    onAddAnnotation = vm::annotate, onDeleteAnnotation = vm::deleteAnnotation,
+                    onImportFont = ::importFont, volumeEvents = volumeEvents,
+                    onEditTxt = vm::editTxt, onChapterRules = { showChapterRules = true }, onImportBackground = ::importBackground,
+                    onReplaceMatch = { result, expected, replacement ->
+                        resumeSearch = ReaderSearchDraft(expected, replacement)
+                        vm.replaceBookMatch(result.chapter, result.offset, expected, replacement)
+                    }, onReplaceAll = { query, replacement ->
+                        resumeSearch = ReaderSearchDraft(query, replacement)
+                        vm.replaceAllBookMatches(query, replacement)
+                    }, textEditBusy = vm.importing, resumeSearch = resumeSearch, onSearchClosed = { resumeSearch = null },
+                    onSpeechSettings = { showSpeechSettings = true },
+                    onGenerateSpeech = if (book.mode == LibraryMode.NOVEL && !book.cloudOnly) { chapters -> startNotifiedTask { vm.generateAiSpeech(book.id, chapters) } } else null,
+                    speechGenerationBusy = vm.aiSpeechGenerations[book.id]?.running == true,
+                    speechCacheConfig = vm.aiSpeechConfig, speechCacheRevision = vm.aiSpeechCacheRevision,
+                    commonVoiceRoles = state.commonVoiceRoles,
+                    onResetDefaults = { vm.resetReaderSettings(book.mode) }, speechGeneration = vm.aiSpeechGenerations[book.id],
+                    onCancelSpeech = { vm.cancelAiSpeechGeneration(book.id) },
+                    einkMode = state.einkMode, tabletDualPage = state.tabletDualPage,
+                    onRoleSelection = if (book.mode == LibraryMode.NOVEL) { text ->
+                        selectedRoleText = text; voiceRolesBookId = book.id
+                    } else null)
+                }
+            }
+            if (showSpeechSettings) SpeechEngineDialog(state.speechEngine, vm.aiSpeechConfig, vm::setSpeechEngine,
+                vm::saveAiSpeech, { showSpeechSettings = false }, profiles = vm.aiSpeechProfiles,
+                onSelectProfile = vm::selectAiSpeechProfile, onSaveProfile = vm::saveAiSpeechProfile,
+                onTestConnection = vm::testAiSpeechConnection,
+                fallbackEnabled = state.aiSpeechFallback, onFallbackEnabled = vm::setAiSpeechFallback,
+                onBookRoles = { selectedRoleText = null; voiceRolesBookId = book.id; showSpeechSettings = false })
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+                SnackbarHost(snack, Modifier.navigationBarsPadding().padding(12.dp))
+            }
+        } else {
+            Scaffold(containerColor = Paper, snackbarHost = { SnackbarHost(snack) }, bottomBar = {
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
+                    listOf("阅读" to Icons.AutoMirrored.Outlined.MenuBook, "书架" to Icons.Outlined.LibraryBooks,
+                        "设置" to Icons.Outlined.Tune).forEachIndexed { i, entry ->
+                        NavigationBarItem(selected = tab == i, onClick = { tab = i },
+                            icon = { Icon(entry.second, entry.first, Modifier.size(23.dp)) },
+                            label = { Text(entry.first, fontSize = 11.sp) },
+                            colors = NavigationBarItemDefaults.colors(selectedIconColor = Olive,
+                                selectedTextColor = Olive, indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
+                                unselectedIconColor = Muted, unselectedTextColor = Muted))
+                    }
+                }
+            }) { padding ->
+                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
+                    Column(Modifier.fillMaxSize().widthIn(max = 720.dp)) {
+                        if (tab != 2) ModeTabs(vm.mode, { vm.mode = it }, { showNotes = true }, { showImport = true },
+                            importEnabled = !vm.importing && !vm.loading, nightMode = dark, onToggleNight = vm::toggleNightMode)
+                        if (vm.loading) {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Olive) }
+                        } else {
+                            val pending = vm.pendingImport?.takeIf { it.mode == vm.mode }
+                            val books = state.books.filter { it.mode == vm.mode && it.id !in vm.pendingImport?.bookIds.orEmpty() }
+                            when (tab) {
+                                0 -> ReadingHome(books, state.readingSeconds, vm::open, { tab = 1 }, { showImport = true },
+                                    onCloud = ::cloudBook, cloudBusy = vm.cloudBusy, cloudBookId = vm.cloudBookId,
+                                    cloudTaskLabel = vm.cloudTaskLabel, cloudFraction = vm.cloudFraction,
+                                    onCancelCloud = vm::cancelCloudUpload, cloudCanCancel = vm.cloudUploadCancellable,
+                                    cloudTransfers = vm.cloudTransfers)
+                                1 -> key(vm.mode) {
+                                    Bookshelf(books, query, { query = it }, vm::open, vm::deleteBook, { showImport = true },
+                                        state.groups.filter { it.mode == vm.mode }, vm::createGroup, vm::renameGroup,
+                                        vm::deleteGroup, vm::moveBookToGroup, pending = pending,
+                                        onCloud = ::cloudBook, cloudBusy = vm.cloudBusy, cloudBookId = vm.cloudBookId,
+                                        cloudTaskLabel = vm.cloudTaskLabel, cloudFraction = vm.cloudFraction,
+                                        onCancelCloud = vm::cancelCloudUpload, onDeleteCloud = vm::deleteCloudBook,
+                                        cloudCanCancel = vm.cloudUploadCancellable, onClearAiSpeechCache = vm::clearAiSpeechCache, onCloudBatch = { books ->
+                                            if (!vm.cloudConfigured) { tab = 2; vm.message = "请先配置 WebDAV 网盘" } else vm.uploadCloudBooks(books)
+                                        }, onRestoreCloudBookInfo = {
+                                            if (!vm.cloudConfigured) { tab = 2; vm.message = "请先配置 WebDAV 网盘" }
+                                            else vm.restoreCloudBookInfo()
+                                        }, onGenerateSpeech = { id -> startNotifiedTask { vm.generateAiSpeech(id) } },
+                                        onVoiceRoles = { id -> selectedRoleText = null; voiceRolesBookId = id },
+                                        onRemoveWithCloud = vm::removeBook, onClearSpeechWithCloud = { book, _ -> vm.clearAiSpeechCache(book) },
+                                        cloudConfigured = vm.cloudConfigured, meteredNetwork = vm.meteredNetwork,
+                                        speechCacheRevision = vm.aiSpeechCacheRevision, cloudTransfers = vm.cloudTransfers)
+                                }
+                                else -> SettingsScreen(state, { vm.settings(vm.readerSettings.copy(nightMode = it.nightMode)) }, vm::saveChapterRule,
+                                    ::importFont, vm::clearHistory, mode = LibraryMode.NOVEL, cloudAccount = vm.cloudAccount,
+                                    cloudServerUrl = vm.cloudServerUrl,
+                                    cloudConfigured = vm.cloudConfigured, cloudBusy = vm.cloudBusy, cloudTaskLabel = vm.cloudTaskLabel,
+                                    cloudFraction = vm.cloudFraction, onSaveCloudAccount = vm::saveCloudAccount,
+                                    onTestCloudConnection = vm::testCloudConnection, onCloudAutoBackup = vm::setCloudAutoBackup,
+                                    onRestoreCloudBookInfo = vm::restoreCloudBookInfo, onDisconnectCloud = vm::disconnectCloud,
+                                    onCloudAutoBackupMetered = vm::setCloudAutoBackupMetered,
+                                    aiSpeechConfig = vm.aiSpeechConfig, onSpeechEngine = vm::setSpeechEngine, onSaveAiSpeech = vm::saveAiSpeech,
+                                    aiSpeechProfiles = vm.aiSpeechProfiles, onSelectAiSpeechProfile = vm::selectAiSpeechProfile,
+                                    onSaveAiSpeechProfile = vm::saveAiSpeechProfile,
+                                    onTestAiSpeechConnection = vm::testAiSpeechConnection,
+                                    onThemeMode = vm::setThemeMode, onClearAiSpeechCaches = vm::clearAiSpeechCaches,
+                                    onTestCloudDraftConnection = vm::testCloudDraftConnection,
+                                    onAiSpeechFallback = vm::setAiSpeechFallback,
+                                    onBookVoiceRoles = { id -> selectedRoleText = null; voiceRolesBookId = id },
+                                    onCleanup = vm::cleanupLibrary, speechCacheRevision = vm.aiSpeechCacheRevision,
+                                    meteredNetwork = vm.meteredNetwork, onCommonVoiceRoles = { commonVoiceRolesOpen = true },
+                                    onEinkMode = vm::setEinkMode, onTabletDualPage = vm::setTabletDualPage)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (showImport) {
+            ModalBottomSheet(onDismissRequest = { showImport = false }, containerColor = Paper) {
+                Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 28.dp)) {
+                    Text("把故事带进来", fontFamily = FontFamily.Serif, fontSize = 26.sp)
+                    Text("优先直接读取原文件，仅保存必要的阅读缓存", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp, bottom = 24.dp))
+                    ImportOption(Icons.Outlined.Description, "导入文件", "EPUB、TXT、MOBI、PDF、图片 · 自动分类，支持多选") {
+                        selectedImportMode = vm.mode; showImport = false; tab = 1
+                        files.launch(arrayOf("*/*"))
+                    }
+                    ImportOption(Icons.Outlined.FolderOpen, "导入漫画文件夹", "多分支分章分节，单一子目录递归合并") {
+                        showImport = false; tab = 1; vm.mode = LibraryMode.COMIC; folder.launch(null)
+                    }
+                }
+            }
+        }
+        if (showNotes) {
+            NotebookDialog(state, onDismiss = { showNotes = false }, onDelete = vm::deleteAnnotation, onOpen = { annotation ->
+                state.books.find { it.id == annotation.bookId }?.let { target ->
+                    vm.open(target.copy(chapterIndex = annotation.chapterIndex, pageIndex = annotation.pageIndex,
+                        characterOffset = annotation.characterOffset, positionImagePath = annotation.imagePath))
+                }
+                showNotes = false
+            })
+        }
+        if (vm.pendingCloudRestore != null) CloudRestoreDialog(vm.cloudRestoreConflicts, vm.meteredNetwork, vm.cloudBusy,
+            vm::cancelCloudRestore, vm::resolveCloudRestoreSelections)
+        if (showChapterRules) {
+            ChapterRulesDialog(state.settings.chapterRules, state.settings.activeChapterRuleId,
+                onDismiss = { showChapterRules = false }, onSavePreset = vm::saveChapterRulePreset,
+                onSelect = { showChapterRules = false; vm.selectChapterRule(it) }, onDelete = vm::deleteChapterRule)
+        }
+        state.books.firstOrNull { it.id == voiceRolesBookId }?.let { target ->
+            BookVoiceRolesDialog(target, { vm.saveBookVoiceRoles(target.id, it) },
+                { voiceRolesBookId = null; selectedRoleText = null }, selectedRoleText, saving = vm.savingBookVoiceRoles)
+        }
+        if (commonVoiceRolesOpen) BookVoiceRolesDialog(
+            Book(id = "__common_roles__", title = "通用角色", format = BookFormat.TXT, mode = LibraryMode.NOVEL,
+                chapters = emptyList(), voiceRoles = state.commonVoiceRoles), vm::saveCommonVoiceRoles,
+            { commonVoiceRolesOpen = false }, saving = vm.savingBookVoiceRoles)
+        if (vm.rebuildingContents) {
+            AlertDialog(onDismissRequest = {}, confirmButton = {}, title = { Text("正在更新目录") },
+                text = { Text("正在迁移阅读位置、书签和笔记") })
+        }
+    }
+}
+
+@Composable internal fun ModeTabs(mode: LibraryMode, onMode: (LibraryMode) -> Unit, onNotes: () -> Unit,
+    onImport: () -> Unit = {}, importEnabled: Boolean = true, nightMode: Boolean = false, onToggleNight: () -> Unit = {}) {
+    Row(Modifier.padding(start = 24.dp, end = 16.dp, top = 8.dp).fillMaxWidth().height(48.dp).testTag("mode_tabs"),
+        verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(13.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(4.dp)) {
+            listOf(LibraryMode.NOVEL to "小说", LibraryMode.COMIC to "漫画").forEach { (value, label) ->
+                val selected = mode == value
+                Row(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(10.dp))
+                    .background(if (selected) MaterialTheme.colorScheme.surface else Color.Transparent).clickable { onMode(value) },
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                    Icon(if (value == LibraryMode.NOVEL) Icons.AutoMirrored.Outlined.MenuBook else Icons.Outlined.AutoStories,
+                        null, Modifier.size(16.dp), tint = if (selected) Olive else Muted)
+                    Text(label, fontSize = 13.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (selected) Olive else Muted, modifier = Modifier.padding(start = 7.dp))
+                }
+            }
+        }
+        IconButton(onClick = onToggleNight, modifier = Modifier.testTag("top_night_mode")) {
+            Icon(if (nightMode) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
+                if (nightMode) "切换到日间模式" else "切换到夜间模式", tint = Ink)
+        }
+        IconButton(onClick = onNotes, modifier = Modifier.testTag("notebook_entry")) {
+            Icon(Icons.Outlined.Bookmarks, "书签与笔记", tint = Ink)
+        }
+        IconButton(onClick = onImport, enabled = importEnabled, modifier = Modifier.testTag("top_import")) {
+            Icon(Icons.Outlined.Add, "导入书籍", tint = if (importEnabled) Ink else Muted)
+        }
+    }
+}
+
+@Composable private fun ImportOption(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(bottom = 12.dp).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surface).clickable(onClick = onClick).padding(17.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(11.dp)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = Olive, modifier = Modifier.size(22.dp)) }
+        Column(Modifier.weight(1f).padding(start = 14.dp)) { Text(title, fontSize = 15.sp); Text(subtitle, color = Muted, fontSize = 10.sp, modifier = Modifier.padding(top = 5.dp)) }
+        Icon(Icons.Outlined.ChevronRight, null, tint = Muted, modifier = Modifier.size(18.dp))
+    }
+}

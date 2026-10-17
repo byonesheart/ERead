@@ -1,0 +1,12 @@
+{
+  "versionCode": 29,
+  "versionName": "1.9.0",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.9.0",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.9.0/ERead-1.9.0-debug.apk",
+  "changelog": [
+    "新增覆盖、滑动与仿真翻页效果。",
+    "支持墨水屏模式与平板横屏双页阅读。",
+    "支持多本书并行云端备份。",
+    "更多功能请自行体验。"
+  ]
+}
