@@ -1,17 +1,25 @@
 {
-  "versionCode": 31,
-  "versionName": "1.9.2",
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.9.2",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.9.2/ERead-1.9.2-debug.apk",
+  "versionCode": 32,
+  "versionName": "1.9.3",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.9.3",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.9.3/ERead-1.9.3-debug.apk",
   "mirrors": [
-    { "name": "百度网盘", "url": "https://pan.baidu.com/s/1U9hUEYEfLaG8tsQ75Re3qQ?pwd=READ", "extractionCode": "READ" },
-    { "name": "夸克网盘", "url": "https://pan.quark.cn/s/5028a0f5ed77", "extractionCode": "WgXG" }
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/13KFiy5zqdbvc7cu2-oOrpA?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/f5d8031940bd",
+      "extractionCode": "u51W"
+    }
   ],
   "changelog": [
-    "阅读工具栏独立显示界面和设置，主题支持长按编辑与确认删除。",
-    "导入期间可操作其他书籍的云端备份，减少成功提示。",
-    "上传和还原统一使用原文件名及原书大小去重，无法确定的同名书可选择保留。",
-    "记笔记不中断朗读，播放中切换引擎自动继续；同步移动后可从原节点所在句首重读。",
+    "主题新增新建配置入口，仅新建或编辑时显示保存。",
+    "导入检查同名书籍，相同原文件自动去重，其他同名副本可选择保留。",
+    "角色描述与场景可先新建草稿，保存时命名并自动加入名字正则。",
+    "待下载书籍封面虚化，云端下载完成后不再弹出成功提示。",
     "更多功能请自行体验。"
   ]
 }
