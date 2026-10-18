@@ -158,7 +158,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent() {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 主题新增新建配置入口，仅新建或编辑时显示保存。\n• 导入检查同名书籍，相同原文件自动去重，其他同名副本可选择保留。\n• 角色描述与场景可先新建草稿，保存时命名并自动加入名字正则。\n• 待下载书籍封面虚化，云端下载完成后不再弹出成功提示。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 修复 EPUB / MOBI 编辑写回及编辑后云端操作阻塞。\n• 主题保持选中并自动保存，缩略图显示背景且文字不再带白色底框。\n• 书籍下载和信息还原成功时保持安静，无法导入的文件明确提示失败。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

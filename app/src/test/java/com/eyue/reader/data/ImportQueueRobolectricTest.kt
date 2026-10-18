@@ -72,7 +72,11 @@ class ImportQueueRobolectricTest {
         LibraryRepository(app).save(LibraryState())
         val provider = object : ContentProvider() {
             override fun onCreate() = true
-            override fun getType(uri: Uri) = if (uri.lastPathSegment.orEmpty().endsWith(".png")) "image/png" else "text/plain"
+            override fun getType(uri: Uri) = when (uri.lastPathSegment.orEmpty().substringAfterLast('.')) {
+                "png" -> "image/png"
+                "txt" -> "text/plain"
+                else -> "application/octet-stream"
+            }
             override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor =
                 MatrixCursor(arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)).apply {
                     addRow(arrayOf(uri.lastPathSegment, File(root, uri.pathSegments.joinToString("/")).length()))
@@ -168,6 +172,52 @@ class ImportQueueRobolectricTest {
         await { !vm.importing && vm.pendingImports.isEmpty() && vm.state.books.size == 3 }
         assertEquals(setOf("good", "held", "next"), vm.state.books.map { it.title }.toSet())
         assertFalse(vm.message.orEmpty().contains("broken"))
+        assertNull(vm.message)
+    }
+
+    @Test fun unsupportedFileReportsItsNameAndClearsThePlaceholderBeforeTheNextImport() {
+        val unsupported = File(root, "archive.zip").apply { writeText("not a readable book") }
+        openLibrary()
+        vm.importFiles(listOf(sourceUri(unsupported)), LibraryMode.NOVEL)
+        await { !vm.importing && vm.pendingImports.isEmpty() }
+
+        assertTrue(vm.state.books.isEmpty())
+        assertTrue(vm.message.orEmpty().contains("archive.zip"))
+        assertTrue(vm.message.orEmpty().contains("不支持的文件格式"))
+        assertNull(vm.importProgress)
+
+        vm.importFiles(listOf(source("after-unsupported.txt")), LibraryMode.NOVEL)
+        await { !vm.importing && vm.pendingImports.isEmpty() && vm.state.books.size == 1 }
+        assertEquals("after-unsupported", vm.state.books.single().title)
+        assertNull(vm.message)
+    }
+
+    @Test fun mixedSelectionKeepsReadableBooksAndReportsTheUnsupportedFile() {
+        val unsupported = File(root, "notes.docx").apply { writeText("unsupported document") }
+        openLibrary()
+        vm.importFiles(listOf(sourceUri(unsupported), source("readable.txt")), LibraryMode.NOVEL)
+        await { !vm.importing && vm.pendingImports.isEmpty() }
+
+        assertEquals(listOf("readable"), vm.state.books.map { it.title })
+        assertEquals(1, LibraryRepository(app).load().books.size)
+        assertTrue(vm.message.orEmpty().contains("notes.docx"))
+        assertTrue(vm.message.orEmpty().contains("不支持的文件格式"))
+    }
+
+    @Test fun emptyTextReportsFailureWithoutKeepingAPartialBookOrBlockingTheQueue() {
+        val empty = File(root, "empty.txt").apply { writeText(" \n\t") }
+        openLibrary()
+        vm.importFiles(listOf(sourceUri(empty)), LibraryMode.NOVEL)
+        await { !vm.importing && vm.pendingImports.isEmpty() }
+
+        assertTrue(vm.state.books.isEmpty())
+        assertTrue(vm.message.orEmpty().contains("empty.txt"))
+        assertTrue(vm.message.orEmpty().contains("TXT 文件为空"))
+        assertTrue(File(app.filesDir, "books").listFiles().orEmpty().isEmpty())
+
+        vm.importFiles(listOf(source("after-empty.txt")), LibraryMode.NOVEL)
+        await { !vm.importing && vm.pendingImports.isEmpty() && vm.state.books.size == 1 }
+        assertEquals("after-empty", vm.state.books.single().title)
         assertNull(vm.message)
     }
 

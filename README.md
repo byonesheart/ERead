@@ -8,8 +8,8 @@
 
 | 渠道 | 下载链接 | 提取码 |
 | --- | --- | --- |
-| 百度网盘 | [点击下载](https://pan.baidu.com/s/13KFiy5zqdbvc7cu2-oOrpA?pwd=READ) | `READ` |
-| 夸克网盘 | [点击下载](https://pan.quark.cn/s/f5d8031940bd) | `u51W` |
+| 百度网盘 | [点击下载](https://pan.baidu.com/s/1zYjhP5-T1oQ6nUWAuA64uw?pwd=READ) | `READ` |
+| 夸克网盘 | [点击下载](https://pan.quark.cn/s/c025f118a6f3) | `UFmT` |
 | GitHub Releases | [查看版本与安装包](https://github.com/byonesheart/ERead/releases) | 无 |
 
 下载 APK 后安装即可使用。

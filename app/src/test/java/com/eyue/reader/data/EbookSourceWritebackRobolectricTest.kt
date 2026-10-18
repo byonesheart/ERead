@@ -8,17 +8,27 @@ import android.content.pm.ProviderInfo
 import android.database.Cursor
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import com.eyue.reader.data.cloud.CloudBackupService
+import com.eyue.reader.data.cloud.CloudCredentialStore
+import com.eyue.reader.data.cloud.CloudCredentials
+import com.eyue.reader.data.cloud.CloudTransport
+import com.eyue.reader.data.cloud.CloudVersionedMetadata
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowContentResolver
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.util.UUID
 import java.util.zip.ZipEntry
@@ -151,6 +161,164 @@ class EbookSourceWritebackRobolectricTest {
         assertArrayEquals(external, source.readBytes())
     }
 
+    @Test fun importedMobiPagebreakChaptersEditWithoutInventingParagraphSeparators() = runBlocking {
+        val source = mobiFixture("<body>第一段旧正文<mbp:pagebreak/>第二段保持原样</body>", includeCover = false)
+        val book = importMobi(source)
+        assertEquals(2, book.chapters.size)
+        assertTrue(book.chapters.all { it.lazySourcePath != null })
+        var originalHtml = ""
+        MobiArchive.read(source, captureHtml = { originalHtml = it })
+        assertNotEquals(SourceHtmlEdit.plain(originalHtml) { null },
+            book.chapters.joinToString("\n\n") { File(it.textPath!!).readText() })
+        val updated = change(book, 0, "旧正文", "新正文及新增文字")
+        val transaction = EbookSourceWriteback.prepare(context, book, updated, folder("pagebreak"))
+        transaction.commit()
+        val reopened = MobiArchive.read(source)
+        assertEquals(book.chapters.map { it.title }, reopened.sections.map { it.title })
+        assertEquals(updated.chapters.map { File(it.textPath!!).readText() },
+            reopened.sections.map { SourceHtmlEdit.plain(it.html) { null } })
+        transaction.finish()
+    }
+
+    @Test fun importedMobiInlineChapterAnchorsKeepEachChapterAndCanBeEditedAgain() = runBlocking {
+        val source = mobiFixture("<body><a href='#one'>第一章</a><a href='#two'>第二章</a>" +
+            "<p><a id='one'></a>第一章旧正文<a id='two'></a>第二章保留正文</p></body>", includeCover = false)
+        val book = importMobi(source)
+        val index = book.chapters.indexOfFirst { File(it.textPath!!).readText().contains("第一章旧正文") }
+        assertTrue(index >= 0)
+        val updated = change(book, index, "旧正文", "新正文")
+        val first = EbookSourceWriteback.prepare(context, book, updated, folder("inline-first"))
+        first.commit(); first.finish()
+        val secondIndex = updated.chapters.indexOfFirst { File(it.textPath!!).readText().contains("第二章保留正文") }
+        val secondEdit = change(updated, secondIndex, "保留正文", "也能修改")
+        val second = EbookSourceWriteback.prepare(context, updated, secondEdit, folder("inline-second"))
+        second.commit(); second.finish()
+        assertEquals(secondEdit.chapters.map { File(it.textPath!!).readText() },
+            MobiArchive.read(source).sections.map { SourceHtmlEdit.plain(it.html) { null } })
+    }
+
+    @Test fun cancellingSourceMappingNeverChangesTheOriginalArchive() {
+        val source = epubFixture()
+        val original = source.readBytes()
+        val book = epubBook(source)
+        val updated = change(book, 0, "旧🙂正文", "修改正文")
+        var checks = 0
+        assertThrows(CancellationException::class.java) {
+            EbookSourceWriteback.prepare(context, book, updated, folder("cancelled")) {
+                if (++checks > 3) throw CancellationException("cancel")
+            }
+        }
+        assertArrayEquals(original, source.readBytes())
+        val next = EbookSourceWriteback.prepare(context, book, updated, folder("after-cancel"))
+        next.commit(); next.finish()
+        assertTrue(EpubArchive.read(source).sections.first().html.contains("修改正文"))
+    }
+
+    @Test fun importedLazyEpubAndMobiKeepEditsInSavedCacheSourceAndCloudRoundTrip() = runBlocking {
+        val epub = File(root, "lazy.epub").apply {
+            ZipOutputStream(outputStream()).use { zip ->
+                val entries = mapOf(
+                    "META-INF/container.xml" to "<container><rootfile full-path='book.opf'/></container>",
+                    "book.opf" to "<package><metadata><title>懒加载 EPUB</title></metadata><manifest><item id='one' href='one.xhtml'/><item id='two' href='two.xhtml'/></manifest><spine><itemref idref='one'/><itemref idref='two'/></spine></package>",
+                    "one.xhtml" to "<body><h1>第一章</h1><p>第一章旧正文</p></body>",
+                    "two.xhtml" to "<body><h1>第二章</h1><p>第二章保留正文</p></body>")
+                entries.forEach { (name, value) -> zip.putNextEntry(ZipEntry(name)); zip.write(value.toByteArray()); zip.closeEntry() }
+            }
+        }
+        val method = DocumentImporter::class.java.getDeclaredMethod("importEpub", File::class.java, File::class.java,
+            String::class.java, String::class.java, LibraryMode::class.java).apply { isAccessible = true }
+        val epubId = UUID.randomUUID().toString()
+        val epubBook = (method.invoke(DocumentImporter(context), epub,
+            File(context.filesDir, "books/$epubId").apply { mkdirs() }, epubId, "lazy", LibraryMode.NOVEL) as Book)
+            .copy(sourcePath = epub.absolutePath)
+        val mobi = mobiFixture("<body><h1>第一章</h1><p>第一章旧正文</p><h1>第二章</h1><p>第二章保留正文</p></body>", includeCover = false)
+        val books = listOf(epubBook, importMobi(mobi))
+        val transport = MemoryCloudTransport()
+        val credentials = object : CloudCredentialStore {
+            override fun read() = CloudCredentials("unit-test@example.invalid", "test-password")
+            override fun write(credentials: CloudCredentials) = Unit
+            override fun clear() = Unit
+        }
+        val cloud = CloudBackupService(context, credentials, { _, _ -> transport })
+        val repository = LibraryRepository(context)
+        books.forEach { book ->
+            assertTrue(book.chapters.all { it.lazySourcePath != null })
+            val prepared = loadChapterContent(context, book, 0)
+            val start = prepared.text.indexOf("旧正文")
+            assertTrue(start >= 0)
+            val edit = EbookTextEdit(0, prepared.text, start, start + 3, "已保存的新正文")
+            val directory = folder("roundtrip-${book.id}")
+            val text = File(directory, "edited.txt").apply { writeText(edit.text) }
+            val updated = edit.book(book, edit.chapter(prepared.chapter, text.absolutePath),
+                book.chapters.map { File(it.textPath!!).readText().length })
+            val transaction = EbookSourceWriteback.prepare(context, book, updated, directory)
+            transaction.commit(); transaction.finish()
+            val saved = repository.readBook(repository.writeBook(updated))
+            assertEquals(edit.text, loadChapterContent(context, saved, 0).text)
+            assertNull(saved.chapters[0].lazySourcePath)
+            val originalFile = File(saved.sourcePath!!)
+            val sourceText = if (saved.format == BookFormat.EPUB) EpubArchive.read(originalFile).sections.first().html
+                else MobiArchive.read(originalFile).sections.first().html
+            assertTrue(sourceText.contains("已保存的新正文"))
+            cloud.upload(LibraryState(books = listOf(saved)), saved)
+            val info = cloud.list().first { it.book.id == saved.id }
+            val restored = cloud.download(info).book
+            assertEquals(edit.text, File(restored.chapters[0].textPath!!).readText())
+            assertArrayEquals(originalFile.readBytes(), File(restored.sourcePath!!).readBytes())
+        }
+    }
+
+    @Test
+    @Config(shadows = [MobiBitmapRegionDecoderShadow::class])
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun optionalRealMobiWritebackUsesAnIsolatedCopyAndPreservesEveryOtherChapter() = runBlocking {
+        val configured = System.getenv("EREAD_EBOOK_SMOKE_SOURCE")
+        assumeTrue("Set EREAD_EBOOK_SMOKE_SOURCE for a real-file writeback smoke test", !configured.isNullOrBlank())
+        val supplied = File(requireNotNull(configured))
+        require(supplied.isFile)
+        val originalHash = java.security.MessageDigest.getInstance("SHA-256").digest(supplied.readBytes())
+        val source = supplied.copyTo(File(root, "smoke.mobi"))
+        val started = System.nanoTime()
+        val book = importMobi(source)
+        val imported = System.nanoTime()
+        val texts = book.chapters.map { File(it.textPath!!).readText() }
+        val index = texts.indexOfFirst { text -> text.lineSequence().any { it.length >= 40 } }
+        require(index >= 0) { "Smoke fixture needs a normal body paragraph" }
+        val prepared = loadChapterContent(context, book, index)
+        val paragraph = prepared.text.lineSequence().first { it.length >= 40 }
+        val phrase = Regex("[\u4e00-\u9fff]{4}").find(paragraph) ?: error("Smoke fixture needs a Chinese body paragraph")
+        val start = prepared.text.indexOf(paragraph) + phrase.range.first
+        val edit = EbookTextEdit(index, prepared.text, start, start + phrase.value.length, "正文修改校验")
+        val directory = folder("real-mobi-edit")
+        val cache = File(directory, "edited.txt").apply { writeText(edit.text) }
+        val updated = edit.book(book, edit.chapter(prepared.chapter, cache.absolutePath), texts.map { it.length })
+        val writeStarted = System.nanoTime()
+        val transaction = EbookSourceWriteback.prepare(context, book, updated, directory)
+        transaction.commit(); transaction.finish()
+        val finished = System.nanoTime()
+        val expected = texts.toMutableList().apply { this[index] = edit.text }
+        assertEquals(expected, updated.chapters.map { File(it.textPath!!).readText() })
+        val reopened = MobiArchive.read(source)
+        val image: (String) -> String? = { attributes ->
+            val reference = HtmlChapterParser.attribute(attributes, "recindex")?.toIntOrNull()
+                ?: (HtmlChapterParser.attribute(attributes, "src") ?: HtmlChapterParser.attribute(attributes, "xlink:href")
+                    ?: HtmlChapterParser.attribute(attributes, "href"))?.let { value ->
+                    Regex("kindle:embed:([0-9a-v]+)", RegexOption.IGNORE_CASE).find(value)?.groupValues?.get(1)?.toIntOrNull(32)
+                }
+            if (reference != null && reopened.images.any { it.recIndex == reference }) "image" else null
+        }
+        assertEquals(expected.size, reopened.sections.size)
+        reopened.sections.forEachIndexed { chapter, section ->
+            val actual = SourceHtmlEdit.plain(section.html, image)
+            assertTrue("Written chapter $chapter differs: expected ${expected[chapter].length} characters, got ${actual.length}",
+                expected[chapter] == actual)
+        }
+        assertEquals(edit.text, loadChapterContent(context, updated, index).text)
+        assertArrayEquals(originalHash, java.security.MessageDigest.getInstance("SHA-256").digest(supplied.readBytes()))
+        println("Real MOBI writeback smoke: bytes=${source.length()}, chapters=${book.chapters.size}, " +
+            "importMs=${(imported - started) / 1_000_000}, writebackMs=${(finished - writeStarted) / 1_000_000}")
+    }
+
     @Test fun readOnlySafDocumentRequestsWritePermissionWithoutChangingSource() {
         val source = epubFixture()
         val original = source.readBytes()
@@ -217,6 +385,41 @@ class EbookSourceWritebackRobolectricTest {
         ShadowContentResolver.registerProviderInternal(authority, provider)
     }
     private fun folder(name: String) = File(root, name).apply { mkdirs() }
+    private fun importMobi(source: File): Book {
+        val id = UUID.randomUUID().toString()
+        val directory = File(context.filesDir, "books/$id").apply { mkdirs() }
+        val method = DocumentImporter::class.java.getDeclaredMethod("importMobi", File::class.java, File::class.java,
+            String::class.java, String::class.java, String::class.java, kotlin.jvm.functions.Function0::class.java)
+        method.isAccessible = true
+        return (method.invoke(DocumentImporter(context), source, directory, id, source.nameWithoutExtension,
+            DEFAULT_CHAPTER_RULE, {}) as Book).copy(sourcePath = source.absolutePath)
+    }
+    private class MemoryCloudTransport : CloudTransport {
+        private val files = mutableMapOf<String, ByteArray>()
+        private val directories = mutableSetOf<String>()
+        private fun etag(path: String) = files[path]?.contentHashCode()?.let { "\"$it\"" }
+        override fun ensureCollection(path: String) { directories += path.trimEnd('/') }
+        override fun collections(path: String) = directories.mapNotNull {
+            it.removePrefix(path).takeIf { child -> it.startsWith(path) && child.isNotEmpty() && '/' !in child }
+        }
+        override fun metadata(path: String, maximum: Int) = files[path]?.copyOf()
+        override fun putMetadata(path: String, bytes: ByteArray) { files[path] = bytes.copyOf() }
+        override fun versionedMetadata(path: String) = files[path]?.let { CloudVersionedMetadata(it.copyOf(), etag(path)!!) }
+        override fun putVersionedMetadata(path: String, bytes: ByteArray, etag: String?): Boolean {
+            if (etag != this.etag(path)) return false
+            files[path] = bytes.copyOf(); return true
+        }
+        override fun deleteCollection(path: String) { files.keys.removeAll { it.startsWith(path) } }
+        override fun upload(path: String, file: File, offset: Long, bytes: Long, progress: (Long) -> Unit) {
+            files[path] = ByteArray(bytes.toInt()).also { content -> RandomAccessFile(file, "r").use { it.seek(offset); it.readFully(content) } }
+            progress(bytes)
+        }
+        override fun download(path: String, file: File, append: Boolean, maximum: Long, progress: (Long) -> Unit): Long {
+            val bytes = files.getValue(path)
+            java.io.FileOutputStream(file, append).use { it.write(bytes) }
+            progress(bytes.size.toLong()); return bytes.size.toLong()
+        }
+    }
     /** Inspects the actual standard main/data IDXT mapping, independently of the app's tolerant TOC reader. */
     private fun assertStandardIndex(source: File) {
         val bytes = source.readBytes()
@@ -295,14 +498,17 @@ class EbookSourceWritebackRobolectricTest {
             entries.forEach { (name, bytes) -> zip.putNextEntry(ZipEntry(name)); zip.write(bytes); zip.closeEntry() }
         }
     }
-    private fun mobiFixture(): File {
-        var html = "<body><a filepos='0000000000'>第二章</a><h1 id='one'>第一章</h1>" +
-            "<p>甲<b>旧🙂正文</b><img recindex='1'/></p><h1 id='two'>第二章</h1><p>第二章的正文</p></body>"
-        val target = html.substring(0, html.indexOf("<h1 id='two'>")).toByteArray().size
-        html = html.replace("0000000000", target.toString().padStart(10, '0'))
+    private fun mobiFixture(content: String? = null, includeCover: Boolean = true): File {
+        var html = content ?: ("<body><a filepos='0000000000'>第二章</a><h1 id='one'>第一章</h1>" +
+            "<p>甲<b>旧🙂正文</b><img recindex='1'/></p><h1 id='two'>第二章</h1><p>第二章的正文</p></body>")
+        if (content == null) {
+            val target = html.substring(0, html.indexOf("<h1 id='two'>")).toByteArray().size
+            html = html.replace("0000000000", target.toString().padStart(10, '0'))
+        }
         val author = "源作者".toByteArray()
         val title = "源书名".toByteArray()
-        val fields = listOf(100 to author, 201 to byteArrayOf(0, 0, 0, 0), 121 to byteArrayOf(0, 0, 0, 4))
+        val fields = listOf(100 to author, 121 to byteArrayOf(0, 0, 0, 4)) +
+            if (includeCover) listOf(201 to byteArrayOf(0, 0, 0, 0)) else emptyList()
         val exthSize = 12 + fields.sumOf { it.second.size + 8 }
         val header = ByteArray(248 + exthSize + title.size)
         put16(header, 0, 1); put32(header, 4, html.toByteArray().size); put16(header, 8, 1); put16(header, 10, 4096)

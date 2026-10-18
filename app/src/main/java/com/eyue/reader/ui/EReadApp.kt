@@ -167,7 +167,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
                     }, onReplaceAll = { query, replacement ->
                         resumeSearch = ReaderSearchDraft(query, replacement)
                         vm.replaceAllBookMatches(query, replacement)
-                    }, textEditBusy = vm.importing, resumeSearch = resumeSearch, onSearchClosed = { resumeSearch = null },
+                    }, textEditBusy = vm.textEditBusy, resumeSearch = resumeSearch, onSearchClosed = { resumeSearch = null },
                     onSpeechSettings = { showSpeechSettings = true },
                     onGenerateSpeech = if (book.mode == LibraryMode.NOVEL && !book.cloudOnly) { chapters -> startNotifiedTask { vm.generateAiSpeech(book.id, chapters) } } else null,
                     speechGenerationBusy = vm.aiSpeechGenerations[book.id]?.running == true,

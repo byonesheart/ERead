@@ -47,12 +47,13 @@ class ReaderThemeProfilesRobolectricTest {
             activeAppearanceProfileId = first.activeAppearanceProfileId), applied)
     }
 
-    @Test fun resettingAppearanceKeepsSavedProfilesAndImportResourcesButClearsTheActiveTheme() {
+    @Test fun resettingAppearanceKeepsTheActiveThemeAndAutosavesDefaultsWithoutChangingTheOtherMode() {
         val settings = ReaderSettings(fontSize = 30f, fonts = listOf(ImportedFont("字体", "/font.otf"))).saveAppearanceProfile()
         val state = LibraryState(settings = settings, comicSettings = ReaderSettings(brightness = .2f))
         val reset = state.resetReaderPreferences(LibraryMode.NOVEL)
-        assertEquals(settings.appearanceProfiles, reset.settings.appearanceProfiles)
-        assertNull(reset.settings.activeAppearanceProfileId)
+        assertEquals(settings.activeAppearanceProfileId, reset.settings.activeAppearanceProfileId)
+        assertEquals(settings.appearanceProfiles.single().copy(appearance = ReaderSettings().appearanceSnapshot()),
+            reset.settings.appearanceProfiles.single())
         assertEquals(ReaderSettings().fontSize, reset.settings.fontSize)
         assertEquals(settings.fonts, reset.settings.fonts)
         assertSame(state.comicSettings, reset.comicSettings)
@@ -90,14 +91,43 @@ class ReaderThemeProfilesRobolectricTest {
         assertSame(edited, edited.saveAppearanceProfile("deleted-profile"))
     }
 
-    @Test fun deletingTheActiveThemeKeepsItsCurrentAppearanceAndLeavesOtherProfilesUntouched() {
+    @Test fun deletingTheActiveThemeSelectsTheNextSavedAppearanceAndLeavesOtherProfilesUntouched() {
         val first = ReaderSettings(fontSize = 20f).saveAppearanceProfile()
         val both = first.copy(fontSize = 24f).saveAppearanceProfile()
         val removed = both.removeAppearanceProfile(both.activeAppearanceProfileId!!)
-        assertNull(removed.activeAppearanceProfileId)
-        assertEquals(both.appearanceSnapshot(), removed.appearanceSnapshot())
+        assertEquals(first.activeAppearanceProfileId, removed.activeAppearanceProfileId)
+        assertEquals(first.appearanceSnapshot(), removed.appearanceSnapshot())
         assertEquals(listOf(first.appearanceProfiles.single()), removed.appearanceProfiles)
         val removedInactive = both.removeAppearanceProfile(first.activeAppearanceProfileId!!)
         assertEquals(both.activeAppearanceProfileId, removedInactive.activeAppearanceProfileId)
+    }
+
+    @Test fun defaultThemeSelectionIsCreatedOnceAndChangesOnlyUpdateTheSelectedProfile() {
+        val defaults = ReaderSettings().ensureActiveAppearanceProfile()
+        assertEquals("配置1", defaults.appearanceProfiles.single().name)
+        assertEquals(defaults.appearanceProfiles.single().id, defaults.activeAppearanceProfileId)
+        assertSame(defaults, defaults.ensureActiveAppearanceProfile())
+        val second = defaults.saveAppearanceProfile()
+        val edited = second.copy(fontSize = 25f, background = ReaderBackground.GREEN).autosaveAppearanceProfile()
+        assertEquals(defaults.appearanceProfiles.single(), edited.appearanceProfiles.first())
+        assertEquals(second.activeAppearanceProfileId, edited.activeAppearanceProfileId)
+        assertEquals(edited.appearanceSnapshot(), edited.appearanceProfiles.last().appearance)
+    }
+
+    @Test fun invalidLegacySelectionKeepsTheCurrentAppearanceAndUsesTheFirstProfile() {
+        val saved = ReaderSettings().saveAppearanceProfile().copy(fontSize = 27f, activeAppearanceProfileId = "missing")
+        val selected = saved.ensureActiveAppearanceProfile()
+        assertEquals(saved.appearanceProfiles.single().id, selected.activeAppearanceProfileId)
+        assertEquals(saved.appearanceSnapshot(), selected.appearanceSnapshot())
+        assertEquals(saved.appearanceSnapshot(), selected.appearanceProfiles.single().appearance)
+    }
+
+    @Test fun deletingTheLastProfileReplacesItWithTheCurrentAppearanceAndAValidSelection() {
+        val selected = ReaderSettings(fontSize = 23f, backgroundImagePath = "/background.png").ensureActiveAppearanceProfile()
+        val removed = selected.removeAppearanceProfile(selected.activeAppearanceProfileId!!)
+        assertEquals(1, removed.appearanceProfiles.size)
+        assertNotEquals(selected.activeAppearanceProfileId, removed.activeAppearanceProfileId)
+        assertEquals(removed.appearanceProfiles.single().id, removed.activeAppearanceProfileId)
+        assertEquals(selected.appearanceSnapshot(), removed.appearanceProfiles.single().appearance)
     }
 }

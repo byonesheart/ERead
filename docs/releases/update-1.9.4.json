@@ -1,0 +1,24 @@
+{
+  "versionCode": 33,
+  "versionName": "1.9.4",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.9.4",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.9.4/ERead-1.9.4-debug.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1zYjhP5-T1oQ6nUWAuA64uw?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/c025f118a6f3",
+      "extractionCode": "UFmT"
+    }
+  ],
+  "changelog": [
+    "修复 EPUB / MOBI 编辑写回及编辑后云端操作阻塞。",
+    "主题保持选中并自动保存，缩略图显示背景且文字不再带白色底框。",
+    "书籍下载和信息还原成功时保持安静，无法导入的文件明确提示失败。",
+    "更多功能请自行体验。"
+  ]
+}

@@ -20,7 +20,7 @@ import com.eyue.reader.data.PageTurnStyle
 import com.eyue.reader.data.ReaderBackground
 import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.ReadingMode
-import com.eyue.reader.data.appearanceSnapshot
+import com.eyue.reader.data.autosaveAppearanceProfile
 import com.eyue.reader.data.saveAppearanceProfile
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -32,46 +32,24 @@ internal fun ReaderCompactSettings(
     onFonts: () -> Unit = onImportFont
 ) {
     var editingProfileId by remember { mutableStateOf<String?>(null) }
-    var creatingProfile by remember { mutableStateOf(false) }
-    var viewedAppearance by remember { mutableStateOf(settings.appearanceSnapshot()) }
-    val editing = creatingProfile || editingProfileId != null || settings.appearanceSnapshot() != viewedAppearance
-    val savingProfileId = if (creatingProfile) null else editingProfileId ?: settings.activeAppearanceProfileId
-    val editingProfile = settings.appearanceProfiles.firstOrNull { it.id == savingProfileId }
-    fun finishEditing() {
-        editingProfileId = null
-        creatingProfile = false
-        viewedAppearance = settings.appearanceSnapshot()
+    val themedSettings = remember(settings) { settings.autosaveAppearanceProfile() }
+    LaunchedEffect(themedSettings) {
+        if (themedSettings != settings) onSettings(themedSettings)
     }
+    val editingProfile = themedSettings.appearanceProfiles.firstOrNull { it.id == editingProfileId }
+    val updateSettings: (ReaderSettings) -> Unit = { onSettings(it.autosaveAppearanceProfile()) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(when {
-                creatingProfile -> "界面 · 新建配置"
-                editing && editingProfile != null -> "界面 · ${editingProfile.name}"
-                else -> "界面"
-            }, Modifier.weight(1f).testTag("reader_interface_title"),
+            Text(if (editingProfile == null) "界面" else "界面 · ${editingProfile.name}",
+                Modifier.weight(1f).testTag("reader_interface_title"),
                 style = MaterialTheme.typography.titleSmall)
-            if (editing) TextButton(onClick = { finishEditing() },
-                contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("reader_finish_theme_edit")) { Text("退出编辑", fontSize = 12.sp) }
-            if (editing) TextButton(onClick = {
-                onSettings(settings.saveAppearanceProfile(savingProfileId))
-                finishEditing()
-            }, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("reader_save_theme")) {
-                Text("保存", fontSize = 12.sp)
-            }
         }
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            ReaderThemeProfiles(settings, {
-                viewedAppearance = it.appearanceSnapshot()
-                onSettings(it)
-            }, editingProfileId, {
-                editingProfileId = it
-                creatingProfile = false
-            }, onNewProfile = {
+            ReaderThemeProfiles(themedSettings, updateSettings, editingProfileId, { editingProfileId = it }, onNewProfile = {
                 editingProfileId = null
-                creatingProfile = true
-                viewedAppearance = settings.appearanceSnapshot()
+                updateSettings(themedSettings.saveAppearanceProfile())
             })
-            ReaderInterfaceSettings(settings, raster, onSettings, onImportBackground, onFonts)
+            ReaderInterfaceSettings(themedSettings, raster, updateSettings, onImportBackground, onFonts)
         }
     }
 }

@@ -106,6 +106,22 @@ class CloudDownloadFeedbackRobolectricTest {
         assertEquals("测试下载失败，请重试", vm.message)
     }
 
+    @Test fun downloadingAnAlreadyDownloadedBookDoesNotShowASuccessMessageOrDownloadAgain() {
+        val source = File(app.filesDir, "downloaded.txt").apply { writeText("第一章\n还原后的正文。") }
+        val local = remote.copy(sourcePath = source.absolutePath, cloudOnly = false,
+            chapters = listOf(Chapter(title = "第一章", textPath = source.absolutePath)))
+        DownloadServiceShadow.restored = CloudRestoredBook(local, emptyList(), ReaderSettings(), null, 1234)
+        vm.downloadCloudBook(vm.state.books.single())
+        await { DownloadServiceShadow.downloadCalls == 1 && vm.cloudTransfers.isEmpty() }
+
+        vm.downloadCloudBook(vm.state.books.single())
+        await { vm.cloudTransfers.isEmpty() }
+
+        assertEquals(1, DownloadServiceShadow.downloadCalls)
+        assertFalse(vm.state.books.single().cloudOnly)
+        assertNull("A stale download action must remain silent after the book is local", vm.message)
+    }
+
     private fun await(condition: () -> Boolean) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
         while (System.nanoTime() < deadline) {

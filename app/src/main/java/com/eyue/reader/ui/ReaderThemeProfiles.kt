@@ -38,8 +38,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,7 +52,6 @@ import com.eyue.reader.data.BitmapLoader
 import com.eyue.reader.data.ReaderBackground
 import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.ReaderThemeProfile
-import com.eyue.reader.data.appearanceSnapshot
 import com.eyue.reader.data.applyAppearanceProfile
 import com.eyue.reader.data.removeAppearanceProfile
 import kotlinx.coroutines.Dispatchers
@@ -72,8 +76,7 @@ internal fun ReaderThemeProfiles(settings: ReaderSettings, onSettings: (ReaderSe
                 }
             }
             items(settings.appearanceProfiles, key = { it.id }) { profile ->
-                ReaderThemeThumbnail(profile, settings.activeAppearanceProfileId == profile.id &&
-                    settings.appearanceSnapshot() == profile.appearance, editingProfileId != null,
+                ReaderThemeThumbnail(profile, settings.activeAppearanceProfileId == profile.id, editingProfileId != null,
                     onClick = {
                         onEditProfile(null)
                         onSettings(settings.applyAppearanceProfile(profile))
@@ -85,7 +88,7 @@ internal fun ReaderThemeProfiles(settings: ReaderSettings, onSettings: (ReaderSe
         }
     }
     deleting?.let { profile -> AlertDialog(onDismissRequest = { deleting = null },
-        title = { Text("删除${profile.name}？") }, text = { Text("删除此主题配置，当前阅读界面保持不变。") },
+        title = { Text("删除${profile.name}？") }, text = { Text("删除后自动选中其他配置；仅剩一个配置时，将保留当前界面为新配置。") },
         confirmButton = { TextButton(onClick = {
             onSettings(settings.removeAppearanceProfile(profile.id))
             if (editingProfileId == profile.id) onEditProfile(null)
@@ -116,10 +119,12 @@ private fun ReaderThemeThumbnail(profile: ReaderThemeProfile, selected: Boolean,
         Box(Modifier.fillMaxSize().clip(shape).background(color)
             .border(if (selected) 2.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, shape)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = "编辑${profile.name}")
+            .semantics { this.selected = selected }
             .testTag("reader_theme_${profile.id}"), contentAlignment = Alignment.Center) {
             bitmap?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-            Text(profile.name, Modifier.background(Color.White.copy(alpha = .85f), RoundedCornerShape(4.dp)).padding(horizontal = 3.dp),
-                fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Color.Black)
+            Text(profile.name, Modifier.padding(horizontal = 3.dp), fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                color = if (bitmap != null || background == ReaderBackground.DARK) Color.White else Color.Black,
+                style = TextStyle(shadow = if (bitmap != null) Shadow(Color.Black, Offset(0f, 1f), 3f) else null))
         }
         if (editing) IconButton(onClick = onDelete,
             modifier = Modifier.align(Alignment.TopEnd).size(28.dp).testTag("reader_delete_theme_${profile.id}")) {

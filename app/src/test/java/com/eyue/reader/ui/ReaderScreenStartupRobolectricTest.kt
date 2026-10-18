@@ -178,19 +178,17 @@ class ReaderScreenStartupRobolectricTest {
         compose.onNodeWithTag("reader_settings_tab_preferences").assertDoesNotExist()
     }
 
-    @Test fun editingAThemeSurvivesTheMoreFontsDialogAndSavesBackToTheSameProfile() {
+    @Test fun editingAThemeSurvivesTheMoreFontsDialogAndAutosavesBackToTheSameProfile() {
         showReader(navigationBook(), ReadingMode.PAGED, { SilentSpeech() })
         awaitText("TOOLBAR_CHAPTER_0")
         revealToolbar()
         compose.onNodeWithContentDescription("界面设置").performClick()
-        compose.onNodeWithTag("reader_new_theme").performClick()
-        compose.onNodeWithTag("reader_save_theme").performClick()
         compose.onNodeWithText("配置1", substring = false).performTouchInput { longClick() }
         compose.onNodeWithTag("reader_more_fonts").performScrollTo().performClick()
         compose.onNodeWithText("等宽字体", substring = false).performClick()
         compose.onNodeWithText("完成", substring = false).performClick()
         compose.onNodeWithText("界面 · 配置1").assertIsDisplayed()
-        compose.onNodeWithTag("reader_save_theme").performClick()
+        compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
         compose.onNodeWithText("配置2", substring = false).assertDoesNotExist()
         compose.onNodeWithText("主题", substring = false).performScrollTo()
         compose.onNodeWithText("配置1", substring = false).assertIsDisplayed()

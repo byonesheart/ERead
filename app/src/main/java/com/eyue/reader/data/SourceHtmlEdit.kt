@@ -18,10 +18,15 @@ internal object SourceHtmlEdit {
         }
     }
 
-    fun plain(html: String, image: (String) -> String?): String = HtmlChapterParser.readPlain("", html, image = image).text
+    fun plain(html: String, image: (String) -> String?): String = plain(html, {}, image)
 
-    fun replace(html: String, target: String, image: (String) -> String?): Result {
-        val original = plain(html, image)
+    fun plain(html: String, checkActive: () -> Unit, image: (String) -> String?): String =
+        HtmlChapterParser.readPlain("", html, checkActive, image).text
+
+    fun replace(html: String, target: String, image: (String) -> String?): Result = replace(html, target, {}, image)
+
+    fun replace(html: String, target: String, checkActive: () -> Unit, image: (String) -> String?): Result {
+        val original = plain(html, checkActive, image)
         if (original == target) return Result(html, emptyList())
         var start = 0
         while (start < minOf(original.length, target.length) && original[start] == target[start]) start++
@@ -30,10 +35,11 @@ internal object SourceHtmlEdit {
         var targetEnd = target.length
         while (end > start && targetEnd > start && original[end - 1] == target[targetEnd - 1]) { end--; targetEnd-- }
         if (end < original.length && original[end].isLowSurrogate()) { end++; targetEnd++ }
-        val spans = textSpans(html)
+        val spans = textSpans(html, checkActive)
         val candidates = IntArray(spans.sumOf { it.last - it.first + 2 })
         var candidateCount = 0
         spans.forEach { span ->
+            checkActive()
             var position = span.first
             candidates[candidateCount++] = position
             while (position <= span.last) {
@@ -46,12 +52,13 @@ internal object SourceHtmlEdit {
         val marker = "\uE000${UUID.randomUUID()}\uE001"
         val probes = mutableMapOf<Int, Int>()
         fun probe(index: Int): Int = probes.getOrPut(index) {
+            checkActive()
             val position = candidates[index]
-            val marked = plain(html.substring(0, position) + marker + html.substring(position), image)
+            val marked = plain(html.substring(0, position) + marker + html.substring(position), checkActive, image)
             val location = marked.indexOf(marker)
             require(location >= 0) { "无法定位源文件正文，修改未保存" }
             val removed = marked.removeRange(location, location + marker.length)
-            val normalized = normalizeHtmlText(removed, intArrayOf(location))
+            val normalized = normalizeHtmlText(removed, intArrayOf(location), checkActive)
             require(normalized.text == original) { "源文件包含不兼容的文本结构，修改未保存" }
             normalized.offset(location)
         }
@@ -77,6 +84,7 @@ internal object SourceHtmlEdit {
         val textChanges = if (oldLines.size == newLines.size) {
             var offset = 0
             oldLines.zip(newLines).mapNotNull { (old, new) ->
+                checkActive()
                 val lineOffset = offset
                 offset += old.length + 1
                 if (old == new) null else {
@@ -92,6 +100,7 @@ internal object SourceHtmlEdit {
             }
         } else listOf(Change(start, end, target.substring(start, targetEnd)))
         val changes = textChanges.flatMap { change ->
+            checkActive()
             val from = locate(change.start, last = true)
             val until = if (change.end == change.start) from else locate(change.end)
             val inserted = escape(change.replacement).replace("\n", "<br/>")
@@ -102,7 +111,7 @@ internal object SourceHtmlEdit {
             }.toMutableList().also { if (it.none { item -> item.start == from }) it += Change(from, from, inserted) }
         }
         val result = apply(html, changes)
-        require(plain(result.html, image) == target) { "此编辑会改变段落结构，无法安全覆盖源文件；修改未保存" }
+        require(plain(result.html, checkActive, image) == target) { "此编辑会改变段落结构，无法安全覆盖源文件；修改未保存" }
         return result
     }
 
@@ -113,14 +122,14 @@ internal object SourceHtmlEdit {
         return Result(output.toString(), changes)
     }
 
-    private fun textSpans(html: String): List<IntRange> {
-        val visible = hideHtmlContent(maskHtmlComments(html), preserveOffsets = true)
+    private fun textSpans(html: String, checkActive: () -> Unit): List<IntRange> {
+        val visible = hideHtmlContent(maskHtmlComments(html), preserveOffsets = true, checkActive = checkActive)
         val spans = mutableListOf<IntRange>()
         var cursor = 0
         fun add(end: Int) {
             if (end > cursor && visible.substring(cursor, end) == html.substring(cursor, end)) spans += cursor until end
         }
-        sourceHtmlTags(html).forEach { tag -> add(tag.start); cursor = tag.end }
+        sourceHtmlTags(html, checkActive).forEach { tag -> add(tag.start); cursor = tag.end }
         add(html.length)
         return spans
     }

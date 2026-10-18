@@ -5,6 +5,7 @@ internal fun LibraryState.resetReaderPreferences(mode: LibraryMode): LibraryStat
     val current = if (mode == LibraryMode.COMIC) comicSettings else settings
     val defaults = ReaderSettings(nightMode = settings.nightMode, fonts = current.fonts,
         chapterRule = current.chapterRule, chapterRules = current.chapterRules, activeChapterRuleId = current.activeChapterRuleId,
-        appearanceProfiles = current.appearanceProfiles)
+        appearanceProfiles = current.appearanceProfiles, activeAppearanceProfileId = current.activeAppearanceProfileId)
+        .autosaveAppearanceProfile()
     return if (mode == LibraryMode.COMIC) copy(comicSettings = defaults) else copy(settings = defaults)
 }

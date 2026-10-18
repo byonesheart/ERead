@@ -91,6 +91,21 @@ fun ReaderSettings.saveAppearanceProfile(profileId: String? = null): ReaderSetti
     return copy(appearanceProfiles = appearanceProfiles + profile, activeAppearanceProfileId = profile.id)
 }
 
-fun ReaderSettings.removeAppearanceProfile(profileId: String): ReaderSettings = copy(
-    appearanceProfiles = appearanceProfiles.filterNot { it.id == profileId },
-    activeAppearanceProfileId = activeAppearanceProfileId.takeUnless { it == profileId })
+fun ReaderSettings.ensureActiveAppearanceProfile(): ReaderSettings {
+    if (appearanceProfiles.isEmpty()) return saveAppearanceProfile()
+    if (appearanceProfiles.any { it.id == activeAppearanceProfileId }) return this
+    return saveAppearanceProfile(appearanceProfiles.first().id)
+}
+
+fun ReaderSettings.autosaveAppearanceProfile(): ReaderSettings {
+    val selected = ensureActiveAppearanceProfile()
+    return selected.saveAppearanceProfile(selected.activeAppearanceProfileId)
+}
+
+fun ReaderSettings.removeAppearanceProfile(profileId: String): ReaderSettings {
+    val remaining = appearanceProfiles.filterNot { it.id == profileId }
+    val result = copy(appearanceProfiles = remaining,
+        activeAppearanceProfileId = activeAppearanceProfileId.takeUnless { it == profileId })
+    return if (activeAppearanceProfileId == profileId && remaining.isNotEmpty()) result.applyAppearanceProfile(remaining.first())
+        else result.ensureActiveAppearanceProfile()
+}

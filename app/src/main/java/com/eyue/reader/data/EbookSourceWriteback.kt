@@ -91,22 +91,24 @@ internal class EbookSourceWriteback private constructor(
         fun sameDocument(context: Context, first: String, second: String): Boolean =
             documentHash(context, first) == documentHash(context, second)
 
-        fun prepare(context: Context, before: Book, edited: Book, directory: File): EbookSourceWriteback {
+        fun prepare(context: Context, before: Book, edited: Book, directory: File,
+                    checkActive: () -> Unit = {}): EbookSourceWriteback {
+            checkActive()
             val source = source(before)
             requireWritable(context, source)
             val backup = File(directory, "original.${before.format.name.lowercase()}")
             openDocumentStream(context, source).use { input -> backup.outputStream().use { input.copyTo(it) } }
             val prepared = File(directory, "prepared.${before.format.name.lowercase()}")
             when (before.format) {
-                BookFormat.EPUB -> epub(backup, prepared, before, edited)
-                BookFormat.MOBI -> mobi(backup, prepared, before, edited)
+                BookFormat.EPUB -> epub(backup, prepared, before, edited, checkActive)
+                BookFormat.MOBI -> mobi(backup, prepared, before, edited, checkActive)
                 else -> error("不支持覆盖此格式")
             }
             return EbookSourceWriteback(context, source, backup, prepared)
         }
 
-        private fun epub(source: File, destination: File, before: Book, edited: Book) {
-            val parsed = EpubArchive.read(source)
+        private fun epub(source: File, destination: File, before: Book, edited: Book, checkActive: () -> Unit) {
+            val parsed = EpubArchive.read(source, onProgress = { checkActive() })
             require(parsed.sections.size == edited.chapters.size) { "源文件目录与书架记录不一致，修改未保存，请重新导入" }
             val validImages = parsed.imagePaths.toSet()
             fun image(path: String): (String) -> String? = { attributes ->
@@ -118,10 +120,11 @@ internal class EbookSourceWriteback private constructor(
             val expected = edited.chapters.map { File(requireNotNull(it.textPath)).readText() }
             ZipFile(source).use { zip ->
                 parsed.sections.forEachIndexed { index, section ->
-                    val old = SourceHtmlEdit.plain(section.html, image(section.path))
+                    checkActive()
+                    val old = SourceHtmlEdit.plain(section.html, checkActive, image(section.path))
                     val cached = File(requireNotNull(before.chapters[index].textPath)).readText()
                     require(before.hasTextEdits || old == cached) { "源文件正文已变化，修改未保存，请重新导入" }
-                    val result = SourceHtmlEdit.replace(section.html, expected[index], image(section.path))
+                    val result = SourceHtmlEdit.replace(section.html, expected[index], checkActive, image(section.path))
                     if (result.changes.isNotEmpty()) {
                         val raw = zip.getInputStream(zip.getEntry(section.path)).use { decodeMarkup(it.readBytes()) }
                         val piece = raw.substring(section.sourceStart, section.sourceEnd)
@@ -135,6 +138,7 @@ internal class EbookSourceWriteback private constructor(
                 }
                 ZipOutputStream(destination.outputStream().buffered()).use { output ->
                     zip.entries().asSequence().forEach { entry ->
+                        checkActive()
                         val path = EpubArchive.safePath(entry.name)
                         val edits = changes[path]
                         val bytes = if (edits == null) null else zip.getInputStream(entry).use {
@@ -151,17 +155,17 @@ internal class EbookSourceWriteback private constructor(
                     }
                 }
             }
-            val verified = EpubArchive.read(destination)
+            val verified = EpubArchive.read(destination, onProgress = { checkActive() })
             check(verified.title == parsed.title && verified.author == parsed.author && verified.sections.size == parsed.sections.size &&
                 verified.imagePaths == parsed.imagePaths) { "EPUB 写入校验失败，原文件未修改" }
             verified.sections.forEachIndexed { index, section ->
-                check(SourceHtmlEdit.plain(section.html, image(section.path)) == expected[index]) { "EPUB 正文校验失败，原文件未修改" }
+                check(SourceHtmlEdit.plain(section.html, checkActive, image(section.path)) == expected[index]) { "EPUB 正文校验失败，原文件未修改" }
             }
         }
 
-        private fun mobi(source: File, destination: File, before: Book, edited: Book) {
+        private fun mobi(source: File, destination: File, before: Book, edited: Book, checkActive: () -> Unit) {
             var html = ""
-            val parsed = MobiArchive.read(source, captureHtml = { html = it })
+            val parsed = MobiArchive.read(source, checkActive = checkActive, captureHtml = { html = it })
             val image: (String) -> String? = { attributes ->
                 val reference = HtmlChapterParser.attribute(attributes, "recindex")?.toIntOrNull()
                     ?: (HtmlChapterParser.attribute(attributes, "src") ?: HtmlChapterParser.attribute(attributes, "xlink:href")
@@ -173,17 +177,45 @@ internal class EbookSourceWriteback private constructor(
             fun canonical(book: Book) = normalizeHtmlText(book.chapters.joinToString("\n\n") {
                 File(requireNotNull(it.textPath)).readText()
             }, intArrayOf()).text
-            val old = SourceHtmlEdit.plain(html, image)
-            require(before.hasTextEdits || old == canonical(before)) { "源文件正文与书架记录不一致，修改未保存，请重新导入" }
-            val target = canonical(edited)
-            val result = SourceHtmlEdit.replace(html, target, image)
+            val bySection = parsed.sections.size == before.chapters.size && before.chapters.size == edited.chapters.size &&
+                parsed.sections.map { it.title } == before.chapters.map { it.title }
+            val targets = if (bySection) edited.chapters.map { File(requireNotNull(it.textPath)).readText() } else emptyList()
+            val target = if (bySection) null else canonical(edited)
+            val result = if (bySection) {
+                // Imported chapters have independent trimmed boundaries. Joining them adds line breaks
+                // that need not exist in MOBI (notably pagebreaks and inline TOC anchors).
+                val changes = parsed.sections.flatMapIndexed { index, section ->
+                    checkActive()
+                    val old = SourceHtmlEdit.plain(section.html, checkActive, image)
+                    val cached = File(requireNotNull(before.chapters[index].textPath)).readText()
+                    require(before.hasTextEdits || old == cached) { "源文件正文与书架记录不一致，修改未保存，请重新导入" }
+                    if (old == targets[index]) emptyList() else {
+                        val piece = html.substring(section.sourceStart, section.sourceEnd)
+                        val prefix = section.html.indexOf(piece)
+                        require(prefix >= 0) { "MOBI 章节定位失败，修改未保存" }
+                        SourceHtmlEdit.replace(section.html, targets[index], checkActive, image).changes.map { change ->
+                            require(change.start >= prefix && change.end <= prefix + piece.length) { "MOBI 章节边界无效，修改未保存" }
+                            change.copy(start = change.start - prefix + section.sourceStart, end = change.end - prefix + section.sourceStart)
+                        }
+                    }
+                }
+                SourceHtmlEdit.apply(html, changes)
+            } else {
+                val old = SourceHtmlEdit.plain(html, checkActive, image)
+                require(before.hasTextEdits || old == canonical(before)) { "源文件正文与书架记录不一致，修改未保存，请重新导入" }
+                SourceHtmlEdit.replace(html, requireNotNull(target), checkActive, image)
+            }
+            checkActive()
             MobiSourceWriter.write(source, destination, html, result, parsed.sections)
             var verifiedHtml = ""
-            val verified = MobiArchive.read(destination, captureHtml = { verifiedHtml = it })
+            val verified = MobiArchive.read(destination, checkActive = checkActive, captureHtml = { verifiedHtml = it })
             check(verified.title == parsed.title && verified.author == parsed.author && verified.images.size == parsed.images.size &&
-                verified.sections.map { it.title } == parsed.sections.map { it.title } &&
-                SourceHtmlEdit.plain(verifiedHtml, image) == target) { "MOBI 写入校验失败，原文件未修改" }
+                verified.sections.map { it.title } == parsed.sections.map { it.title }) { "MOBI 写入校验失败，原文件未修改" }
+            if (bySection) verified.sections.forEachIndexed { index, section ->
+                check(SourceHtmlEdit.plain(section.html, checkActive, image) == targets[index]) { "MOBI 正文校验失败，原文件未修改" }
+            } else check(SourceHtmlEdit.plain(verifiedHtml, checkActive, image) == target) { "MOBI 正文校验失败，原文件未修改" }
             parsed.images.zip(verified.images).forEach { (oldImage, newImage) ->
+                checkActive()
                 check(resourceHash(source, oldImage) == resourceHash(destination, newImage)) { "MOBI 插图校验失败，原文件未修改" }
             }
         }

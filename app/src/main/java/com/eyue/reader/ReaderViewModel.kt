@@ -87,8 +87,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         private set
     var loading by mutableStateOf(true)
         private set
-    var importing by mutableStateOf(false)
+    private var organizing by mutableStateOf(false)
+    var editingBookIds by mutableStateOf<Set<String>>(emptySet())
         private set
+    var importing: Boolean
+        get() = organizing || editingBookIds.isNotEmpty()
+        private set(value) { organizing = value }
+    val textEditBusy: Boolean get() = organizing || activeBookId in editingBookIds
     var rebuildingContents by mutableStateOf(false)
         private set
     var importProgress by mutableStateOf<ImportProgress?>(null)
@@ -226,9 +231,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 loading = false
                 return@launch
             }
-            state = loaded.getOrThrow().withResolvedTheme(systemDark)
+            val originalState = loaded.getOrThrow().withResolvedTheme(systemDark)
+            state = originalState.copy(settings = originalState.settings.ensureActiveAppearanceProfile(),
+                comicSettings = originalState.comicSettings.ensureActiveAppearanceProfile())
             message = (importer.lastImportErrors + importer.lastImportWarnings).takeIf { it.isNotEmpty() }?.joinToString("\n")
             storageReady = true
+            if (state != originalState) persistNow()
             val prefs = application.getSharedPreferences("onboarding", 0)
             if (!prefs.getBoolean("demo_seeded", false)) {
                 if (state.books.isEmpty()) {
@@ -590,10 +598,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun toggleNightMode() = setThemeMode(if (state.settings.nightMode) ThemeMode.LIGHT else ThemeMode.DARK)
 
     private fun applySettings(settings: ReaderSettings, selectedMode: LibraryMode) {
+        val savedSettings = settings.autosaveAppearanceProfile()
         val theme = if (settings.nightMode == state.settings.nightMode) state.themeMode
             else if (settings.nightMode) ThemeMode.DARK else ThemeMode.LIGHT
-        val updated = if (selectedMode == LibraryMode.COMIC) state.copy(comicSettings = settings,
-            settings = state.settings.copy(nightMode = settings.nightMode)) else state.copy(settings = settings,
+        val updated = if (selectedMode == LibraryMode.COMIC) state.copy(comicSettings = savedSettings,
+            settings = state.settings.copy(nightMode = settings.nightMode)) else state.copy(settings = savedSettings,
             comicSettings = state.comicSettings.copy(nightMode = settings.nightMode))
         changed(updated.copy(themeMode = theme).withResolvedTheme(systemDark))
     }
@@ -720,7 +729,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (!loading && !storageReady) { message = "书架未能加载，无法备份或还原，请先处理本地书架错误"; return }
         if (loading || rebuildingContents || importing && bookId == null && !allowImport) { message = "请等待当前文件整理完成"; return }
         if (bookId != null && state.books.none { it.id == bookId }) return
-        if (bookId != null && importing && activeImportId == null && activeBookId == bookId) {
+        if (bookId != null && (bookId in editingBookIds || organizing && activeImportId == null && activeBookId == bookId)) {
             message = "请等待这本书编辑完成"; return
         }
         cloudMetadataEpoch++
@@ -1074,7 +1083,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (!storageReady || loading || rebuildingContents) { message = "请等待本地书架和文件整理完成"; return }
         if (!cloudConfigured) { message = "请先配置 WebDAV 网盘"; return }
         val selected = books.mapNotNull { target -> state.books.find { it.id == target.id && !it.cloudOnly && it.id !in cloudTransfers &&
-            !(importing && activeImportId == null && it.id == activeBookId) } }.distinctBy { it.id }
+            it.id !in editingBookIds && !(organizing && activeImportId == null && it.id == activeBookId) } }.distinctBy { it.id }
         val account = cloudIdentity ?: return
         if (selected.isEmpty()) return
         selected.forEach { pendingCloudUploads = pendingCloudUploads + (it.id to CloudTransferProgress("检查同名云端书籍", cancellable = true)) }
@@ -1254,7 +1263,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 // Metadata reads deliberately use no transfer slot, even when all three uploads are busy.
                 val info = service.list(account)
                 val matches = service.restoreBookMatches(state, info)
-                var added = 0
                 var needsDecision = false
                 cloudOperationMutex.withCatalog(account) {
                     val existingIds = service.catalogBookIds(account)
@@ -1268,16 +1276,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         pendingCloudRestore = available
                         needsDecision = true
                     } else {
-                        val before = state.books.size
                         // Merge the current state, preserving progress and notes changed during network reads.
                         rememberCloudMatches(account, available, matches)
                         state = resolveCloudRestoreInformation(state, available, emptyMap(), matches)
-                        added = state.books.size - before
                     }
                 }
                 if (!needsDecision) {
                     persistNow()
-                    message = "已还原云端信息，新增 $added 本；请点击云图标逐本下载，本地已有书籍保留"
                 }
             } catch (error: CancellationException) { throw error }
               catch (error: Exception) { message = error.message ?: "还原云端书籍信息失败，请稍后重试" }
@@ -1373,7 +1378,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 AiSpeechCache(getApplication()).clear(book.id)
             } }
             cancelCloudRestore()
-            message = "书籍信息已还原，请点击云图标下载需要阅读的书籍"
         }
     }
 
@@ -1404,7 +1408,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 if (applied) {
                     persistNow()
-                    message = "已保留全部书籍，云端备份未修改；请点击云图标下载需要阅读的书籍"
                 }
             } catch (error: CancellationException) { throw error }
               catch (error: Exception) { message = error.message ?: "还原云端书籍信息失败，请稍后重试" }
@@ -1413,13 +1416,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun downloadCloudBook(book: Book) = cloudOperation(book.id, "准备下载《${book.title}》") { service ->
-        if (state.books.none { it.id == book.id && it.cloudOnly }) { message = "这本书已在本地，可直接阅读"; return@cloudOperation }
+        if (state.books.none { it.id == book.id && it.cloudOnly }) return@cloudOperation
         val restored = service.download(book.id)
         if (state.books.none { it.id == book.id }) {
             withContext(Dispatchers.IO) { repository.removeBookFiles(restored.book) }
             return@cloudOperation
         }
-        changed(mergeCloudDownloadedBook(state, restored))
+        val downloaded = mergeCloudDownloadedBook(state, restored)
+        changed(downloaded.copy(settings = downloaded.settings.ensureActiveAppearanceProfile(),
+            comicSettings = downloaded.comicSettings.ensureActiveAppearanceProfile()))
         persistNow()
         val account = withContext(Dispatchers.IO) { service.identity() }
         val snapshot = state
@@ -1568,8 +1573,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val original = state.books.find { it.id == pending.bookId } ?: return cancelSourceWrite()
         pendingSourceWriteUri = null
         pendingSourceEdit = null
-        if (importing || cloudBusy || original.id in cloudTransfers || activeBookId != original.id) { message = "请重新打开这本书后再编辑"; return }
-        importing = true
+        if (organizing || original.id in editingBookIds || cloudBusy || original.id in cloudTransfers || activeBookId != original.id) { message = "请重新打开这本书后再编辑"; return }
+        editingBookIds = editingBookIds + original.id
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
@@ -1578,11 +1583,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     EbookSourceWriteback.requireWritable(getApplication(), uri.toString())
                 }
-                importing = false
+                editingBookIds = editingBookIds - original.id
                 editBookText(pending.chapter, pending.start, pending.end, pending.replacement, uri.toString(),
                     pending.expectedText, pending.findAll)
             } catch (error: Exception) {
-                importing = false
+                editingBookIds = editingBookIds - original.id
                 if (error is CancellationException) throw error
                 message = error.message ?: "无法获得原文件写入权限，修改尚未保存"
             }
@@ -1605,18 +1610,19 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         expectedText: String? = null, findAll: String? = null) {
         val book = state.books.find { it.id == activeBookId && it.mode == LibraryMode.NOVEL &&
             it.format in setOf(BookFormat.TXT, BookFormat.EPUB, BookFormat.MOBI) && !it.cloudOnly } ?: return
-        if (importing || cloudBusy || book.id in cloudTransfers) { message = "请等待当前整理或本书云端操作完成后再编辑"; return }
-        importing = true
+        if (organizing || cloudBusy || book.id in editingBookIds || book.id in cloudTransfers) { message = "请等待当前整理或本书云端操作完成后再编辑"; return }
+        editingBookIds = editingBookIds + book.id
         viewModelScope.launch {
             var editedDirectory: File? = null
             var sourceWrite: EbookSourceWriteback? = null
             var saved = false
-            var sourceLocked = false
             var replacementCount = 0
             try {
                 stopAiSpeechConversion(book.id)
-                cloudOperationMutex.lock(); sourceLocked = true
+                cloudOperationMutex.withBook(book.id) {
+                  try {
                 val (updated, relocate) = withContext<Pair<Book, (Annotation) -> Annotation>>(Dispatchers.IO) {
+                    val editWork = kotlinx.coroutines.currentCoroutineContext()
                     val folder = File(getApplication<Application>().filesDir, "books/${book.id}/edit-${java.util.UUID.randomUUID()}")
                     check(folder.mkdirs()) { "无法保存修改后的正文" }
                     editedDirectory = folder
@@ -1665,22 +1671,35 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         val updated = edited.let {
                             if (it.sourceUri == null) it else it.copy(sourceLinked = true, sourcePath = documentFile(it.sourceUri)?.absolutePath)
                         }
-                        sourceWrite = EbookSourceWriteback.prepare(getApplication(), sourceBook, updated, folder)
+                        sourceWrite = EbookSourceWriteback.prepare(getApplication(), sourceBook, updated, folder) { editWork.ensureActive() }
                         withContext(NonCancellable) { sourceWrite!!.commit() }
-                        updated to annotationEdit
+                        hydrateBookSourceIdentity(getApplication(), updated) to annotationEdit
                     }
                 }
                 saveJob?.cancel()
                 val previous = state
                 state = state.copy(books = state.books.map { if (it.id == book.id) updated else it },
                     annotations = state.annotations.map { if (it.bookId == book.id) relocate(it) else it })
-                try { withContext(NonCancellable) { persistNow() } } catch (error: Exception) { state = previous; throw error }
+                try { withContext(NonCancellable) { persistNow() } } catch (error: Exception) {
+                    state = state.copy(books = state.books.map { current ->
+                        if (current.id == book.id) previous.books.first { it.id == book.id } else current
+                    }, annotations = state.annotations.filterNot { it.bookId == book.id } + previous.annotations.filter { it.bookId == book.id })
+                    throw error
+                }
                 saved = true
                 withContext(NonCancellable + Dispatchers.IO) { sourceWrite?.finish() }
                 editedDirectory = null
                 withContext(Dispatchers.IO) { removeReaderPageCaches(getApplication(), book.id) }
                 message = if (findAll != null) "已替换 $replacementCount 处文字，阅读位置和标注已更新"
                     else if (book.format == BookFormat.TXT) "TXT 修改已保存，目录和标注已更新" else "正文已覆盖保存至原文件，标注已更新"
+                  } finally {
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        if (!saved) try { sourceWrite?.rollback() }
+                            catch (error: Exception) { message = error.message ?: "原文件恢复失败" }
+                        if (!saved && sourceWrite?.recoveryRequired != true) editedDirectory?.deleteRecursively()
+                    }
+                  }
+                }
             } catch (error: CancellationException) { throw error }
               catch (error: SourceWritePermissionRequiredException) {
                   pendingSourceEdit = PendingSourceEdit(book.id, chapter, start, end, replacement, expectedText, findAll)
@@ -1689,16 +1708,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
               }
               catch (error: Exception) { message = error.message ?: "正文修改未保存" }
             finally {
-                try {
-                    withContext(NonCancellable + Dispatchers.IO) {
-                        if (!saved) try { sourceWrite?.rollback() }
-                            catch (error: Exception) { message = error.message ?: "原文件恢复失败" }
-                        if (!saved && sourceWrite?.recoveryRequired != true) editedDirectory?.deleteRecursively()
-                    }
-                } finally {
-                    if (sourceLocked) cloudOperationMutex.unlock()
-                    importing = false
-                }
+                editingBookIds = editingBookIds - book.id
             }
         }
     }
