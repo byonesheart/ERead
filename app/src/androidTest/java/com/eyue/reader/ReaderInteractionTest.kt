@@ -295,7 +295,8 @@ class ReaderInteractionTest {
         assertTrue(sheetBounds.bottom >= toolbarBottom)
         assertEquals(bodyBefore, compose.onNodeWithTag("reader_body").fetchSemanticsNode().boundsInRoot)
         compose.onNodeWithTag("reader_interface_title").assertIsDisplayed()
-        compose.onNodeWithTag("reader_save_theme").assertIsDisplayed()
+        compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
+        compose.onNodeWithTag("reader_new_theme").assertIsDisplayed()
         compose.onNodeWithTag("reader_settings_tab_interface").assertDoesNotExist()
         compose.onNodeWithTag("reader_settings_tab_preferences").assertDoesNotExist()
         compose.runOnIdle { vm.settings(vm.readerSettings.copy(brightness = 0.45f)) }

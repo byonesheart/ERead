@@ -75,13 +75,13 @@ class ImportQueueRobolectricTest {
             override fun getType(uri: Uri) = if (uri.lastPathSegment.orEmpty().endsWith(".png")) "image/png" else "text/plain"
             override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor =
                 MatrixCursor(arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)).apply {
-                    addRow(arrayOf(uri.lastPathSegment, File(root, uri.lastPathSegment!!).length()))
+                    addRow(arrayOf(uri.lastPathSegment, File(root, uri.pathSegments.joinToString("/")).length()))
                 }
             override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
                 val name = requireNotNull(uri.lastPathSegment)
                 opened += name
                 check(gates[name]?.await(15, TimeUnit.SECONDS) != false) { "Test source did not release" }
-                return ParcelFileDescriptor.open(File(root, name), ParcelFileDescriptor.MODE_READ_ONLY)
+                return ParcelFileDescriptor.open(File(root, uri.pathSegments.joinToString("/")), ParcelFileDescriptor.MODE_READ_ONLY)
             }
             override fun insert(uri: Uri, values: ContentValues?): Uri? = null
             override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?) = 0
@@ -255,6 +255,135 @@ class ImportQueueRobolectricTest {
         assertEquals(LibraryMode.COMIC, images.single().mode)
         assertEquals(2, images.single().chapters.sumOf { it.pages.size })
     }
+
+    @Test fun identicalOriginalFileIsNotAddedAgainAndItsNotesAndReadingPositionRemain() {
+        val uri = source("duplicate.txt")
+        openLibrary()
+        vm.importFiles(listOf(uri), LibraryMode.NOVEL)
+        await { !vm.importing && vm.state.books.size == 1 }
+        val original = vm.state.books.single()
+        val note = Annotation(bookId = original.id, chapterIndex = 0, pageIndex = 0, note = "保留已有笔记")
+        vm.annotate(note)
+        vm.importFiles(listOf(uri), LibraryMode.NOVEL)
+        await { !vm.importing && vm.pendingImports.isEmpty() }
+        assertEquals(listOf(original), vm.state.books)
+        assertEquals(listOf(note), vm.state.annotations)
+        assertNull(vm.pendingImportConflict)
+        assertNull(vm.message)
+        assertEquals(1, File(app.filesDir, "books").listFiles()!!.size)
+    }
+
+    @Test fun uncertainSameNameWaitsForSelectionAndSkippingPreservesOldBookAndContinuesBatch() {
+        val left = File(root, "left/same.txt").apply { parentFile!!.mkdirs(); writeText("第一章\n已有内容。") }
+        val right = File(root, "right/same.txt").apply { parentFile!!.mkdirs(); writeText("第一章\n不同的内容，长度也不同。") }
+        openLibrary()
+        vm.importFiles(listOf(sourceUri(left)), LibraryMode.NOVEL)
+        await { !vm.importing && vm.state.books.size == 1 }
+        val original = vm.state.books.single()
+        vm.importFiles(listOf(sourceUri(right), source("after-conflict.txt")), LibraryMode.NOVEL)
+        await { vm.pendingImportConflict != null }
+        assertEquals(listOf(original.id), vm.pendingImportConflict!!.existing.map { it.id })
+        assertEquals(listOf(original), vm.state.books)
+        assertFalse("after-conflict.txt" in opened)
+        vm.resolveImportConflict(emptySet())
+        assertNotNull(vm.pendingImportConflict)
+        vm.resolveImportConflict(setOf(original.id))
+        await { !vm.importing && vm.pendingImports.isEmpty() }
+        assertEquals(setOf(original.id, vm.state.books.single { it.title == "after-conflict" }.id), vm.state.books.map { it.id }.toSet())
+        assertTrue(left.exists())
+        assertTrue(right.exists())
+        assertEquals(2, File(app.filesDir, "books").listFiles()!!.size)
+    }
+
+    @Test fun uncertainSameNameCanKeepBothOrReplaceOnlyTheChosenExistingCopy() {
+        val left = File(root, "left/same.txt").apply { parentFile!!.mkdirs(); writeText("第一章\n已有内容。") }
+        val right = File(root, "right/same.txt").apply { parentFile!!.mkdirs(); writeText("第一章\n不同的内容，长度也不同。") }
+        val third = File(root, "third/same.txt").apply { parentFile!!.mkdirs(); writeText("第一章\n另一个版本的内容，长度明显更长一些。") }
+        openLibrary()
+        vm.importFiles(listOf(sourceUri(left)), LibraryMode.NOVEL)
+        await { !vm.importing && vm.state.books.size == 1 }
+        val original = vm.state.books.single()
+        val note = Annotation(bookId = original.id, chapterIndex = 0, pageIndex = 0, note = "旧副本笔记")
+        vm.annotate(note)
+        vm.importFiles(listOf(sourceUri(right)), LibraryMode.NOVEL)
+        await { vm.pendingImportConflict != null }
+        val secondId = vm.pendingImportConflict!!.incoming.id
+        vm.resolveImportConflict(setOf(original.id, secondId))
+        await { !vm.importing && vm.state.books.size == 2 }
+        assertEquals(listOf(note), vm.state.annotations)
+        vm.importFiles(listOf(sourceUri(third)), LibraryMode.NOVEL)
+        await { vm.pendingImportConflict != null }
+        val thirdId = vm.pendingImportConflict!!.incoming.id
+        vm.resolveImportConflict(setOf(secondId, thirdId))
+        await { !vm.importing && vm.pendingImports.isEmpty() }
+        assertEquals(setOf(secondId, thirdId), vm.state.books.map { it.id }.toSet())
+        assertTrue(vm.state.annotations.isEmpty())
+        assertFalse(File(app.filesDir, "books/${original.id}").exists())
+        assertTrue(listOf(left, right, third).all { it.exists() })
+        assertEquals(setOf(secondId, thirdId), LibraryRepository(app).load().books.map { it.id }.toSet())
+    }
+
+    @Test fun keepingOnlyOneExistingCopyRemovesUnselectedExistingAndImportedCopies() {
+        val sources = (1..3).map { index -> File(root, "$index/same.txt").apply {
+            parentFile!!.mkdirs(); writeText("第一章\n${"不同的内容。".repeat(index)}")
+        } }
+        openLibrary()
+        vm.importFiles(listOf(sourceUri(sources[0])), LibraryMode.NOVEL)
+        await { !vm.importing && vm.state.books.size == 1 }
+        val first = vm.state.books.single()
+        vm.importFiles(listOf(sourceUri(sources[1])), LibraryMode.NOVEL)
+        await { vm.pendingImportConflict != null }
+        val secondId = vm.pendingImportConflict!!.incoming.id
+        vm.resolveImportConflict(setOf(first.id, secondId))
+        await { !vm.importing && vm.state.books.size == 2 }
+        vm.importFiles(listOf(sourceUri(sources[2])), LibraryMode.NOVEL)
+        await { vm.pendingImportConflict != null }
+        vm.resolveImportConflict(setOf(secondId))
+        await { !vm.importing && vm.pendingImports.isEmpty() }
+        assertEquals(listOf(secondId), vm.state.books.map { it.id })
+        assertEquals(listOf(secondId), File(app.filesDir, "books").listFiles()!!.map { it.name })
+        assertTrue(sources.all { it.exists() })
+    }
+
+    @Test fun cancellingAReplacementBeforeItsCommitKeepsTheOriginalBookAndNotes() {
+        val left = File(root, "left/same.txt").apply { parentFile!!.mkdirs(); writeText("第一章\n已有内容。") }
+        val right = File(root, "right/same.txt").apply { parentFile!!.mkdirs(); writeText("第一章\n不同的内容，长度也不同。") }
+        openLibrary()
+        vm.importFiles(listOf(sourceUri(left)), LibraryMode.NOVEL)
+        await { !vm.importing && vm.state.books.size == 1 }
+        val original = vm.state.books.single()
+        val note = Annotation(bookId = original.id, chapterIndex = 0, pageIndex = 0, note = "不得丢失的已有笔记")
+        vm.annotate(note)
+        vm.flush()
+        await { LibraryRepository(app).load().annotations.contains(note) }
+        vm.importFiles(listOf(sourceUri(right)), LibraryMode.NOVEL)
+        await { vm.pendingImportConflict != null }
+        runBlocking { cloudOperationMutex.lock(editLockOwner) }
+        editLockHeld = true
+        vm.resolveImportConflict(setOf(vm.pendingImportConflict!!.incoming.id))
+        await { vm.pendingImportConflict == null }
+        val job = requireNotNull(vm.viewModelScope.coroutineContext[Job])
+        store.clear()
+        await { job.isCompleted }
+        assertEquals(listOf(original), LibraryRepository(app).load().books)
+        assertEquals(listOf(note), LibraryRepository(app).load().annotations)
+        assertEquals(listOf(original.id), File(app.filesDir, "books").listFiles()!!.map { it.name })
+        assertTrue(left.exists())
+        assertTrue(right.exists())
+    }
+
+    @Test fun aNewBookCanFinishImportingWhileOtherBooksOccupyAllCloudTransferSlots() {
+        val source = source("during-cloud-transfers.txt")
+        openLibrary()
+        runBlocking { cloudOperationMutex.lock(editLockOwner) }
+        editLockHeld = true
+        vm.importFiles(listOf(source), LibraryMode.NOVEL)
+        await { !vm.importing && vm.pendingImports.isEmpty() }
+        assertEquals(listOf("during-cloud-transfers"), vm.state.books.map { it.title })
+        assertNull(vm.message)
+    }
+
+    private fun sourceUri(file: File): Uri = Uri.parse("content://$authority/${file.relativeTo(root).invariantSeparatorsPath}")
 
     private fun source(name: String, held: Boolean = false): Uri {
         File(root, name).writeText("第一章 开始\n这是一段用于真实导入回归的正文。\n\n第二章 后续\n正文内容继续。")

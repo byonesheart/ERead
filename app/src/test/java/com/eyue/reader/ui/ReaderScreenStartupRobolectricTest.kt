@@ -172,7 +172,8 @@ class ReaderScreenStartupRobolectricTest {
         compose.onNodeWithTag("reader_settings_sheet").assertDoesNotExist()
         revealToolbar()
         compose.onNodeWithContentDescription("界面设置").performClick()
-        compose.onNodeWithTag("reader_save_theme").assertIsDisplayed()
+        compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
+        compose.onNodeWithTag("reader_new_theme").assertIsDisplayed()
         compose.onNodeWithText("音量键翻页").assertDoesNotExist()
         compose.onNodeWithTag("reader_settings_tab_preferences").assertDoesNotExist()
     }
@@ -182,6 +183,7 @@ class ReaderScreenStartupRobolectricTest {
         awaitText("TOOLBAR_CHAPTER_0")
         revealToolbar()
         compose.onNodeWithContentDescription("界面设置").performClick()
+        compose.onNodeWithTag("reader_new_theme").performClick()
         compose.onNodeWithTag("reader_save_theme").performClick()
         compose.onNodeWithText("配置1", substring = false).performTouchInput { longClick() }
         compose.onNodeWithTag("reader_more_fonts").performScrollTo().performClick()

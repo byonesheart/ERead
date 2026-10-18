@@ -67,7 +67,7 @@ class ReaderCompactSettingsRobolectricTest {
             } } finally { bitmap.recycle() }
             java.io.File(directory, "$name.png").writeBytes(bytes)
         }
-        compose.onNodeWithTag("reader_save_theme").assertIsDisplayed()
+        compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
         capture("reader-interface-light")
         compose.onNodeWithText("配置1", substring = false).performTouchInput { longClick() }
         compose.onNodeWithTag("reader_delete_theme_${settings.appearanceProfiles.single().id}").assertIsDisplayed()
@@ -201,11 +201,13 @@ class ReaderCompactSettingsRobolectricTest {
     @Test fun namedThemeThumbnailsSaveAndRestoreAppearanceWithoutChangingNarrationOrPaging() {
         var settings by mutableStateOf(ReaderSettings(ttsSpeed = 1.5f, readingMode = ReadingMode.PAGED, pageTurnStyle = PageTurnStyle.CURL))
         compose.setContent { MaterialTheme { ReaderCompactSettings(settings, false, { settings = it }, {}, {}) } }
+        compose.onNodeWithTag("reader_new_theme").performClick()
         compose.onNodeWithTag("reader_save_theme").performClick()
         compose.onNodeWithText("配置1").assertIsDisplayed()
         val firstId = settings.appearanceProfiles.first().id
         compose.onNodeWithContentDescription("阅读字号 增大").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(20f, settings.fontSize) }
+        compose.onNodeWithTag("reader_new_theme").performScrollTo().performClick()
         compose.onNodeWithTag("reader_save_theme").performClick()
         compose.onNodeWithText("主题", substring = false).performScrollTo()
         compose.onNodeWithText("配置2").assertIsDisplayed()
@@ -216,6 +218,55 @@ class ReaderCompactSettingsRobolectricTest {
             assertEquals(ReadingMode.PAGED, settings.readingMode)
             assertEquals(PageTurnStyle.CURL, settings.pageTurnStyle)
             assertEquals(2, settings.appearanceProfiles.size)
+        }
+    }
+
+    @Test fun creatingAThemeDoesNotPersistUntilSaveAndPlainSelectionHidesSave() {
+        var settings by mutableStateOf(ReaderSettings().saveAppearanceProfile())
+        val first = settings.appearanceProfiles.single()
+        compose.setContent { MaterialTheme { ReaderCompactSettings(settings, false, { settings = it }, {}, {}) } }
+        compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
+        compose.onNodeWithTag("reader_new_theme").performClick()
+        compose.onNodeWithText("界面 · 新建配置").assertIsDisplayed()
+        compose.onNodeWithTag("reader_save_theme").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(listOf(first), settings.appearanceProfiles) }
+        compose.onNodeWithTag("reader_finish_theme_edit").performClick()
+        compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(listOf(first), settings.appearanceProfiles) }
+        compose.onNodeWithTag("reader_new_theme").performClick()
+        compose.onNodeWithContentDescription("阅读字号 增大").performScrollTo().performClick()
+        compose.onNodeWithTag("reader_save_theme").performClick()
+        compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
+        compose.runOnIdle {
+            assertEquals(2, settings.appearanceProfiles.size)
+            assertEquals(first, settings.appearanceProfiles.first())
+            assertEquals(20f, settings.appearanceProfiles.last().appearance.fontSize)
+        }
+        compose.onNodeWithTag("reader_theme_${first.id}").performScrollTo().performClick()
+        compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
+        compose.onNodeWithContentDescription("阅读字号 增大").performScrollTo().performClick()
+        compose.onNodeWithTag("reader_save_theme").performClick()
+        compose.runOnIdle {
+            assertEquals(2, settings.appearanceProfiles.size)
+            assertEquals(first.id, settings.activeAppearanceProfileId)
+            assertEquals(20f, settings.appearanceProfiles.first().appearance.fontSize)
+        }
+        compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
+    }
+
+    @Test fun switchingThemesWhileEditingLeavesTheEditorAndDoesNotOverwriteTheDraft() {
+        var settings by mutableStateOf(ReaderSettings().saveAppearanceProfile().copy(fontSize = 24f).saveAppearanceProfile())
+        val profiles = settings.appearanceProfiles
+        compose.setContent { MaterialTheme { ReaderCompactSettings(settings, false, { settings = it }, {}, {}) } }
+        compose.onNodeWithTag("reader_theme_${profiles.first().id}").performTouchInput { longClick() }
+        compose.onNodeWithContentDescription("阅读字号 增大").performScrollTo().performClick()
+        compose.onNodeWithTag("reader_theme_${profiles.last().id}").performScrollTo().performClick()
+        compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
+        compose.onNodeWithTag("reader_finish_theme_edit").assertDoesNotExist()
+        compose.runOnIdle {
+            assertEquals(profiles, settings.appearanceProfiles)
+            assertEquals(24f, settings.fontSize)
+            assertEquals(profiles.last().id, settings.activeAppearanceProfileId)
         }
     }
 

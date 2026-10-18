@@ -549,10 +549,13 @@ private const val UNGROUPED_FILTER = "@ungrouped"
 @Composable fun BookCover(book: Book, modifier: Modifier = Modifier, onCloud: (() -> Unit)? = null,
     cloudBusy: Boolean = false, cloudInProgress: Boolean = false, cloudTaskLabel: String = "", cloudFraction: Float? = null,
     onCancelCloud: (() -> Unit)? = null, cloudCanCancel: Boolean = false, cloudDirty: Boolean = false) {
-    val bitmap by produceState<android.graphics.Bitmap?>(null, book.coverPath) {
+    val bitmap by produceState<android.graphics.Bitmap?>(null, book.coverPath, book.cloudOnly) {
+        value = null
         value = withContext(Dispatchers.IO) {
             book.coverPath?.let { path ->
-                BitmapLoader.decodeThumbnail(java.io.File(path))
+                BitmapLoader.decodeThumbnail(java.io.File(path))?.let { cover ->
+                    if (book.cloudOnly) try { cloudBookCover(cover) } finally { cover.recycle() } else cover
+                }
             }
         }
     }
@@ -573,6 +576,8 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 Text(book.author, color = Color.White.copy(alpha = .65f), fontSize = 8.sp)
             }
         }
+        if (book.cloudOnly) Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface.copy(alpha = .22f))
+            .testTag("cloud_book_cover_${book.id}"))
         if (cloudInProgress) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface.copy(alpha = .75f)), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {

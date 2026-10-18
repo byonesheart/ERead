@@ -32,6 +32,12 @@ internal fun assignRoleText(role: BookVoiceRole?, text: String, target: RoleText
         else role.copy(scenes = append(role.scenes))
 }
 
+internal fun rolePatternWithName(name: String, pattern: String): String = when {
+    pattern.isBlank() -> Regex.escape(name)
+    name.isBlank() || Regex(pattern).containsMatchIn(name) -> pattern
+    else -> "(?:$pattern)|${Regex.escape(name)}"
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun BookVoiceRolesDialog(book: Book, onSave: (List<BookVoiceRole>) -> Unit, onDismiss: () -> Unit,
@@ -45,6 +51,7 @@ internal fun BookVoiceRolesDialog(book: Book, onSave: (List<BookVoiceRole>) -> U
     var error by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf<BookVoiceRole?>(null) }
     var creating by remember { mutableStateOf(false) }
+    var newRoleText by remember { mutableStateOf<Pair<RoleTextTarget, String>?>(null) }
     var deleting by remember(book.id) { mutableStateOf<BookVoiceRole?>(null) }
     LaunchedEffect(saving) { if (saving) { menu = false; deleting = null } }
     val editingKey = editing?.id ?: if (creating) "new" else "list"
@@ -52,15 +59,17 @@ internal fun BookVoiceRolesDialog(book: Book, onSave: (List<BookVoiceRole>) -> U
     var name by remember(editingKey) { mutableStateOf(original?.name.orEmpty()) }
     var pattern by remember(editingKey) { mutableStateOf(original?.nameRegex.orEmpty()) }
     var voice by remember(editingKey) { mutableStateOf(original?.voice.orEmpty()) }
-    var description by remember(editingKey) { mutableStateOf(original?.description.orEmpty()) }
-    var scenes by remember(editingKey) { mutableStateOf(original?.scenes.orEmpty()) }
+    var description by remember(editingKey) { mutableStateOf(original?.description
+        ?: newRoleText?.takeIf { creating && it.first == RoleTextTarget.DESCRIPTION }?.second.orEmpty()) }
+    var scenes by remember(editingKey) { mutableStateOf(original?.scenes
+        ?: newRoleText?.takeIf { creating && it.first == RoleTextTarget.SCENE }?.second.orEmpty()) }
     var enabled by remember(editingKey) { mutableStateOf(original?.enabled ?: true) }
     var kind by remember(editingKey) { mutableStateOf(original?.kind ?: VoiceRoleKind.CHARACTER) }
     val draft = runCatching {
         require(book.voiceRoles.none { it.id != original?.id && it.name == name.trim() }) {
             "该名字已存在，请选择已有角色"
         }
-        BookVoiceRole(name.trim(), pattern.ifBlank { Regex.escape(name.trim()) }, voice, description, scenes,
+        BookVoiceRole(name.trim(), rolePatternWithName(name.trim(), pattern), voice, description, scenes,
             original?.aliases.orEmpty(), original?.id ?: "new-role-draft", enabled = enabled, kind = kind)
     }
     val configuration = LocalConfiguration.current
@@ -108,7 +117,7 @@ internal fun BookVoiceRolesDialog(book: Book, onSave: (List<BookVoiceRole>) -> U
                                 modifier = Modifier.weight(1f).testTag("role_assign_${value.name}"))
                         }
                     }
-                    Text("加入已有角色名字时仅补充名字正则；描述和场景会追加至所选角色。", style = MaterialTheme.typography.bodySmall)
+                    Text("名字自动加入名字正则；描述和场景可追加至已有角色，也可新建角色后在保存前命名。", style = MaterialTheme.typography.bodySmall)
                 } else if (editing != null || creating) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("类别", Modifier.weight(1f))
@@ -121,7 +130,7 @@ internal fun BookVoiceRolesDialog(book: Book, onSave: (List<BookVoiceRole>) -> U
                         Text("启用", Modifier.weight(1f))
                         Switch(enabled, { enabled = it }, modifier = Modifier.testTag("role_edit_enabled"))
                     }
-                    OutlinedTextField(name, { name = it }, label = { Text("名字") }, modifier = Modifier.fillMaxWidth().testTag("role_name"))
+                    OutlinedTextField(name, { name = it }, label = { Text("名字（保存时必填）") }, modifier = Modifier.fillMaxWidth().testTag("role_name"))
                     OutlinedTextField(pattern, { pattern = it }, label = { Text("名字正则（留空按名字匹配）") },
                         maxLines = 3, modifier = Modifier.fillMaxWidth().testTag("role_regex"))
                     OutlinedTextField(voice, { voice = it }, label = { Text("音色") },
@@ -130,7 +139,8 @@ internal fun BookVoiceRolesDialog(book: Book, onSave: (List<BookVoiceRole>) -> U
                         maxLines = 5, modifier = Modifier.fillMaxWidth().testTag("role_description"))
                     OutlinedTextField(scenes, { scenes = it }, label = { Text("角色场景") },
                         maxLines = 5, modifier = Modifier.fillMaxWidth().testTag("role_scenes"))
-                    val count = listOf(name, pattern.ifBlank { Regex.escape(name.trim()) }, voice, description, scenes).sumOf { it.codePointCount(0, it.length) }
+                    val countedPattern = runCatching { rolePatternWithName(name.trim(), pattern) }.getOrDefault(pattern)
+                    val count = listOf(name, countedPattern, voice, description, scenes).sumOf { it.codePointCount(0, it.length) }
                     Text("$count / 3000 字", color = if (count > 3000) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.testTag("role_character_count"), style = MaterialTheme.typography.bodySmall)
                     draft.exceptionOrNull()?.message?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
@@ -162,7 +172,10 @@ internal fun BookVoiceRolesDialog(book: Book, onSave: (List<BookVoiceRole>) -> U
                 verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (!saving) {
                     if (assigning) Button(enabled = targetChosen && selection.isNotBlank(), onClick = {
-                        runCatching { assignRoleText(book.voiceRoles.find { it.id == targetId }, selection, target) }
+                        if (targetId == null && target != RoleTextTarget.NAME) {
+                            newRoleText = target to selection.trim()
+                            creating = true; assigning = false; error = null
+                        } else runCatching { assignRoleText(book.voiceRoles.find { it.id == targetId }, selection, target) }
                             .onSuccess { editing = it; assigning = false; error = null }
                             .onFailure { error = it.message }
                     }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
@@ -171,16 +184,16 @@ internal fun BookVoiceRolesDialog(book: Book, onSave: (List<BookVoiceRole>) -> U
                         Button(enabled = draft.isSuccess, onClick = {
                             val role = draft.getOrThrow().let { if (original == null) it.copy(id = java.util.UUID.randomUUID().toString()) else it }
                             onSave(book.voiceRoles.filterNot { it.id == role.id } + role)
-                            editing = null; creating = false
+                            editing = null; creating = false; newRoleText = null
                         }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             modifier = Modifier.testTag("role_save")) { Text("保存角色") }
-                        TextButton(onClick = { editing = null; creating = false },
+                        TextButton(onClick = { editing = null; creating = false; newRoleText = null },
                             contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("role_return_list")) { Text("返回列表") }
                         if (original != null && book.voiceRoles.any { it.id == original.id }) TextButton(onClick = { deleting = original },
                             contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("role_delete")) {
                             Text("删除角色", color = MaterialTheme.colorScheme.error)
                         }
-                    } else Button(onClick = { creating = true }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                    } else Button(onClick = { newRoleText = null; creating = true }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                         modifier = Modifier.testTag("role_new")) { Text("新增角色") }
                 }
                 TextButton(onClick = onDismiss, enabled = !saving) { Text("关闭") }

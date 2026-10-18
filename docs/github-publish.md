@@ -35,12 +35,12 @@ https://raw.githubusercontent.com/byonesheart/ERead/main/update.json
 
 1. 在 `app/build.gradle.kts` 增加 `versionCode`，设置 `versionName`。
 2. 执行 `scripts/build.ps1`，验证生成的 `artifacts/ERead-版本-debug.apk`。
-3. 打开 [创建 Release](https://github.com/byonesheart/ERead/releases/new)，填写标签（例如 `v1.9.2`）、名称及核心更新日志，上传对应 APK 后发布，同时更新网盘内的安装包。
+3. 打开 [创建 Release](https://github.com/byonesheart/ERead/releases/new)，填写标签（例如 `v1.9.3`）、名称及核心更新日志，上传对应 APK 后发布，同时更新网盘内的安装包。
 4. 更新根目录 `update.json` 中的版本、Release 页面、APK 下载链接和 `mirrors` 网盘链接及提取码，提交并推送。链接中的标签和文件名必须与 Release 实际内容一致。
 
-当前 `1.9.2` 对应标签为 `v1.9.2`，附件名为 `ERead-1.9.2-debug.apk`。发布前可先保存 Release 草稿；不要让更新文件指向尚未上传的安装包。
+当前 `1.9.3` 对应标签为 `v1.9.3`，附件名为 `ERead-1.9.3-debug.apk`。发布前可先保存 Release 草稿；不要让更新文件指向尚未上传的安装包。
 
-本版清单见 [update-1.9.2.json](releases/update-1.9.2.json)，根目录 `update.json` 与其保持一致。发布时先上传安装包、源码包并发布 Release，确认附件完整后，再推送主分支的新清单，避免提前宣告尚未发布的安装包。GitHub 登录授权有效时，可自动完成这套流程。
+本版清单见 [update-1.9.3.json](releases/update-1.9.3.json)，根目录 `update.json` 与其保持一致。发布时先上传安装包、源码包并发布 Release，确认附件完整后，再推送主分支的新清单，避免提前宣告尚未发布的安装包。GitHub 登录授权有效时，可自动完成这套流程。网盘使用已授权的上传分享工具，将 APK 存入百度和夸克的 `/项目/E阅`，百度提取码为 `READ`，校验实际分享结果后同步 README、Release 和更新清单。
 
 `changelog` 只写核心功能变化，并以“更多功能请自行体验。”结尾；软件内通过「更新日志」按钮进入本次更新页。检查更新接受本仓库的 HTTPS Release 页面和 APK 链接，以及百度网盘、夸克网盘的 HTTPS 分享链接，不自动下载或安装。
 

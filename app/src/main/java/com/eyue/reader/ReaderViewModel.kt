@@ -21,6 +21,7 @@ import com.eyue.reader.ui.readerLayoutSpec
 import com.eyue.reader.ui.removeReaderPageCaches
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineStart
@@ -95,6 +96,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     var pendingImports by mutableStateOf<List<PendingImport>>(emptyList())
         private set
     val pendingImport: PendingImport? get() = pendingImports.firstOrNull()
+    var pendingImportConflict by mutableStateOf<ImportBookConflict?>(null)
+        private set
+    private var importConflictAnswer: CompletableDeferred<Set<String>>? = null
     var message by mutableStateOf<String?>(null)
     var activeBookId by mutableStateOf<String?>(null)
         private set
@@ -356,13 +360,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val notices = mutableListOf<String>()
         var completed = 0
         suspend fun acceptBook(imported: Book) = withContext(Dispatchers.Main) {
-            val book = if (imported.format == BookFormat.IMAGES) imported.copy(mode = LibraryMode.COMIC) else imported
-            notices += prepareImportedBooks(listOf(book))
-            changed(state.copy(books = state.books + book))
-            persistNow()
+            val incoming = if (imported.format == BookFormat.IMAGES) imported.copy(mode = LibraryMode.COMIC) else imported
+            val book = acceptImportedBook(incoming, notices)
             completed++
-            pendingImports = pendingImports.map { if (it.id == request.id) it.copy(mode = book.mode, completed = completed) else it }
-            if (completed == 1) {
+            pendingImports = pendingImports.map { if (it.id == request.id) it.copy(mode = book?.mode ?: incoming.mode, completed = completed) else it }
+            if (completed == 1 && book != null) {
                 if (activeBookId == null && mode == request.mode) mode = book.mode
                 if (request.external) {
                     request.requestId?.let { requestId -> withContext(Dispatchers.IO) {
@@ -379,6 +381,66 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             notices += taskImporter.lastImportErrors + taskImporter.lastImportWarnings
             message = notices.takeIf { it.isNotEmpty() }?.joinToString("\n")
         } finally { progressJob.cancelAndJoin() }
+    }
+
+    fun resolveImportConflict(keepIds: Set<String>) {
+        val conflict = pendingImportConflict ?: return
+        val allowed = conflict.existing.map { it.id }.toSet() + conflict.incoming.id
+        if (keepIds.isNotEmpty() && allowed.containsAll(keepIds)) importConflictAnswer?.complete(keepIds)
+    }
+
+    private suspend fun acceptImportedBook(incoming: Book, notices: MutableList<String>): Book? {
+        try {
+            val identified = withContext(Dispatchers.IO) {
+                state.books.map { hydrateBookSourceIdentity(getApplication(), it) }
+            }.filter { known -> state.books.any { it.id == known.id } }
+            val same = identified.firstOrNull { !it.cloudOnly && cloudBookSourceMatch(it, incoming) == CloudBookMatch.SAME }
+            if (same != null) return state.books.find { it.id == same.id }
+            val candidates = importBookCandidates(identified, incoming)
+            var selected = setOf(incoming.id)
+            if (candidates.isNotEmpty()) {
+                val answer = CompletableDeferred<Set<String>>()
+                importConflictAnswer = answer
+                pendingImportConflict = ImportBookConflict(incoming, candidates)
+                selected = try { answer.await() } finally {
+                    pendingImportConflict = null
+                    importConflictAnswer = null
+                }
+            }
+            val keepIncoming = incoming.id in selected
+            val discardedIds = candidates.filterNot { it.id in selected }.map { it.id }
+            if (!keepIncoming && discardedIds.isEmpty()) return state.books.firstOrNull { it.id in selected && !it.cloudOnly }
+            if (keepIncoming) notices += prepareImportedBooks(listOf(incoming))
+            for (id in discardedIds) {
+                stopAiSpeechConversion(id)
+                stopCloudUploadSubmission(id)
+            }
+            cloudOperationMutex.withBooks(discardedIds) {
+                require(keepIncoming || state.books.any { it.id in selected }) { "所选书籍已变化，请重新导入" }
+                // Commit the selected copies together before deleting any old private files.
+                withContext(NonCancellable) {
+                    val discarded = state.books.filter { it.id in discardedIds }
+                    if (discarded.isNotEmpty()) cloudMetadataEpoch++
+                    if (activeBookId in discardedIds) close()
+                    state = state.copy(books = state.books.filterNot { it.id in discardedIds } +
+                        if (keepIncoming) listOf(incoming) else emptyList(),
+                        annotations = state.annotations.filterNot { it.bookId in discardedIds })
+                    saveJob?.cancel()
+                    persistNow()
+                    withContext(Dispatchers.IO) { discarded.forEach { book ->
+                        CloudBackupService(getApplication()).discardPendingUpload(book.id)
+                        repository.removeBookFiles(book)
+                        removeReaderPageCaches(getApplication(), book.id)
+                        AiSpeechCache(getApplication()).clear(book.id)
+                    } }
+                }
+            }
+            return if (keepIncoming) incoming else state.books.firstOrNull { it.id in selected && !it.cloudOnly }
+        } finally {
+            if (state.books.none { it.id == incoming.id }) withContext(NonCancellable + Dispatchers.IO) {
+                repository.removeBookFiles(incoming)
+            }
+        }
     }
 
     private suspend fun prepareImportedBooks(books: List<Book>): List<String> {
@@ -1365,7 +1427,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (account != null) withContext(Dispatchers.IO) {
             cloudHistory.record(account, book.id, cloudBackupFingerprint(repository, snapshot, downloadedBook), restored.backupAt)
         }
-        message = "《${book.title}》的内容和阅读记录已下载，可以开始阅读"
     }
 
     fun importFiles(uris: List<Uri>, selectedMode: LibraryMode) {

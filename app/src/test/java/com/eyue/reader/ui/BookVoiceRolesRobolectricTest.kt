@@ -81,6 +81,68 @@ class BookVoiceRolesRobolectricTest {
         compose.runOnIdle { assertEquals("手动调整后的描述", saved?.single()?.description); assertEquals(role.scenes, saved?.single()?.scenes) }
     }
 
+    @Test fun aDescriptionCanStartANewRoleBeforeItsNameIsEntered() {
+        var saved: List<BookVoiceRole>? = null
+        compose.setContent { MaterialTheme { BookVoiceRolesDialog(book, { saved = it }, {}, "性格沉稳") } }
+        compose.onNodeWithTag("role_target_picker").performClick()
+        compose.onNodeWithTag("role_target_new").performClick()
+        compose.onNodeWithTag("role_assign_DESCRIPTION").performClick()
+        compose.onNodeWithTag("role_assign_confirm").performClick()
+        compose.onNodeWithTag("role_error").assertDoesNotExist()
+        compose.onNodeWithTag("role_description").performScrollTo().assertTextContains("性格沉稳")
+        compose.onNodeWithTag("role_save").assertIsNotEnabled()
+        compose.runOnIdle { assertNull(saved) }
+        compose.onNodeWithTag("role_name").performScrollTo().performTextReplacement("李四")
+        compose.onNodeWithTag("role_save").assertIsEnabled().performClick()
+        compose.runOnIdle {
+            val added = requireNotNull(saved).last()
+            assertEquals("李四", added.name)
+            assertEquals("性格沉稳", added.description)
+            assertEquals("", added.scenes)
+            assertTrue(Regex(added.nameRegex).containsMatchIn(added.name))
+            assertEquals(role, saved?.first())
+        }
+    }
+
+    @Test fun aSceneCanStartANewRoleAndRemainsEditableUntilSaving() {
+        var saved: List<BookVoiceRole>? = null
+        compose.setContent { MaterialTheme { BookVoiceRolesDialog(book, { saved = it }, {}, "低声说话") } }
+        compose.onNodeWithTag("role_target_picker").performClick()
+        compose.onNodeWithTag("role_target_new").performClick()
+        compose.onNodeWithTag("role_assign_SCENE").performClick()
+        compose.onNodeWithTag("role_assign_confirm").performClick()
+        compose.onNodeWithTag("role_scenes").performScrollTo().assertTextContains("低声说话")
+        compose.onNodeWithTag("role_scenes").performTextReplacement("字".repeat(3001))
+        compose.onNodeWithTag("role_name").performScrollTo().performTextReplacement("李四")
+        compose.onNodeWithTag("role_save").assertIsNotEnabled()
+        compose.onNodeWithTag("role_scenes").performScrollTo().performTextReplacement("紧张时低声说话")
+        compose.onNodeWithTag("role_save").assertIsEnabled().performClick()
+        compose.runOnIdle {
+            val added = requireNotNull(saved).last()
+            assertEquals("李四", added.name)
+            assertEquals("紧张时低声说话", added.scenes)
+            assertEquals("", added.description)
+        }
+    }
+
+    @Test fun savingARenamedRoleAddsItsLiteralNameWithoutRemovingItsExistingRegex() {
+        var saved: List<BookVoiceRole>? = null
+        val original = role.copy(nameRegex = "张三|小三", aliases = listOf("小三"))
+        compose.setContent { MaterialTheme { BookVoiceRolesDialog(book.copy(voiceRoles = listOf(original)), { saved = it }, {}) } }
+        compose.onNodeWithTag("role_edit_zhang").performClick()
+        compose.onNodeWithTag("role_name").performScrollTo().performTextReplacement("小张(青年)")
+        compose.onNodeWithTag("role_save").performClick()
+        compose.runOnIdle {
+            val renamed = requireNotNull(saved).single()
+            assertEquals("小张(青年)", renamed.name)
+            assertEquals("(?:张三|小三)|${Regex.escape(renamed.name)}", renamed.nameRegex)
+            assertEquals(original.aliases, renamed.aliases)
+            assertTrue(Regex(renamed.nameRegex).containsMatchIn("小张(青年)"))
+            assertFalse(Regex(renamed.nameRegex).containsMatchIn("小张青年"))
+            assertEquals(renamed.nameRegex, rolePatternWithName(renamed.name, renamed.nameRegex))
+        }
+    }
+
     @Test fun sceneAssignmentAndTheThreeThousandCharacterLimitAreEnforced() {
         compose.setContent { MaterialTheme { BookVoiceRolesDialog(book, {}, {}, "低声说话") } }
         compose.onNodeWithTag("role_target_picker").performClick()

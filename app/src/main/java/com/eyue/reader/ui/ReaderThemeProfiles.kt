@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -16,11 +17,13 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -53,20 +56,30 @@ import java.io.File
 
 @Composable
 internal fun ReaderThemeProfiles(settings: ReaderSettings, onSettings: (ReaderSettings) -> Unit,
-    editingProfileId: String?, onEditProfile: (String?) -> Unit) {
+    editingProfileId: String?, onEditProfile: (String?) -> Unit, onNewProfile: () -> Unit) {
     var deleting by remember { mutableStateOf<ReaderThemeProfile?>(null) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("主题", Modifier.width(34.dp), fontSize = 12.sp)
         LazyRow(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            item {
+                OutlinedButton(onClick = onNewProfile,
+                    modifier = Modifier.padding(end = 6.dp).width(62.dp).height(56.dp).testTag("reader_new_theme"),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp), shape = RoundedCornerShape(8.dp)) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
+                        Text("新建", fontSize = 12.sp)
+                    }
+                }
+            }
             items(settings.appearanceProfiles, key = { it.id }) { profile ->
                 ReaderThemeThumbnail(profile, settings.activeAppearanceProfileId == profile.id &&
                     settings.appearanceSnapshot() == profile.appearance, editingProfileId != null,
                     onClick = {
-                        if (editingProfileId != null) onEditProfile(profile.id)
+                        onEditProfile(null)
                         onSettings(settings.applyAppearanceProfile(profile))
                     }, onLongClick = {
-                        onEditProfile(profile.id)
                         onSettings(settings.applyAppearanceProfile(profile))
+                        onEditProfile(profile.id)
                     }, onDelete = { deleting = profile })
             }
         }
