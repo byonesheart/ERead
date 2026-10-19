@@ -49,18 +49,20 @@ internal suspend fun readerBookPageIndex(context: Context, book: Book, settings:
     fileIdentity: (File) -> String? = ::readerFileChangeToken): ReaderBookPageIndex = withContext(Dispatchers.IO) {
     val work = currentCoroutineContext()
     val dependencies = linkedMapOf<String, String?>()
-    fun track(path: String?) {
+    fun track(path: String?, allowMissing: Boolean = false) {
         if (path != null) {
             work.ensureActive()
             val file = File(path).absoluteFile
-            dependencies.getOrPut(file.path) { fileIdentity(file) }
+            if (file.path !in dependencies || !allowMissing && dependencies[file.path] == "missing") {
+                dependencies[file.path] = if (allowMissing && !file.exists()) "missing" else fileIdentity(file)
+            }
         }
     }
     book.chapters.forEach { chapter ->
         track(chapter.textPath); track(chapter.lazySourcePath)
-        chapter.inlineImages.forEach { track(it.path) }
+        chapter.inlineImages.forEach { track(it.path, allowMissing = true) }
     }
-    track(settings.fontPath)
+    track(settings.fontPath, allowMissing = true)
     // Imported source CSS files share the lazy-source directory, so no chapter HTML/CSS needs opening.
     book.chapters.mapNotNull { it.lazySourcePath?.let(::File)?.absoluteFile?.parentFile }.distinct().forEach { directory ->
         directory.listFiles()?.filter { it.isFile && it.extension.equals("css", true) }?.sortedBy { it.name }?.forEach { track(it.path) }
@@ -97,6 +99,7 @@ internal class ReaderBookPageIndex internal constructor(private val context: Con
     val pages: Map<Int, List<ReaderTextPage>> get() = rows.mapValues { it.value.pages }
     val lengths: Map<Int, Int> get() = rows.mapValues { it.value.length }
     val complete: Boolean get() = rows.size == book.chapters.size
+    fun hasChapter(index: Int): Boolean = index in rows
 
     private fun prepared(index: Int): File? = book.chapters[index].lazySourcePath?.let { File("$it.prepared.json").absoluteFile }
     private fun preparedToken(index: Int): String? = prepared(index)?.let { file ->

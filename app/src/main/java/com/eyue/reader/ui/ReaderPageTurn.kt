@@ -21,7 +21,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.State
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -152,11 +152,11 @@ internal fun ReaderPageTurnFrame(
                     fadeOut(tween(420), targetAlpha = 1f)).apply { targetContentZIndex = paperOrder.targetZ }
             }
         }) { location ->
-        val visibility by transition.animateFloat(transitionSpec = { tween(if (style == PageTurnStyle.CURL) 420 else 240) },
+        val visibility = transition.animateFloat(transitionSpec = { tween(if (style == PageTurnStyle.CURL) 420 else 240) },
             label = "paper visibility") { state -> if (state == EnterExitState.Visible) 1f else 0f }
         val turningPaper = if (forward) location != anchor else location == anchor
         Box(Modifier.fillMaxSize().then(if (style == PageTurnStyle.CURL && turningPaper)
-            Modifier.zIndex(1f).readerPaperFold(1f - visibility, vertical, paper) else Modifier)) {
+            Modifier.zIndex(1f).readerPaperFold(visibility, vertical, paper) else Modifier)) {
             spread(location, location == anchor && !turn.isRunning)
         }
     }
@@ -164,8 +164,8 @@ internal fun ReaderPageTurnFrame(
 }
 
 /** A diagonal, curved fold with mirrored print and a shaded paper back, in either paging direction. */
-private fun Modifier.readerPaperFold(progress: Float, vertical: Boolean, paper: Color): Modifier = drawWithContent {
-    val amount = progress.coerceIn(0f, 1f)
+private fun Modifier.readerPaperFold(visibility: State<Float>, vertical: Boolean, paper: Color): Modifier = drawWithContent {
+    val amount = (1f - visibility.value).coerceIn(0f, 1f)
     if (amount <= .001f) { drawContent(); return@drawWithContent }
     if (amount >= .999f) return@drawWithContent
     val axis = if (vertical) size.height else size.width

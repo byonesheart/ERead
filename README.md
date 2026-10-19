@@ -8,8 +8,8 @@
 
 | 渠道 | 下载链接 | 提取码 |
 | --- | --- | --- |
-| 百度网盘 | [点击下载](https://pan.baidu.com/s/1yuvwV84QbuWgxwXxznd2wQ?pwd=READ) | `READ` |
-| 夸克网盘 | [点击下载](https://pan.quark.cn/s/3f8c60c4fb84) | `mm4a` |
+| 百度网盘 | [点击下载](https://pan.baidu.com/s/1g5fIKjPqUZi9WyCvJOwLJw?pwd=READ) | `READ` |
+| 夸克网盘 | [点击下载](https://pan.quark.cn/s/c95ce4e1dfcb) | `djhn` |
 | GitHub Releases | [查看版本与安装包](https://github.com/byonesheart/ERead/releases) | 无 |
 
 下载 APK 后安装即可使用。

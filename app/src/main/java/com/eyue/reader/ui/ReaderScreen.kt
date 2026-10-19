@@ -72,6 +72,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
@@ -139,6 +140,9 @@ internal fun ReaderScreen(
     onSaveText: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val requestedSettings = settings
+    var activeReadingMode by remember(book.id) { mutableStateOf(settings.readingMode) }
+    val settings = requestedSettings.copy(readingMode = activeReadingMode)
     val showTextSave = hasUnsavedText || saveProgress != null
     val chineseDisplay by produceState<Pair<ChineseConversion, ChineseTextConverter?>?>(null, settings.chineseConversion) {
         value = settings.chineseConversion to ChineseTextConverter.load(context, settings.chineseConversion)
@@ -151,6 +155,7 @@ internal fun ReaderScreen(
     val chapterStore = remember(importedBook.id, importedBook.chapters, settings.useSourceCss) {
         ReaderChapterStore(context, importedBook, useSourceCss = settings.useSourceCss)
     }
+    val latestChapterStore by rememberUpdatedState(chapterStore)
     val activity = remember(context) {
         generateSequence(context) { (it as? ContextWrapper)?.baseContext }.filterIsInstance<Activity>().firstOrNull()
     }
@@ -229,6 +234,9 @@ internal fun ReaderScreen(
     var textPages by remember(book.id) { mutableStateOf(List(book.chapters.size) { emptyList<ReaderTextPage>() }) }
     var paginatedChapters by remember(book.id) { mutableStateOf<Set<Int>>(emptySet()) }
     var layoutGeneration by remember(book.id) { mutableIntStateOf(0) }
+    var activeLayoutKey by remember(book.id) { mutableStateOf<List<Any?>?>(null) }
+    var preparedLayoutGeneration by remember(book.id) { mutableIntStateOf(-1) }
+    var restoredLayoutGeneration by remember(book.id) { mutableIntStateOf(-1) }
     var bookPageIndex by remember(importedBook.id, importedBook.chapters, layoutGeneration) {
         mutableStateOf<ReaderBookPageIndex?>(null)
     }
@@ -268,6 +276,18 @@ internal fun ReaderScreen(
     val textStyle = layoutSpec.textStyle.copy(color = foreground)
     val textWidth = layoutSpec.textWidth
     val textHeight = layoutSpec.textHeight
+    fun layoutKey(mode: ReadingMode, spec: ReaderLayoutSpec): List<Any?> = listOf(importedBook.id,
+        importedBook.contentVersion, importedBook.chapters, spec.textWidth, spec.textHeight, settings.fontSize,
+        settings.lineHeight, settings.letterSpacing, settings.paragraphSpacing, settings.fontPath, settings.fontName,
+        settings.bold, density, layoutDirection, mode, settings.chineseConversion, chineseConverter, settings.useSourceCss)
+    val currentLayoutKey = layoutKey(settings.readingMode, layoutSpec)
+    val requestedDualPage = readerUseDualPage(tabletDualPage, requestedSettings.readingMode,
+        LocalWindowInfo.current.containerSize, density)
+    val requestedSpec = remember(layoutSpec, requestedDualPage, viewport) {
+        if (requestedDualPage == dualPage) layoutSpec else readerLayoutSpec(requestedSettings, density, layoutDirection,
+            readerPageViewport(viewport, requestedDualPage, density))
+    }
+    val requestedLayoutKey = layoutKey(requestedSettings.readingMode, requestedSpec)
     val chapter = book.chapters.getOrNull(chapterIndex)
     val chapterTitle = chapter?.let { readerChapterTitle(it, pageIndex) }.orEmpty()
     val currentText = document?.text?.getOrNull(chapterIndex).orEmpty()
@@ -303,8 +323,10 @@ internal fun ReaderScreen(
     val windowHeight = LocalWindowInfo.current.containerSize.height
     val halfScreen = with(density) { windowHeight.toDp() / 2f }
 
-    fun publishChapter(index: Int, loaded: ReaderLoadedChapter) {
+    fun publishChapter(index: Int, loaded: ReaderLoadedChapter, owner: ReaderChapterStore = chapterStore) {
+        if (latestChapterStore !== owner) return
         val current = document ?: return
+        if (index !in current.text.indices || index !in current.chapters.indices) return
         document = current.copy(text = current.text.toMutableList().apply { this[index] = loaded.text },
             sourceStyles = current.sourceStyles.toMutableList().apply { this[index] = loaded.styles },
             scrollBlocks = current.scrollBlocks.toMutableList().apply { this[index] = loaded.blocks },
@@ -374,9 +396,11 @@ internal fun ReaderScreen(
         val target = chapterIndex + direction
         if (target in book.chapters.indices && !reflowing && !restoring) jumpPage(target, 0)
     }
-    fun rememberLayout(sourceChapter: Int, sourcePage: Int, layout: TextLayoutResult) {
-        val source = document?.text?.getOrNull(sourceChapter).orEmpty()
-        val page = textPages.getOrNull(sourceChapter)?.getOrNull(sourcePage) ?: return
+    fun rememberLayout(sourceChapter: Int, sourcePage: Int, layout: TextLayoutResult, sourceDocument: ReaderDocument?,
+                       sourcePages: List<List<ReaderTextPage>>, generation: Int, owner: ReaderChapterStore) {
+        if (generation != layoutGeneration || latestChapterStore !== owner) return
+        val source = sourceDocument?.text?.getOrNull(sourceChapter).orEmpty()
+        val page = sourcePages.getOrNull(sourceChapter)?.getOrNull(sourcePage) ?: return
         val offsets = readerParagraphText(AnnotatedString(readerPageText(source, page)), textStyle, settings.paragraphSpacing, chineseConverter, source, page.start).offsetMapping
         textLayouts[sourceChapter to sourcePage] = ReaderTextLayout(layout, offsets)
         if (textLayouts.size > 16) textLayouts.remove(textLayouts.keys.first())
@@ -561,7 +585,8 @@ internal fun ReaderScreen(
     fun followSpeech(segment: ReaderSpeechSegment, offset: Int) {
         spokenLocation = segment to offset
         if (!settings.ttsFollowPage) return
-        if (speechResumePending || manualDrag || document == null) return
+        val loadedDocument = document ?: return
+        if (speechResumePending || manualDrag) return
         if (selectedPassage != null || tappedNoteIds.isNotEmpty() || activeTextSelections.isNotEmpty()) {
             pendingSpeechLocation = segment to offset
             return
@@ -572,7 +597,7 @@ internal fun ReaderScreen(
         }
         pendingSpeechLocation = null
         val targetChapter = segment.chapter.coerceIn(0, book.chapters.lastIndex)
-        if (!raster && (targetChapter !in document!!.readyChapters || !directScroll && targetChapter !in paginatedChapters)) {
+        if (!raster && (targetChapter !in loadedDocument.readyChapters || !directScroll && targetChapter !in paginatedChapters)) {
             pendingSpeechLocation = segment to offset
             chapterIndex = targetChapter
             characterOffset = offset
@@ -865,23 +890,80 @@ internal fun ReaderScreen(
         }
         document?.errors?.firstOrNull()?.let { snackbar.showSnackbar(it) }
     }
-    LaunchedEffect(book.id, importedBook.contentVersion, importedBook.chapters, textWidth, textHeight, settings.fontSize, settings.lineHeight,
-        settings.letterSpacing, settings.paragraphSpacing, settings.fontPath, settings.fontName, settings.bold, density, layoutDirection,
-        settings.readingMode, settings.chineseConversion, chineseConverter, settings.useSourceCss) {
-        if (raster) return@LaunchedEffect
+    // Keep the currently readable mode on screen until the requested mode's current chapter is ready.
+    LaunchedEffect(requestedLayoutKey, chapterStore, document != null, chapterIndex, reflowing, restoring) {
+        if (requestedSettings.readingMode == activeReadingMode || document == null || reflowing || restoring || !conversionReady ||
+            requestedSpec.textWidth <= 1 || requestedSpec.textHeight <= 1) return@LaunchedEffect
+        if (settings.readingMode == ReadingMode.SCROLL) latestSyncScrollPosition()
+        val target = chapterIndex
+        val owner = chapterStore
+        try {
+            val loaded = if (raster) null else owner.load(target)
+            val targetPages = when {
+                loaded == null -> emptyList()
+                requestedSettings.readingMode == ReadingMode.SCROLL -> loaded.blocks
+                else -> readerCachedChapterPages(context, importedBook, target, requestedSettings, requestedSpec.density,
+                    layoutDirection, requestedSpec.textWidth, requestedSpec.textHeight, loaded.text, loaded.chapter) {
+                    readerPaginate(context, listOf(loaded.text), requestedSpec.textStyle, requestedSpec.density, layoutDirection,
+                        requestedSpec.textWidth, requestedSpec.textHeight, inlineImages = listOf(loaded.chapter.inlineImages),
+                        sourceStyles = listOf(loaded.styles), paragraphSpacing = requestedSettings.paragraphSpacing,
+                        chineseConverter = chineseConverter).single()
+                }
+            }
+            currentCoroutineContext().ensureActive()
+            if (latestChapterStore !== owner || chapterIndex != target || document == null) return@LaunchedEffect
+            val imageHint = textPages.getOrNull(target)?.getOrNull(pageIndex)?.imageIndex?.takeIf { it >= 0 }
+            val offset = characterOffset
+            val imagePath = positionImagePath
+            if (loaded != null) publishChapter(target, loaded, owner)
+            val loadedDocument = document ?: return@LaunchedEffect
+            val nextPages = if (raster) textPages else if (requestedSettings.readingMode == ReadingMode.SCROLL)
+                loadedDocument.scrollBlocks.toMutableList().apply { this[target] = targetPages }
+                else List(book.chapters.size) { if (it == target) targetPages else emptyList() }
+            textPages = nextPages
+            paginatedChapters = if (!raster && requestedSettings.readingMode != ReadingMode.SCROLL) setOf(target) else emptySet()
+            pageIndex = if (raster) readerSpreadStart(pageIndex, requestedDualPage)
+                else readerSpreadStart(locatePage(target, offset, imagePath, imageHint, pageIndex), requestedDualPage)
+            characterOffset = offset
+            positionImagePath = imagePath
+            layoutImageHint = null
+            lastPagePending = false
+            initialPositionPending = false
+            layoutGeneration++
+            preparedLayoutGeneration = layoutGeneration
+            activeLayoutKey = requestedLayoutKey
+            restoring = true
+            restoreRequest++
+            activeReadingMode = requestedSettings.readingMode
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
+            snackbar.showSnackbar("阅读模式切换失败：${error.localizedMessage.orEmpty().take(80)}")
+        }
+    }
+    LaunchedEffect(currentLayoutKey) {
+        if (activeLayoutKey == currentLayoutKey) return@LaunchedEffect
+        restoreRequest++
+        restoring = true
+        layoutGeneration++
+        preparedLayoutGeneration = -1
+        activeLayoutKey = currentLayoutKey
+        if (raster) { preparedLayoutGeneration = layoutGeneration; return@LaunchedEffect }
         layoutImageHint = textPages.getOrNull(chapterIndex)?.getOrNull(pageIndex)?.imageIndex?.takeIf { it >= 0 }
         textPages = if (directScroll) document?.scrollBlocks ?: List(book.chapters.size) { emptyList() }
             else List(book.chapters.size) { emptyList() }
         paginatedChapters = emptySet()
-        restoring = true
-        layoutGeneration++
     }
     LaunchedEffect(book.id, document?.scrollIndex, chapterIndex, layoutGeneration, viewport, conversionReady) {
-        if (document == null || !conversionReady) return@LaunchedEffect
+        val initialDocument = document ?: return@LaunchedEffect
+        if (!conversionReady || activeLayoutKey != currentLayoutKey) return@LaunchedEffect
         if (raster || viewport.width == 0 || viewport.height == 0 || textWidth <= 1 || textHeight <= 1) return@LaunchedEffect
+        val generation = layoutGeneration
+        val owner = chapterStore
         val target = chapterIndex
-        val ready = if (directScroll) target in document!!.readyChapters && textPages[target].isNotEmpty()
-            else target in paginatedChapters && target in document!!.readyChapters
+        val ready = if (directScroll) target in initialDocument.readyChapters && textPages[target].isNotEmpty()
+            else target in paginatedChapters && target in initialDocument.readyChapters
         reflowing = !ready
         if (!ready) restoring = true
         paginationProgress = 0f
@@ -891,25 +973,34 @@ internal fun ReaderScreen(
             val pageIndexCache = if (directScroll) null else bookPageIndex ?: readerBookPageIndex(context,
                 importedBook, settings, workerDensity, layoutDirection, textWidth, textHeight).also { restored ->
                 currentCoroutineContext().ensureActive()
+                if (generation != layoutGeneration || latestChapterStore !== owner) throw CancellationException()
                 bookPageIndex = restored
                 val cached = restored.pages
                 textPages = textPages.toMutableList().apply { cached.forEach { (index, pages) -> this[index] = pages } }
-                paginatedChapters = cached.keys
+                paginatedChapters = paginatedChapters + cached.keys
             }
             suspend fun prepare(index: Int, visible: Boolean): List<ReaderTextPage> {
-                val loaded = chapterStore.load(index)
+                val loaded = owner.load(index)
                 currentCoroutineContext().ensureActive()
-                if (visible) publishChapter(index, loaded)
+                if (generation != layoutGeneration || latestChapterStore !== owner) throw CancellationException()
+                if (visible) publishChapter(index, loaded, owner)
                 val pages = if (directScroll) loaded.blocks else textPages[index].takeIf { index in paginatedChapters }
                     ?: readerCachedChapterPages(context, importedBook, index,
                     settings, workerDensity, layoutDirection, textWidth, textHeight, loaded.text, loaded.chapter, pageIndexCache) {
                     readerPaginate(context, listOf(loaded.text), textStyle, workerDensity, layoutDirection, textWidth, textHeight,
                         inlineImages = listOf(loaded.chapter.inlineImages), sourceStyles = listOf(loaded.styles), paragraphSpacing = settings.paragraphSpacing,
                         chineseConverter = chineseConverter) { fraction ->
-                        if (index == target) withContext(Dispatchers.Main) { paginationProgress = fraction }
+                        if (index == target) withContext(Dispatchers.Main) {
+                            if (generation == layoutGeneration) paginationProgress = fraction
+                        }
                     }.single()
                 }
                 currentCoroutineContext().ensureActive()
+                if (generation != layoutGeneration || latestChapterStore !== owner) throw CancellationException()
+                if (!directScroll && pageIndexCache != null && !pageIndexCache.hasChapter(index))
+                    pageIndexCache.record(index, pages, loaded.text, loaded.chapter)
+                currentCoroutineContext().ensureActive()
+                if (generation != layoutGeneration || latestChapterStore !== owner) throw CancellationException()
                 textPages = textPages.toMutableList().apply { this[index] = pages }
                 if (!directScroll) paginatedChapters = paginatedChapters + index
                 return pages
@@ -917,7 +1008,7 @@ internal fun ReaderScreen(
             val previousImageIndex = layoutImageHint ?: textPages.getOrNull(target)?.getOrNull(pageIndex)?.imageIndex
             val pages = prepare(target, true)
             if (!ready || restoring || initialPositionPending) {
-                val loaded = document!!
+                val loaded = document ?: return@LaunchedEffect
                 characterOffset = characterOffset.coerceIn(0, loaded.text[target].length)
                 if (characterOffset in 1 until loaded.text[target].length && Character.isLowSurrogate(loaded.text[target][characterOffset]) &&
                     Character.isHighSurrogate(loaded.text[target][characterOffset - 1])) characterOffset--
@@ -934,6 +1025,7 @@ internal fun ReaderScreen(
                 layoutImageHint = null
                 restoreRequest++
             }
+            preparedLayoutGeneration = generation
             reflowing = false
             withFrameNanos { }
             val nearby = listOf(target + 1, target + 2, target - 1).filter { it in book.chapters.indices }
@@ -953,49 +1045,76 @@ internal fun ReaderScreen(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
-            paginationError = "正文排版失败：${error.localizedMessage.orEmpty().take(120)}"
-            reflowing = false
+            currentCoroutineContext().ensureActive()
+            if (generation == layoutGeneration && latestChapterStore === owner) {
+                paginationError = "正文排版失败：${error.localizedMessage.orEmpty().take(120)}"
+                reflowing = false
+            }
         }
     }
-    LaunchedEffect(book.id, document != null, restoreRequest, settings.readingMode, raster, reflowing) {
-        if (document == null || chapterPageCount == 0 || (!raster && reflowing)) return@LaunchedEffect
-        if (settings.readingMode != ReadingMode.SCROLL) { restoring = false; return@LaunchedEffect }
+    LaunchedEffect(book.id, document != null, restoreRequest, settings.readingMode, raster, reflowing,
+        layoutGeneration, preparedLayoutGeneration, textPages, document?.readyChapters, restoring) {
+        val loadedDocument = document ?: return@LaunchedEffect
+        if (!restoring || chapterPageCount == 0 || (!raster && reflowing) || activeLayoutKey != currentLayoutKey ||
+            preparedLayoutGeneration != layoutGeneration) return@LaunchedEffect
         val restoreToken = restoreRequest
-        restoring = true
-        try {
+        val generation = layoutGeneration
+        if (settings.readingMode == ReadingMode.SCROLL) {
             val destination = pageIndex.coerceIn(0, chapterPageCount - 1)
+            val targetChapter = chapterIndex
+            val targetKey = "$targetChapter:$destination"
+            val globalIndex = (chapterStarts.getOrNull(targetChapter) ?: 0) + destination
+            val expectedItems = totalPages
             val scrollOffset = if (raster) 0 else currentPages.getOrNull(destination)?.takeIf { it.imageIndex < 0 }?.let { page ->
                 val visible = readerPageText(currentText, page)
                 val local = (characterOffset - page.start).coerceIn(0, visible.length)
-                val rendered = readerParagraphText(document?.sourceStyles?.getOrNull(chapterIndex)?.apply(currentText, page.start, page.end, textStyle)
+                val rendered = readerParagraphText(loadedDocument.sourceStyles.getOrNull(targetChapter)?.apply(currentText, page.start, page.end, textStyle)
                     ?: AnnotatedString(visible), textStyle, settings.paragraphSpacing, chineseConverter, currentText, page.start)
                 val measured = measurer.measure(rendered.text, style = textStyle, constraints = Constraints(maxWidth = textWidth))
                 measured.getLineTop(measured.getLineForOffset(rendered.offsetMapping.originalToTransformed(local))).toInt().coerceAtLeast(0)
             } ?: 0
-            listState.scrollToItem((chapterStarts.getOrNull(chapterIndex) ?: 0) + destination, scrollOffset)
-        } finally {
-            if (restoreToken == restoreRequest && !reflowing) restoring = false
+            // The previous mode's list metadata may survive until the next measure pass.
+            snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it == expectedItems }
+            currentCoroutineContext().ensureActive()
+            if (restoreToken != restoreRequest || generation != layoutGeneration) return@LaunchedEffect
+            listState.scrollToItem(globalIndex, scrollOffset)
+            snapshotFlow { listState.layoutInfo.visibleItemsInfo.any { it.key == targetKey } }.first { it }
+        }
+        currentCoroutineContext().ensureActive()
+        if (restoreToken == restoreRequest && generation == layoutGeneration && !reflowing && activeLayoutKey == currentLayoutKey) {
+            restoredLayoutGeneration = generation
+            restoring = false
         }
     }
-    LaunchedEffect(book.id, document != null, listState, settings.readingMode) {
+    LaunchedEffect(book.id, document != null, listState, settings.readingMode, currentLayoutKey, layoutGeneration) {
         if (document == null || settings.readingMode != ReadingMode.SCROLL) return@LaunchedEffect
         snapshotFlow {
             val index = listState.firstVisibleItemIndex
             Triple(index, listState.firstVisibleItemScrollOffset,
                 listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }?.key)
         }.distinctUntilChanged().collect {
-            if (!reflowing && !restoring && totalPages > 0 && !speechOwnsPosition) {
+            if (!reflowing && !restoring && preparedLayoutGeneration == layoutGeneration && restoredLayoutGeneration == layoutGeneration &&
+                activeLayoutKey == currentLayoutKey && totalPages > 0 && !speechOwnsPosition) {
                 latestSyncScrollPosition()
             }
         }
     }
-    LaunchedEffect(book.id, chapterIndex, pageIndex, characterOffset, positionImagePath, totalPages, progress, reflowing, restoring) {
-        if (totalPages > 0 && !reflowing && !restoring) onProgress(chapterIndex, pageIndex, characterOffset, progress, positionImagePath)
+    LaunchedEffect(book.id, chapterIndex, pageIndex, characterOffset, positionImagePath, totalPages, progress, reflowing, restoring,
+        layoutGeneration, preparedLayoutGeneration, restoredLayoutGeneration) {
+        if (totalPages > 0 && !reflowing && !restoring && preparedLayoutGeneration == layoutGeneration &&
+            restoredLayoutGeneration == layoutGeneration && activeLayoutKey == currentLayoutKey)
+            onProgress(chapterIndex, pageIndex, characterOffset, progress, positionImagePath)
     }
     LaunchedEffect(book.id, document, volumeEvents, settings.volumePaging, settings.readingMode, chapterIndex, pageIndex, textPages, speech) {
         volumeEvents.collect { if (settings.volumePaging) move(it) }
     }
 
+    // Lazy/animated content can be measured after document has been reset for new settings.
+    val renderDocument = document
+    val renderPages = textPages
+    val renderChapters = book.chapters
+    val renderStore = chapterStore
+    val renderGeneration = layoutGeneration
     Box(Modifier.fillMaxSize().background(background).safeDrawingPadding()) {
         backgroundImage?.let { bitmap ->
             Image(bitmap, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -1034,15 +1153,15 @@ internal fun ReaderScreen(
             .onGloballyPositioned { bodyCoordinates = it }.testTag("reader_body").then(tapObserver)) {
             when {
                 book.chapters.isEmpty() -> Text("这本书没有可阅读的章节", Modifier.align(Alignment.Center), color = muted)
-                paginationError != null || document == null || (!raster && (!conversionReady || chapterIndex !in document!!.readyChapters ||
+                paginationError != null || renderDocument == null || (!raster && (!conversionReady || chapterIndex !in renderDocument.readyChapters ||
                     !directScroll && chapterIndex !in paginatedChapters || textPages.isEmpty() || reflowing)) -> {
                     Column(Modifier.align(Alignment.Center).padding(24.dp).testTag("reader_loading"),
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         if (paginationError == null && !einkMode) {
-                            if (document == null) CircularProgressIndicator(color = colors.primary)
+                            if (renderDocument == null) CircularProgressIndicator(color = colors.primary)
                             else CircularProgressIndicator(progress = { paginationProgress }, color = colors.primary)
                         }
-                        Text(paginationError ?: if (document == null) "正在读取正文" else "正在排版 ${(paginationProgress * 100).toInt()}%",
+                        Text(paginationError ?: if (renderDocument == null) "正在读取正文" else "正在排版 ${(paginationProgress * 100).toInt()}%",
                             color = muted, style = MaterialTheme.typography.bodyMedium)
                         TextButton(onClick = { stopSpeech(); onClose() }) { Text("退出阅读") }
                     }
@@ -1056,44 +1175,47 @@ internal fun ReaderScreen(
                     LazyColumn(state = listState, modifier = Modifier.fillMaxSize().testTag("reader_scroll"),
                         flingBehavior = if (einkMode) ReaderEinkFlingBehavior else ScrollableDefaults.flingBehavior(),
                         contentPadding = if (raster) PaddingValues(0.dp) else PaddingValues(horizontal = ReaderTextHorizontalPadding, vertical = ReaderTextVerticalPadding)) {
-                        book.chapters.forEachIndexed { sourceChapter, sourceChapterData ->
+                        renderChapters.forEachIndexed { sourceChapter, sourceChapterData ->
                         if (raster) itemsIndexed(sourceChapterData.pages, key = { index, _ -> "$sourceChapter:$index" }) { index, source ->
                             val color = annotations.lastOrNull { it.bookId == book.id && it.chapterIndex == sourceChapter && it.pageIndex == index && it.kind != AnnotationKind.BOOKMARK && it.color != null }?.color?.let(::Color)
                             ReaderImagePage(source, viewport.width, false, foreground,
                                 onTap = { tapImage(sourceChapter, index) }, onLongPress = { imageSelection(sourceChapter, index) }, markColor = color,
                                 modifier = Modifier.testTag("reader_image_${sourceChapter}_$index"),
-                                speechOffset = pdfSpeechOffset(sourceChapter, index), speechText = document?.pageText?.getOrNull(sourceChapter)?.getOrNull(index).orEmpty(),
+                                speechOffset = pdfSpeechOffset(sourceChapter, index), speechText = renderDocument.pageText.getOrNull(sourceChapter)?.getOrNull(index).orEmpty(),
                                 einkMode = einkMode)
-                        } else if (sourceChapter !in document!!.readyChapters) item(key = "$sourceChapter:0") {
-                            LaunchedEffect(sourceChapter) {
-                                runCatching { chapterStore.load(sourceChapter) }.onSuccess { loaded ->
-                                    publishChapter(sourceChapter, loaded)
+                        } else if (sourceChapter !in renderDocument.readyChapters) item(key = "$sourceChapter:0") {
+                            LaunchedEffect(renderStore, sourceChapter, renderGeneration) {
+                                runCatching { renderStore.load(sourceChapter) }.onSuccess { loaded ->
+                                    currentCoroutineContext().ensureActive()
+                                    if (latestChapterStore !== renderStore || renderGeneration != layoutGeneration ||
+                                        activeReadingMode != ReadingMode.SCROLL || document == null) return@onSuccess
+                                    publishChapter(sourceChapter, loaded, renderStore)
                                     textPages = textPages.toMutableList().apply { this[sourceChapter] = loaded.blocks }
                                 }.onFailure { error -> if (error is CancellationException) throw error }
                             }
                             Box(Modifier.fillMaxWidth().height(with(density) { viewport.height.toDp() }), contentAlignment = Alignment.Center) {
                                 Text("正在读取 ${sourceChapterData.title}", color = muted, fontSize = 13.sp)
                             }
-                        } else itemsIndexed(textPages.getOrNull(sourceChapter).orEmpty(), key = { index, _ -> "$sourceChapter:$index" }) { index, page ->
+                        } else itemsIndexed(renderPages.getOrNull(sourceChapter).orEmpty(), key = { index, _ -> "$sourceChapter:$index" }) { index, page ->
                             if (page.imageIndex >= 0) {
                                 val image = sourceChapterData.inlineImages[page.imageIndex]
                                 val color = annotations.lastOrNull { it.bookId == book.id && it.chapterIndex == sourceChapter && it.imagePath == image.path && it.characterOffset == page.start && it.kind != AnnotationKind.BOOKMARK }?.color?.let(::Color)
                                 ReaderImagePage(PageSource(image.path), textWidth, false, foreground,
                                     onTap = { tapImage(sourceChapter, index, page.start, image.path) }, onLongPress = { inlineImageSelection(sourceChapter, index, page) }, markColor = color,
                                     modifier = Modifier.then(imageTapObserver).testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode)
-                            } else ReaderSelectableText(readerAnnotatedPage(document?.text?.getOrNull(sourceChapter).orEmpty(), page, book.id, sourceChapter, annotations, highlightQuery,
-                                colors.primaryContainer, settings.nightMode, document?.sourceStyles?.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
-                                document?.chapters?.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty()), textStyle, sourceChapter, index, page.start, selectionReset,
+                            } else ReaderSelectableText(rememberReaderAnnotatedPage(renderDocument.text.getOrNull(sourceChapter).orEmpty(), page, book.id, sourceChapter, annotations, highlightQuery,
+                                colors.primaryContainer, settings.nightMode, renderDocument.sourceStyles.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
+                                renderChapters.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty()), textStyle, sourceChapter, index, page.start, selectionReset,
                                 onAction = { selection, kind -> openSelection(selection, kind) }, modifier = Modifier.fillMaxWidth().padding(bottom =
-                                    if (readerParagraphGapAfter(document?.text?.getOrNull(sourceChapter).orEmpty(), page.end))
-                                        with(density) { (textStyle.fontSize.value * (document?.sourceStyles?.getOrNull(sourceChapter)
+                                    if (readerParagraphGapAfter(renderDocument.text.getOrNull(sourceChapter).orEmpty(), page.end))
+                                        with(density) { (textStyle.fontSize.value * (renderDocument.sourceStyles.getOrNull(sourceChapter)
                                             ?.paragraphGapAfter(page.end, settings.paragraphSpacing) ?: settings.paragraphSpacing)).sp.toDp() } else 0.dp),
-                                onTextLayout = { rememberLayout(sourceChapter, index, it) },
+                                onTextLayout = { rememberLayout(sourceChapter, index, it, renderDocument, renderPages, renderGeneration, renderStore) },
                                 onTextTap = { offset, anchor -> tapText(sourceChapter, offset, anchor) }, onEdit = if (editable) { selection -> openTxtEditor(selection) } else null,
                                 onRole = onRoleSelection?.let { callback -> { passage -> selectionReset++; callback(passage.quote) } },
                                 selectionMenuEnabled = selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() && tappedSourceFootnote == null && panel == null,
                                 paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter,
-                                sourceContext = document?.text?.getOrNull(sourceChapter),
+                                sourceContext = renderDocument.text.getOrNull(sourceChapter),
                                 onSelectionActive = { textSelectionChanged(sourceChapter, index, it) })
                         }
                         }
@@ -1121,29 +1243,29 @@ internal fun ReaderScreen(
                                     Box(Modifier.fillMaxSize().background(if (settings.nightMode) Color.Black.copy(alpha = .72f) else Color.White.copy(alpha = .72f)))
                                 }
                             }) { sourceChapter, sourcePage, interactive ->
-                        val sourceText = document?.text?.getOrNull(sourceChapter).orEmpty()
-                        if (raster) book.chapters.getOrNull(sourceChapter)?.pages?.getOrNull(sourcePage)?.let { source ->
+                        val sourceText = renderDocument.text.getOrNull(sourceChapter).orEmpty()
+                        if (raster) renderChapters.getOrNull(sourceChapter)?.pages?.getOrNull(sourcePage)?.let { source ->
                             val color = annotations.lastOrNull { it.bookId == book.id && it.chapterIndex == sourceChapter && it.pageIndex == sourcePage && it.kind != AnnotationKind.BOOKMARK && it.color != null }?.color?.let(::Color)
                             ReaderImagePage(source, pageViewport.width, true, foreground,
                                 onTap = { if (interactive) tapImage(sourceChapter, sourcePage) },
                                 onLongPress = { if (interactive) imageSelection(sourceChapter, sourcePage) }, markColor = color,
                                 modifier = Modifier.testTag("reader_image_${sourceChapter}_$sourcePage"),
-                                speechOffset = pdfSpeechOffset(sourceChapter, sourcePage), speechText = document?.pageText?.getOrNull(sourceChapter)?.getOrNull(sourcePage).orEmpty(),
+                                speechOffset = pdfSpeechOffset(sourceChapter, sourcePage), speechText = renderDocument.pageText.getOrNull(sourceChapter)?.getOrNull(sourcePage).orEmpty(),
                                 einkMode = einkMode)
-                        } else textPages.getOrNull(sourceChapter)?.getOrNull(sourcePage)?.let { page ->
+                        } else renderPages.getOrNull(sourceChapter)?.getOrNull(sourcePage)?.let { page ->
                             if (page.imageIndex >= 0) {
-                                val image = book.chapters[sourceChapter].inlineImages[page.imageIndex]
+                                val image = renderChapters[sourceChapter].inlineImages[page.imageIndex]
                                 val color = annotations.lastOrNull { it.bookId == book.id && it.chapterIndex == sourceChapter && it.imagePath == image.path && it.characterOffset == page.start && it.kind != AnnotationKind.BOOKMARK }?.color?.let(::Color)
                                 ReaderImagePage(PageSource(image.path), textWidth, true, foreground,
                                     onTap = { if (interactive) tapImage(sourceChapter, sourcePage, page.start, image.path) },
                                     onLongPress = { if (interactive) inlineImageSelection(sourceChapter, sourcePage, page) }, markColor = color,
                                     modifier = Modifier.padding(horizontal = ReaderTextHorizontalPadding, vertical = ReaderTextVerticalPadding).then(imageTapObserver)
                                         .testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode)
-                            } else ReaderSelectableText(readerAnnotatedPage(sourceText, page, book.id, sourceChapter, annotations, highlightQuery,
-                                colors.primaryContainer, settings.nightMode, document?.sourceStyles?.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
-                                document?.chapters?.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty()), textStyle, sourceChapter, sourcePage, page.start, selectionReset,
+                            } else ReaderSelectableText(rememberReaderAnnotatedPage(sourceText, page, book.id, sourceChapter, annotations, highlightQuery,
+                                colors.primaryContainer, settings.nightMode, renderDocument.sourceStyles.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
+                                renderChapters.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty()), textStyle, sourceChapter, sourcePage, page.start, selectionReset,
                                 onAction = { selection, kind -> if (interactive) openSelection(selection, kind) }, modifier = Modifier.fillMaxSize().padding(horizontal = ReaderTextHorizontalPadding, vertical = ReaderTextVerticalPadding),
-                                onTextLayout = { rememberLayout(sourceChapter, sourcePage, it) },
+                                onTextLayout = { rememberLayout(sourceChapter, sourcePage, it, renderDocument, renderPages, renderGeneration, renderStore) },
                                 onTextTap = { offset, anchor -> if (interactive) tapText(sourceChapter, offset, anchor) },
                                 onEdit = if (editable && interactive) { selection -> openTxtEditor(selection) } else null,
                                 onRole = onRoleSelection?.let { callback -> { passage -> selectionReset++; callback(passage.quote) } },
@@ -1172,7 +1294,7 @@ internal fun ReaderScreen(
                     if (editable) IconButton(onClick = {
                         openTxtEditor(ReaderSelectedPassage(chapterIndex, pageIndex, 0, currentText.length, currentText))
                     }, enabled = document != null && !reflowing && !restoring && !textEditBusy, modifier = actionSize) { Icon(Icons.Outlined.Edit, "编辑当前章节") }
-                    IconButton(onClick = { onSettings(settings.copy(nightMode = !settings.nightMode)) }, modifier = actionSize) {
+                    IconButton(onClick = { onSettings(requestedSettings.copy(nightMode = !settings.nightMode)) }, modifier = actionSize) {
                         Icon(if (settings.nightMode) Icons.Outlined.LightMode else Icons.Outlined.DarkMode, "切换夜间模式")
                     }
                     IconButton(onClick = { openPanel(ReaderPanel.SEARCH) }, modifier = actionSize) { Icon(Icons.Outlined.Search, "全文搜索与替换") }
@@ -1235,7 +1357,7 @@ internal fun ReaderScreen(
                         IconButton(onClick = { stepSpeech(-1) }) { Icon(Icons.Outlined.FastRewind, "回退一段") }
                         IconButton(onClick = { toggleSpeech() }) { Icon(if (speaking) Icons.Outlined.Pause else Icons.Outlined.PlayArrow, if (speaking) "暂停朗读" else "继续朗读") }
                         IconButton(onClick = { stepSpeech(1) }) { Icon(Icons.Outlined.FastForward, "快进一段") }
-                        FilterChip(settings.ttsFollowPage, { onSettings(settings.copy(ttsFollowPage = !settings.ttsFollowPage)) }, { Text("同步", fontSize = 11.sp) },
+                        FilterChip(settings.ttsFollowPage, { onSettings(requestedSettings.copy(ttsFollowPage = !settings.ttsFollowPage)) }, { Text("同步", fontSize = 11.sp) },
                             colors = FilterChipDefaults.filterChipColors(selectedLabelColor = Color(0xFFE35858), selectedContainerColor = Color(0xFFE35858).copy(alpha = .15f)))
                         IconButton(onClick = ::stopSpeech) { Icon(Icons.Outlined.Close, "关闭朗读") }
                         IconButton(onClick = onSpeechSettings, modifier = Modifier.size(40.dp).testTag("reader_speech_settings")) {
@@ -1246,7 +1368,7 @@ internal fun ReaderScreen(
                         Text("语速", fontSize = 11.sp, modifier = Modifier.padding(horizontal = 6.dp))
                         Slider(speechSpeedDraft, { speechSpeedDraft = it }, Modifier.weight(1f).semantics { contentDescription = "悬浮栏朗读语速" },
                             valueRange = .5f..2f, steps = 14, onValueChangeFinished = {
-                                if (speechSpeedDraft != settings.ttsSpeed) onSettings(settings.copy(ttsSpeed = speechSpeedDraft)) })
+                                if (speechSpeedDraft != settings.ttsSpeed) onSettings(requestedSettings.copy(ttsSpeed = speechSpeedDraft)) })
                         Text(String.format(Locale.getDefault(), "%.1f×", speechSpeedDraft), fontSize = 11.sp, modifier = Modifier.padding(end = 6.dp))
                     }
                 }
@@ -1297,9 +1419,9 @@ internal fun ReaderScreen(
         if (panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS || panel == ReaderPanel.FONTS) {
             Surface(color = colors.surface, shadowElevation = 4.dp,
                 modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = halfScreen).testTag("reader_settings_sheet")) {
-                if (panel != ReaderPanel.SETTINGS) ReaderCompactSettings(settings, raster, onSettings,
+                if (panel != ReaderPanel.SETTINGS) ReaderCompactSettings(requestedSettings, raster, onSettings,
                     onImportFont, onImportBackground, onFonts = { panel = ReaderPanel.FONTS })
-                else ReaderPreferencesPanel(settings, onSettings, onResetDefaults,
+                else ReaderPreferencesPanel(requestedSettings, onSettings, onResetDefaults,
                     sourceCssAvailable = !raster && book.format in setOf(BookFormat.EPUB, BookFormat.MOBI))
             }
         }
@@ -1345,7 +1467,7 @@ internal fun ReaderScreen(
             cachedSpeechChapters = speechStatus.chapters, speechBookComplete = speechStatus.complete,
             otherCachedSpeechChapters = speechStatus.otherChapters,
             speechGeneration = speechGeneration, onCancelSpeech = onCancelSpeech,
-            onHierarchyChange = { onSettings(settings.copy(hierarchicalContents = it)) }) { targetChapter, targetPage ->
+            onHierarchyChange = { onSettings(requestedSettings.copy(hierarchicalContents = it)) }) { targetChapter, targetPage ->
             jumpPage(targetChapter, targetPage); panel = null
             }
         }
@@ -1407,6 +1529,14 @@ private fun ReaderStatus(settings: ReaderSettings, chapterTitle: String, color: 
 }
 
 internal fun readerPageText(text: String, page: ReaderTextPage): String = text.substring(page.start, page.end).removeSuffix("\n")
+
+@Composable
+private fun rememberReaderAnnotatedPage(text: String, page: ReaderTextPage, bookId: String, chapter: Int,
+    annotations: List<Annotation>, query: String, searchColor: Color, night: Boolean, sourceStyles: ReaderSourceStyles?,
+    baseStyle: TextStyle, spoken: IntRange?, sourceFootnotes: List<SourceFootnote>): AnnotatedString =
+    remember(text, page, bookId, chapter, annotations, query, searchColor, night, sourceStyles, baseStyle, spoken, sourceFootnotes) {
+        readerAnnotatedPage(text, page, bookId, chapter, annotations, query, searchColor, night, sourceStyles, baseStyle, spoken, sourceFootnotes)
+    }
 
 private fun readerAnnotatedPage(text: String, page: ReaderTextPage, bookId: String, chapter: Int, annotations: List<Annotation>,
     query: String, searchColor: Color, night: Boolean, sourceStyles: ReaderSourceStyles?, baseStyle: TextStyle,

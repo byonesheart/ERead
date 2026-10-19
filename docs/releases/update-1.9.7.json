@@ -1,0 +1,23 @@
+{
+  "versionCode": 36,
+  "versionName": "1.9.7",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.9.7",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.9.7/ERead-1.9.7-debug.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1g5fIKjPqUZi9WyCvJOwLJw?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/c95ce4e1dfcb",
+      "extractionCode": "djhn"
+    }
+  ],
+  "changelog": [
+    "阅读模式切换保持原文位置，分页准备在后台进行，改善翻页流畅性。",
+    "修复原书 CSS 切换闪退，并改善分页缓存复用。",
+    "更多功能请自行体验。"
+  ]
+}

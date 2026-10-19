@@ -4,8 +4,13 @@ import android.os.Looper
 import android.system.StructStat
 import android.system.StructTimespec
 import android.util.AtomicFile
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsActions
@@ -14,6 +19,8 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import com.eyue.reader.data.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
@@ -42,6 +49,9 @@ import java.security.MessageDigest
 import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
@@ -49,12 +59,18 @@ import java.util.concurrent.atomic.AtomicReference
 @Implements(className = "libcore.io.Linux", isInAndroidSdk = false, minSdk = 26)
 class ReaderScreenIndexLinuxShadow : ShadowLinux() {
     @Implementation override fun stat(path: String): StructStat {
+        stats.getOrPut(File(path).absolutePath) { AtomicInteger() }.incrementAndGet()
         val original = super.stat(path)
         val modified = File(path).lastModified()
         val stamp = StructTimespec(maxOf(1L, modified / 1000), (modified % 1000) * 1_000_000)
         return StructStat(original.st_dev, (path.hashCode().toLong() and 0x7fffffff) + 1, original.st_mode,
             original.st_nlink, original.st_uid, original.st_gid, original.st_rdev, original.st_size,
             stamp, stamp, stamp, original.st_blksize, original.st_blocks)
+    }
+    companion object {
+        private val stats = ConcurrentHashMap<String, AtomicInteger>()
+        fun count(path: String) = stats[File(path).absolutePath]?.get() ?: 0
+        @JvmStatic @Resetter fun reset() { stats.clear() }
     }
 }
 
@@ -65,12 +81,28 @@ class ReaderScreenPreparedReadShadow {
     @Implementation fun openRead(): FileInputStream {
         val file = original.baseFile
         if (file.name.endsWith(".prepared.json")) reads.getOrPut(file.absolutePath) { AtomicInteger() }.incrementAndGet()
+        gate.get()?.takeIf { file.parentFile?.name == "reader-chapter-page-cache" && file.name.startsWith(it.bookPrefix + "_") }
+            ?.let { pending ->
+                if (pending.claimed.compareAndSet(false, true)) {
+                    check(Looper.myLooper() != Looper.getMainLooper())
+                    pending.entered.countDown()
+                    check(pending.released.await(5, TimeUnit.SECONDS)) { "The chapter cache read gate was not released" }
+                }
+            }
         return Shadow.directlyOn(original, AtomicFile::class.java, "openRead")
+    }
+    class ReadGate(val bookPrefix: String) {
+        val entered = CountDownLatch(1)
+        val released = CountDownLatch(1)
+        val claimed = AtomicBoolean()
+        fun release() = released.countDown()
     }
     companion object {
         private val reads = ConcurrentHashMap<String, AtomicInteger>()
+        private val gate = AtomicReference<ReadGate?>()
         fun count(chapter: Chapter) = reads["${chapter.lazySourcePath}.prepared.json"]?.get() ?: 0
-        @JvmStatic @Resetter fun reset() { reads.clear() }
+        fun pauseNextChapterRead(bookPrefix: String) = ReadGate(bookPrefix).also { gate.set(it) }
+        @JvmStatic @Resetter fun reset() { gate.getAndSet(null)?.release(); reads.clear() }
     }
 }
 
@@ -85,6 +117,7 @@ class ReaderScreenBookPageIndexRobolectricTest {
     private lateinit var currentBook: MutableState<Book>
     private var mounted by mutableStateOf(true)
     private var session by mutableIntStateOf(0)
+    private var readerHeight by mutableStateOf<Dp?>(null)
     private var settings by mutableStateOf(ReaderSettings(readingMode = ReadingMode.PAGED, showTime = false, showBattery = false))
     private val ids = mutableListOf<String>()
     private val position = AtomicReference<Pair<Int, Int>>()
@@ -94,6 +127,7 @@ class ReaderScreenBookPageIndexRobolectricTest {
     @Before fun setUp() {
         root = File(context.cacheDir, "screen-page-index-${UUID.randomUUID()}").apply { mkdirs() }
         ReaderScreenPreparedReadShadow.reset()
+        ReaderScreenIndexLinuxShadow.reset()
     }
     @After fun tearDown() {
         if (::currentBook.isInitialized) { compose.runOnIdle { mounted = false }; compose.waitForIdle() }
@@ -101,11 +135,11 @@ class ReaderScreenBookPageIndexRobolectricTest {
         check(root.deleteRecursively())
     }
 
-    @Test fun coldPagedOpeningPersistsAllBoundariesAndWarmPagedOrVerticalOpenSkipsFarChapterPreparation() {
+    @Test fun coldPagedOpeningPersistsBoundariesAndAllWarmModesSkipFarPreparationAndRepeatedBookScans() {
         val book = lazyBook()
         show(book)
         awaitComplete(book)
-        val expectedFooter = footer()
+        val expectedPages = pageLabel()
         assertTrue(ReaderScreenPreparedReadShadow.count(book.chapters.last()) > 0)
         val index = indexFiles(book).single()
         val snapshot = index.readBytes()
@@ -114,7 +148,7 @@ class ReaderScreenBookPageIndexRobolectricTest {
         val fixed = 1_500_000_000_000L
         chapterFiles.forEach { check(it.setLastModified(fixed)) }
 
-        listOf(ReadingMode.PAGED, ReadingMode.VERTICAL_PAGED).forEach { mode ->
+        listOf(ReadingMode.PAGED, ReadingMode.VERTICAL_PAGED, ReadingMode.SCROLL).forEach { mode ->
             compose.runOnIdle { mounted = false }
             compose.waitForIdle()
             ReaderScreenPreparedReadShadow.reset()
@@ -123,11 +157,162 @@ class ReaderScreenBookPageIndexRobolectricTest {
             awaitComplete(book)
             await { ReaderScreenPreparedReadShadow.count(book.chapters[2]) > 0 }
             compose.waitForIdle()
-            assertEquals(expectedFooter, footer())
-            assertEquals(0 to book.characterOffset, position.get())
+            assertEquals(expectedPages, pageLabel())
+            if (mode == ReadingMode.SCROLL) {
+                val text = File(requireNotNull(book.chapters.first().textPath)).readText()
+                val paragraphStart = text.lastIndexOf('\n', book.characterOffset - 1) + 1
+                val paragraphEnd = text.indexOf('\n', book.characterOffset).takeIf { it >= 0 } ?: text.length
+                val actual = requireNotNull(position.get())
+                assertEquals(0, actual.first)
+                assertTrue("Scroll may align to a line within the saved paragraph", actual.second in paragraphStart..paragraphEnd)
+                assertTrue("The saved source position must remain visible", visibleTextContains(
+                    text.substring(book.characterOffset, minOf(book.characterOffset + 40, paragraphEnd))))
+            } else assertEquals(0 to book.characterOffset, position.get())
             assertEquals("Warm opening must not prepare an unrelated chapter", 0, ReaderScreenPreparedReadShadow.count(book.chapters.last()))
             assertTrue("Restored boundaries must bypass every per-chapter cache read", chapterFiles.all { it.lastModified() == fixed })
             assertArrayEquals(snapshot, index.readBytes())
+            val distant = book.chapters.last()
+            val distantText = requireNotNull(distant.textPath)
+            val distantManifest = requireNotNull(distant.lazySourcePath)
+            val distantStats = ReaderScreenIndexLinuxShadow.count(distantText) + ReaderScreenIndexLinuxShadow.count(distantManifest)
+            repeat(2) {
+                val previous = position.get()
+                when (mode) {
+                    ReadingMode.SCROLL -> compose.onNodeWithTag("reader_scroll").performTouchInput {
+                        swipeUp(startY = height * .7f, endY = height * .45f, durationMillis = 900)
+                    }
+                    ReadingMode.PAGED -> compose.onNodeWithTag("reader_body").performTouchInput { swipeLeft() }
+                    ReadingMode.VERTICAL_PAGED -> compose.onNodeWithTag("reader_body").performTouchInput { swipeUp() }
+                }
+                await { ready() && position.get() != previous && !footer().contains("统计") }
+                if (mode == ReadingMode.SCROLL) assertTrue("Slow nearby scrolling must remain within the first two chapters",
+                    requireNotNull(position.get()).first <= 1)
+                assertEquals(expectedPages.substringAfter('/').trim(), pageLabel().substringAfter('/').trim())
+            }
+            assertEquals("Turning pages must not scan metadata for the entire book again", distantStats,
+                ReaderScreenIndexLinuxShadow.count(distantText) + ReaderScreenIndexLinuxShadow.count(distantManifest))
+            assertEquals("Turning nearby pages must not prepare the distant chapter", 0, ReaderScreenPreparedReadShadow.count(distant))
+        }
+    }
+
+    @Test fun firstPagedPreparationKeepsTheOldScrollPageInteractiveAndUsesItsLatestPosition() {
+        settings = settings.copy(readingMode = ReadingMode.SCROLL)
+        val texts = (0 until 3).map { chapter -> (0 until 40).joinToString("\n") { paragraph ->
+            val marker = "GATE${chapter}_P${paragraph.toString().padStart(3, '0')}"
+            "$marker quiet harbor. $marker boats beside the bridge. $marker old stone steps. $marker evening light."
+        } }
+        val chapters = texts.mapIndexed { index, text ->
+            Chapter(title = "第${index + 1}章", textPath = File(root, "gate-$index.txt").apply { writeText(text) }.absolutePath,
+                characterCount = text.length)
+        }
+        val book = Book(title = "首次模式准备", format = BookFormat.EPUB, mode = LibraryMode.NOVEL,
+            chapters = chapters, chapterIndex = 1)
+        show(book)
+        await { ready() && position.get() != null && !footer().contains("统计") }
+        runBlocking { removeReaderPageCaches(context, book.id) }
+        val gate = ReaderScreenPreparedReadShadow.pauseNextChapterRead(prefix(book))
+        try {
+            val before = requireNotNull(position.get())
+            compose.runOnIdle { settings = settings.copy(readingMode = ReadingMode.PAGED) }
+            await { gate.entered.count == 0L }
+            compose.onNodeWithTag("reader_loading").assertDoesNotExist()
+            compose.onNodeWithTag("reader_scroll").assertIsDisplayed().performTouchInput {
+                swipeUp(startY = height * .75f, endY = height * .4f, durationMillis = 1000)
+            }
+            await { ready() && position.get() != before }
+            val moved = requireNotNull(position.get())
+            assertEquals(1, moved.first)
+            assertTrue("The previous mode must still respond to scrolling while pagination waits", moved.second > before.second)
+            assertEquals("The IO gate must still be holding the requested mode", 1L, gate.released.count)
+            compose.onNodeWithTag("reader_loading").assertDoesNotExist()
+            compose.onNodeWithTag("reader_scroll").assertIsDisplayed()
+            val text = texts[moved.first]
+            val paragraphEnd = text.indexOf('\n', moved.second).takeIf { it >= 0 } ?: text.length
+            val fragment = text.substring(moved.second, minOf(moved.second + 40, paragraphEnd)).trim()
+            assertTrue(visibleTextContains(fragment))
+            gate.release()
+            awaitComplete(book)
+            compose.onNodeWithTag("reader_scroll").assertDoesNotExist()
+            assertEquals("The new mode must use the scroll position reached while it was preparing", moved, position.get())
+            assertTrue("The new paged viewport must contain that same source position", visibleTextContains(fragment))
+        } finally { gate.release() }
+    }
+
+    @Test fun scrollSourceCssSwitchesAndViewportRecompositionKeepTheLazyDocumentAndReadingPosition() {
+        settings = settings.copy(readingMode = ReadingMode.SCROLL)
+        readerHeight = 680.dp
+        val book = lazyBook("p { line-height:1.1; }")
+        show(book)
+        awaitComplete(book)
+        val original = position.get()
+        assertEquals(settings.fontSize, fontSizeAt("BODY_0"), .001f)
+        val softwareLineHeight = settings.fontSize * settings.lineHeight
+        assertEquals(softwareLineHeight, lineHeightAt("BODY_0"), .001f)
+        openPreferences()
+        compose.onNode(hasClickAction() and hasAnyAncestor(hasTestTag("reader_use_source_css"))).assertIsOff().performClick()
+        closePreferences()
+        repeat(8) { step ->
+            compose.runOnIdle {
+                settings = settings.copy(useSourceCss = step % 2 == 0)
+                readerHeight = if (step % 2 == 0) 720.dp else 680.dp
+            }
+            compose.mainClock.advanceTimeByFrame()
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            compose.waitForIdle()
+        }
+        compose.runOnIdle { settings = settings.copy(useSourceCss = true); readerHeight = 680.dp }
+        await { ready() && kotlin.math.abs(lineHeightAt("BODY_0") - settings.fontSize * 1.1f) < .001f }
+        assertEquals(settings.fontSize * 1.1f, lineHeightAt("BODY_0"), .001f)
+        assertEquals(settings.fontSize, fontSizeAt("BODY_0"), .001f)
+        assertEquals(original, position.get())
+        compose.runOnIdle { settings = settings.copy(useSourceCss = false) }
+        await { ready() && kotlin.math.abs(lineHeightAt("BODY_0") - softwareLineHeight) < .001f }
+        assertEquals(original, position.get())
+        compose.onNodeWithText("正文排版失败", substring = true).assertDoesNotExist()
+    }
+
+    @Test fun switchingModesAndViewportSizesKeepsTheMiddleChapterParagraphVisible() {
+        val texts = (0 until 3).map { chapter ->
+            (0 until 40).joinToString("\n") { paragraph ->
+                val marker = "CH${chapter}_P${paragraph.toString().padStart(3, '0')}"
+                "$marker quiet harbor. $marker boats beside the bridge. $marker old stone steps. $marker evening light."
+            }
+        }
+        val chapters = texts.mapIndexed { index, text ->
+            Chapter(title = "第${index + 1}章", textPath = File(root, "mode-$index.txt").apply { writeText(text) }.absolutePath,
+                characterCount = text.length)
+        }
+        val book = Book(title = "模式切换位置", format = BookFormat.MOBI, mode = LibraryMode.NOVEL,
+            chapters = chapters, chapterIndex = 1)
+        readerHeight = 720.dp
+        show(book)
+        awaitComplete(book)
+        repeat(2) {
+            val previous = position.get()
+            compose.onNodeWithTag("reader_body").performTouchInput { swipeLeft() }
+            await { ready() && position.get() != previous && position.get()?.first == 1 }
+        }
+        val original = requireNotNull(position.get())
+        assertTrue("The starting position must be beyond the first page", original.second > 0)
+        val text = texts[1]
+        val paragraphStart = text.lastIndexOf('\n', original.second - 1) + 1
+        val paragraphEnd = text.indexOf('\n', original.second).takeIf { it >= 0 } ?: text.length
+        val visibleFragment = text.substring(original.second, minOf(original.second + 40, paragraphEnd)).trim()
+        assertTrue("The starting page must expose its saved source position", visibleTextContains(visibleFragment))
+
+        listOf(ReadingMode.SCROLL to 680.dp, ReadingMode.PAGED to 720.dp,
+            ReadingMode.VERTICAL_PAGED to 660.dp, ReadingMode.SCROLL to 700.dp).forEach { (mode, height) ->
+            compose.runOnIdle { settings = settings.copy(readingMode = mode); readerHeight = height }
+            await {
+                val current = position.get()
+                ready() && current?.first == 1 && current.second in paragraphStart..paragraphEnd &&
+                    visibleTextContains(visibleFragment)
+            }
+            val current = requireNotNull(position.get())
+            assertEquals("$mode must keep the original chapter", 1, current.first)
+            assertTrue("$mode moved from ${original.second} to ${current.second}, outside its source paragraph",
+                current.second in paragraphStart..paragraphEnd)
+            assertTrue("$mode must show the original source paragraph rather than the final page", visibleTextContains(visibleFragment))
         }
     }
 
@@ -190,14 +375,14 @@ class ReaderScreenBookPageIndexRobolectricTest {
         }
     }
 
-    private fun lazyBook(): Book {
+    private fun lazyBook(css: String = ""): Book {
         val directory = File(root, "lazy").apply { mkdirs() }
         val chapters = (0 until 6).map { index ->
             val html = "<body><h2>CHAPTER_$index</h2>" + (0 until 6).joinToString("") {
                 "<p>BODY_$index A quiet harbor and the boats beside the old stone bridge.</p>"
             } + "</body>"
             val parsed = HtmlChapterParser.readPlain("第${index + 1}章", html) { null }
-            saveLazyChapter(directory, index, parsed, html, "", emptyMap())
+            saveLazyChapter(directory, index, parsed, html, css, emptyMap())
         }
         return Book(title = "持久分页索引", format = BookFormat.EPUB, mode = LibraryMode.NOVEL, chapters = chapters, characterOffset = 25)
     }
@@ -206,14 +391,17 @@ class ReaderScreenBookPageIndexRobolectricTest {
         val speech = SilentSpeech()
         compose.setContent { readerView.set(LocalView.current); if (mounted) key(session) {
             CompositionLocalProvider(LocalReaderSpeechFactory provides { speech }) { MaterialTheme {
+                Box(Modifier.fillMaxWidth().then(readerHeight?.let { Modifier.height(it) } ?: Modifier.fillMaxHeight())) {
                 ReaderScreen(currentBook.value, settings, emptyList(), {},
                     { chapter, _, offset, _, _ -> position.set(chapter to offset) }, { settings = it }, {}, {}, {}, emptyFlow())
+                }
             } }
         } }
     }
     private fun ready() = compose.onAllNodesWithTag("reader_loading").fetchSemanticsNodes().isEmpty() &&
         compose.onAllNodesWithContentDescription("阅读正文").fetchSemanticsNodes().isNotEmpty()
     private fun footer() = compose.onNodeWithTag("reader_page_progress").fetchSemanticsNode().config[SemanticsProperties.Text].joinToString { it.text }
+    private fun pageLabel() = Regex("\\d+\\s*/\\s*\\d+\\s*页").find(footer())?.value ?: error("Page numbers are unavailable: ${footer()}")
     private fun awaitComplete(book: Book) = await {
         ready() && indexFiles(book).size == 1 && !footer().contains("统计") && position.get() != null
     }
@@ -227,14 +415,41 @@ class ReaderScreenBookPageIndexRobolectricTest {
         compose.onNodeWithContentDescription("阅读设置").performClick()
     }
     private fun closePreferences() = compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(width / 2f, height * .1f)) }
+    private fun visibleTextContains(fragment: String): Boolean {
+        val body = compose.onNodeWithTag("reader_body").fetchSemanticsNode().boundsInRoot
+        val nodes = compose.onAllNodesWithContentDescription("阅读正文")
+        return nodes.fetchSemanticsNodes().mapIndexedNotNull { index, node ->
+            val bounds = node.boundsInRoot
+            if (bounds.width <= 0f || bounds.height <= 0f || bounds.right <= body.left || bounds.left >= body.right ||
+                bounds.bottom <= body.top || bounds.top >= body.bottom) return@mapIndexedNotNull null
+            val layouts = mutableListOf<TextLayoutResult>()
+            nodes[index].performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            layouts
+        }.flatten().any { it.layoutInput.text.text.contains(fragment) }
+    }
     private fun fontSizeAt(word: String): Float {
         val results = mutableListOf<TextLayoutResult>()
-        compose.onAllNodesWithContentDescription("阅读正文").onFirst().performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
-        val layout = results.single()
+        val nodes = compose.onAllNodesWithContentDescription("阅读正文")
+        nodes.fetchSemanticsNodes().indices.forEach { index ->
+            nodes[index].performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        }
+        val layout = results.firstOrNull { it.layoutInput.text.text.contains(word) } ?: return -1f
         val offset = layout.layoutInput.text.text.indexOf(word)
         if (offset < 0) return -1f
         return layout.layoutInput.text.spanStyles.lastOrNull { it.start <= offset && it.end > offset && it.item.fontSize != TextUnit.Unspecified }
             ?.item?.fontSize?.value ?: layout.layoutInput.style.fontSize.value
+    }
+    private fun lineHeightAt(word: String): Float {
+        val results = mutableListOf<TextLayoutResult>()
+        val nodes = compose.onAllNodesWithContentDescription("阅读正文")
+        nodes.fetchSemanticsNodes().indices.forEach { index ->
+            nodes[index].performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        }
+        val layout = results.firstOrNull { it.layoutInput.text.text.contains(word) } ?: return -1f
+        val offset = layout.layoutInput.text.text.indexOf(word)
+        return layout.layoutInput.text.paragraphStyles.lastOrNull {
+            it.start <= offset && it.end > offset && it.item.lineHeight != TextUnit.Unspecified
+        }?.item?.lineHeight?.value ?: layout.layoutInput.style.lineHeight.value
     }
     private fun await(predicate: () -> Boolean) {
         val deadline = System.nanoTime() + 30_000_000_000L

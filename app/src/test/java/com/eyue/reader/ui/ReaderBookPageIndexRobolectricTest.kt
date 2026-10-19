@@ -244,6 +244,51 @@ class ReaderBookPageIndexRobolectricTest {
         assertTrue(files().isEmpty())
     }
 
+    @Test fun missingImagesAndFontsStillRestoreAndTheirAppearanceInvalidates() = runBlocking {
+        val image = File(root, "missing-image.png")
+        val font = File(root, "missing-font.ttf")
+        val target = book.copy(chapters = book.chapters.map { it.copy(inlineImages = listOf(InlineImage(4, image.path))) })
+        val style = settings.copy(fontPath = font.path)
+        val picturePages = listOf(ReaderTextPage(0, 4), ReaderTextPage(4, 4, 0), ReaderTextPage(4, 10))
+        val index = session(target, style)
+        target.chapters.indices.forEach { index.record(it, picturePages, text, cacheKey = "a".repeat(64)) }
+        assertTrue(session(target, style).complete)
+        image.writeText("image")
+        assertTrue(session(target, style).pages.isEmpty())
+        image.delete()
+        assertTrue(session(target, style).complete)
+        font.writeText("font")
+        assertTrue(session(target, style).pages.isEmpty())
+    }
+
+    @Test fun existingImagesAndFontsStillRequireReliableChangeTokens() = runBlocking {
+        val image = File(root, "image.png").apply { writeText("image") }
+        val font = File(root, "font.ttf").apply { writeText("font") }
+        val target = book.copy(chapters = book.chapters.map { it.copy(inlineImages = listOf(InlineImage(4, image.path))) })
+        val style = settings.copy(fontPath = font.path)
+        val picturePages = listOf(ReaderTextPage(0, 4), ReaderTextPage(4, 4, 0), ReaderTextPage(4, 10))
+        listOf(image, font).forEach { untrusted ->
+            val index = session(target, style, identity = { if (it == untrusted) null else trusted(it) })
+            target.chapters.indices.forEach { index.record(it, picturePages, text, cacheKey = "a".repeat(64)) }
+            assertTrue(index.pages.isEmpty())
+            assertTrue(files().isEmpty())
+        }
+    }
+
+    @Test fun missingRequiredTextOrLazySourceCannotBeTreatedAsAnOptionalMissingAsset() = runBlocking {
+        val missing = File(book.chapters.last().textPath!!).apply { delete() }
+        val target = book.copy(chapters = book.chapters.mapIndexed { index, chapter ->
+            if (index == 0) chapter.copy(inlineImages = listOf(InlineImage(4, missing.path))) else chapter
+        })
+        fill(session(target), target)
+        assertTrue(files().isEmpty())
+        val lazy = book.copy(chapters = book.chapters.dropLast(1).map {
+            it.copy(lazySourcePath = File(root, "missing.source.json").path)
+        })
+        fill(session(lazy), lazy)
+        assertTrue(files().isEmpty())
+    }
+
     @Test @Config(sdk = [26]) fun android26DoesNotTrustSecondResolutionStat() {
         assertNull(readerFileChangeToken(File(book.chapters[0].textPath!!)))
     }

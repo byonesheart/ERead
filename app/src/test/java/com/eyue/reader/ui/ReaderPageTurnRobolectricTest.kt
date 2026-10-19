@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.Recomposer
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -30,6 +31,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicInteger
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -43,6 +45,42 @@ class ReaderPageTurnRobolectricTest {
     @Test fun curlRevealsTheNextPageWhileKeepingTheUnturnedPartOfTheOldPage() = assertSheetTurns(PageTurnStyle.CURL)
     @Test fun coverKeepsTheNextSheetStationaryAndSupportsRepeatedForwardAndBackTurns() = assertSheetTurns(PageTurnStyle.COVER)
     @Test fun slideMovesBothSheetsAndSupportsRepeatedForwardAndBackTurns() = assertSheetTurns(PageTurnStyle.SLIDE)
+
+    @OptIn(androidx.compose.runtime.ExperimentalComposeApi::class)
+    @Test fun curlAnimationRedrawsWithoutRecomposingItsPageContentsOnEveryFrame() {
+        val anchor = mutableStateOf(ReaderPageLocation(0, 0))
+        val view = AtomicReference<View>()
+        val contentCalls = AtomicInteger()
+        compose.setContent {
+            view.set(LocalView.current)
+            MaterialTheme { Box(Modifier.size(300.dp, 400.dp)) {
+                ReaderPageTurnFrame(anchor.value, false, listOf(2), PageTurnStyle.CURL, false, false, Color.White) { _, page, _ ->
+                    contentCalls.incrementAndGet()
+                    Box(Modifier.fillMaxSize().background(pageColor(page)).testTag("paper_$page"))
+                }
+            } }
+        }
+        compose.waitForIdle()
+        compose.mainClock.autoAdvance = false
+        compose.runOnIdle { anchor.value = ReaderPageLocation(0, 1); Snapshot.sendApplyNotifications() }
+        compose.mainClock.advanceTimeBy(64)
+        captureDrawnPage(view.get(), PageTurnStyle.CURL).recycle()
+        val composed = contentCalls.get()
+        assertTrue("Both animation slots must have rendered", composed >= 2)
+        val recomposers = Recomposer.runningRecomposers.value.toList()
+        assertTrue("The actual Compose host must have an active recomposer", recomposers.isNotEmpty())
+        val changes = compose.runOnIdle { recomposers.sumOf { it.changeCount } }
+        repeat(8) {
+            compose.mainClock.advanceTimeByFrame()
+            captureDrawnPage(view.get(), PageTurnStyle.CURL).recycle()
+        }
+        assertEquals("Fold progress must invalidate drawing, not the page content composition", composed, contentCalls.get())
+        assertEquals("Intermediate fold frames must not recompose the AnimatedContent slots", changes,
+            compose.runOnIdle { recomposers.sumOf { it.changeCount } })
+        compose.mainClock.advanceTimeBy(500)
+        val complete = captureDrawnPage(view.get(), PageTurnStyle.CURL).asImageBitmap().toPixelMap()
+        assertTrue(sameColor(complete[5, complete.height / 2], Color.Blue))
+    }
 
     private fun assertSheetTurns(style: PageTurnStyle) {
         val anchor = mutableStateOf(ReaderPageLocation(0, 0))

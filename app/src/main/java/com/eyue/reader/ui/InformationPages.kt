@@ -158,7 +158,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent() {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 翻页、上下阅读复用全书分页索引，减少重复打开时的页数统计。\n• EPUB / MOBI 新增原书 CSS 开关，可保留原书正文排版，字体仍使用所选字体。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 阅读模式切换保持原文位置，分页准备在后台进行，改善翻页流畅性。\n• 修复原书 CSS 切换闪退，并改善分页缓存复用。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
