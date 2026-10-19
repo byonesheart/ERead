@@ -117,6 +117,7 @@ class LibraryRepository(private val context: Context) {
                     PageSource(it.getString("path"), it.optInt("pdfPage", -1), it.nullableString("textPath"))
                 }, inlineImages = chapter.array("inlineImages").objects().map { InlineImage(it.getInt("offset"), it.getString("path")) },
                 sourceStyles = chapter.array("sourceStyles").objects().map(::readSourceStyle),
+                sourceCssStyles = chapter.array("sourceCssStyles").objects().map(::readSourceStyle),
                 subsections = chapter.array("subsections").objects().map(::readComicSection),
                 characterCount = chapter.optInt("characterCount", -1), lazySourcePath = chapter.nullableString("lazySourcePath"),
                 tocParentTitle = chapter.nullableString("tocParentTitle")?.takeIf { it.isNotBlank() },
@@ -147,6 +148,7 @@ class LibraryRepository(private val context: Context) {
                 }))
                 .put("inlineImages", JSONArray(chapter.inlineImages.map { JSONObject().put("offset", it.offset).put("path", it.path) }))
                 .put("sourceStyles", JSONArray(chapter.sourceStyles.map(::writeSourceStyle)))
+                .put("sourceCssStyles", JSONArray(chapter.sourceCssStyles.map(::writeSourceStyle)))
                 .put("subsections", JSONArray(chapter.subsections.map(::writeComicSection)))
                 .put("characterCount", chapter.characterCount).put("lazySourcePath", chapter.lazySourcePath)
                 .put("tocParentTitle", chapter.tocParentTitle)
@@ -169,7 +171,9 @@ class LibraryRepository(private val context: Context) {
         fontScale = json.nullableFloat("fontScale"), bold = json.nullableBoolean("bold"), italic = json.nullableBoolean("italic"),
         alignment = json.nullableString("alignment")?.let { enumValue(it, SourceTextAlignment.START) },
         firstLineIndentEm = json.nullableFloat("firstLineIndentEm"), restLineIndentEm = json.nullableFloat("restLineIndentEm"),
-        paragraph = json.optBoolean("paragraph", false)
+        paragraph = json.optBoolean("paragraph", false),
+        lineHeightEm = json.nullableFloat("lineHeightEm"), letterSpacingEm = json.nullableFloat("letterSpacingEm"),
+        spaceBeforeEm = json.nullableFloat("spaceBeforeEm"), spaceAfterEm = json.nullableFloat("spaceAfterEm")
     )
 
     private fun writeSourceStyle(style: SourceTextStyle): JSONObject = JSONObject()
@@ -177,6 +181,8 @@ class LibraryRepository(private val context: Context) {
         .put("bold", style.bold).put("italic", style.italic).put("alignment", style.alignment?.name)
         .put("firstLineIndentEm", style.firstLineIndentEm).put("restLineIndentEm", style.restLineIndentEm)
         .put("paragraph", style.paragraph)
+        .put("lineHeightEm", style.lineHeightEm).put("letterSpacingEm", style.letterSpacingEm)
+        .put("spaceBeforeEm", style.spaceBeforeEm).put("spaceAfterEm", style.spaceAfterEm)
 
     private fun JSONObject.nullableFloat(key: String): Float? = if (has(key) && !isNull(key)) getDouble(key).toFloat() else null
     private fun JSONObject.nullableBoolean(key: String): Boolean? = if (has(key) && !isNull(key)) getBoolean(key) else null
@@ -245,7 +251,8 @@ class LibraryRepository(private val context: Context) {
             chapterRules = presets, activeChapterRuleId = selected.id,
             appearanceProfiles = readReaderThemeProfiles(json.optJSONArray("appearanceProfiles")),
             activeAppearanceProfileId = json.nullableString("activeAppearanceProfileId"),
-            hierarchicalContents = json.optBoolean("hierarchicalContents", defaults.hierarchicalContents)
+            hierarchicalContents = json.optBoolean("hierarchicalContents", defaults.hierarchicalContents),
+            useSourceCss = json.optBoolean("useSourceCss", defaults.useSourceCss)
         )
     }
 
@@ -273,6 +280,7 @@ class LibraryRepository(private val context: Context) {
         .put("appearanceProfiles", JSONArray(settings.appearanceProfiles.map { it.toJson() }))
         .put("activeAppearanceProfileId", settings.activeAppearanceProfileId)
         .put("hierarchicalContents", settings.hierarchicalContents)
+        .put("useSourceCss", settings.useSourceCss)
         .put("chapterRules", JSONArray(presets.map {
             JSONObject().put("id", it.id).put("name", it.name).put("pattern", it.pattern)
         })).put("activeChapterRuleId", selected.id)

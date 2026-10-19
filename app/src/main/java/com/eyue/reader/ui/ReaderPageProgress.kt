@@ -11,6 +11,7 @@ import com.eyue.reader.data.Book
 import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.loadChapterContent
 import com.eyue.reader.data.ChineseTextConverter
+import com.eyue.reader.data.readerSourceStyles
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -32,15 +33,19 @@ internal fun rememberReaderPageProgress(book: Book, settings: ReaderSettings, sp
                                        chapter: Int, offset: Int, imageIndex: Int? = null): ReaderPageProgress {
     val context = LocalContext.current
     val latestChapter by rememberUpdatedState(chapter)
-    val catalog by key(book.id, book.contentVersion, book.chapters, spec, settings.paragraphSpacing, settings.chineseConversion) {
+    val catalog by key(book.id, book.contentVersion, book.chapters, spec, settings.paragraphSpacing, settings.chineseConversion, settings.useSourceCss) {
         produceState(ReaderPageCatalog()) {
             if (spec.textWidth <= 1 || spec.textHeight <= 1) return@produceState
             try {
-                val pending = book.chapters.indices.toMutableSet()
+                val index = readerBookPageIndex(context, book, settings, spec.density, spec.layoutDirection,
+                    spec.textWidth, spec.textHeight)
+                currentCoroutineContext().ensureActive()
+                value = ReaderPageCatalog(index.pages)
+                val pending = book.chapters.indices.filter { it !in value.chapters }.toMutableSet()
                 while (pending.isNotEmpty()) {
                     currentCoroutineContext().ensureActive()
                     val target = latestChapter.takeIf { it in pending } ?: pending.first()
-                    val pages = readerProgressChapterPages(context, book, settings, spec, target)
+                    val pages = readerProgressChapterPages(context, book, settings, spec, target, index)
                     currentCoroutineContext().ensureActive()
                     value = value.copy(chapters = value.chapters + (target to pages))
                     pending.remove(target)
@@ -59,14 +64,15 @@ internal fun rememberReaderPageProgress(book: Book, settings: ReaderSettings, sp
 
 /** Uses exactly the paged reader's text, source styles, viewport and persistent chapter cache. */
 internal suspend fun readerProgressChapterPages(context: Context, book: Book, settings: ReaderSettings,
-                                               spec: ReaderLayoutSpec, chapter: Int): List<ReaderTextPage> {
+                                               spec: ReaderLayoutSpec, chapter: Int,
+                                               bookPageIndex: ReaderBookPageIndex? = null): List<ReaderTextPage> {
     val prepared = loadChapterContent(context, book, chapter)
     val chineseConverter = ChineseTextConverter.load(context, settings.chineseConversion)
     return withContext(Dispatchers.Default) {
         val worker = currentCoroutineContext()
-        val styles = ReaderSourceStyles(prepared.text, prepared.chapter.sourceStyles) { worker.ensureActive() }
+        val styles = ReaderSourceStyles(prepared.text, prepared.chapter.readerSourceStyles(settings.useSourceCss)) { worker.ensureActive() }
         readerCachedChapterPages(context, book, chapter, settings, spec.density, spec.layoutDirection,
-            spec.textWidth, spec.textHeight, prepared.text, prepared.chapter) {
+            spec.textWidth, spec.textHeight, prepared.text, prepared.chapter, bookPageIndex) {
             readerPaginate(context, listOf(prepared.text), spec.textStyle, spec.density, spec.layoutDirection,
                 spec.textWidth, spec.textHeight, inlineImages = listOf(prepared.chapter.inlineImages),
                 sourceStyles = listOf(styles), paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter).single()

@@ -100,9 +100,12 @@ class LibraryCleanupRobolectricTest {
         file(File(context.cacheDir, "reader-page-cache"), "${hash}-unrelated.bin", 19)
         file(File(context.cacheDir, "reader-chapter-page-cache"), "${hash}_0.bin", 5)
         file(File(context.cacheDir, "reader-chapter-lengths"), "$hash.json", 3)
+        file(File(context.cacheDir, "reader-book-page-index"), "${hash}_layout.parts/0.bin", 8)
+        file(File(context.cacheDir, "reader-book-page-index"), "${hash}_other.bin", 9)
+        file(File(context.cacheDir, "reader-book-page-index"), "unrelated.bin", 77)
         val usage = measureLibraryCleanup(context, LibraryState(books = listOf(first, other)))
         assertEquals(42L, usage.aiAudioBytes)
-        assertEquals(79L, localBookStorageBytes(context, first))
+        assertEquals(96L, localBookStorageBytes(context, first))
         assertEquals(8192L, external.length())
         assertTrue(external.readBytes().all { it == 7.toByte() })
     } }

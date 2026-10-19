@@ -38,9 +38,11 @@ internal fun readerParagraphText(source: AnnotatedString, style: TextStyle, gapE
     // create another empty line; replacing its glyph keeps every UTF-16 coordinate unchanged.
     val result = AnnotatedString.Builder(AnnotatedString(String(displayed), text.spanStyles, text.paragraphStyles))
     text.getStringAnnotations(0, text.length).forEach { result.addStringAnnotation(it.tag, it.item, it.start, it.end) }
-    val gapStyle = ParagraphStyle(lineHeight = (style.fontSize.value * gapEm.coerceIn(0f, 2f)).sp,
-        lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Proportional, LineHeightStyle.Trim.None))
     positions.forEach { start ->
+        val sourceGap = text.getStringAnnotations(ReaderSourceParagraphGapTag, start, start + 1).lastOrNull()?.item?.toFloatOrNull()
+            ?.takeIf { it.isFinite() }?.coerceIn(0f, 8f)
+        val gapStyle = ParagraphStyle(lineHeight = (style.fontSize.value * (sourceGap ?: gapEm.coerceIn(0f, 2f))).sp,
+            lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Proportional, LineHeightStyle.Trim.None))
         result.addStyle(SpanStyle(fontSize = 1.sp), start, start + 1)
         result.addStyle(gapStyle, start, start + 1)
     }

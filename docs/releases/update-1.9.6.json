@@ -1,0 +1,23 @@
+{
+  "versionCode": 35,
+  "versionName": "1.9.6",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.9.6",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.9.6/ERead-1.9.6-debug.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1yuvwV84QbuWgxwXxznd2wQ?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/3f8c60c4fb84",
+      "extractionCode": "mm4a"
+    }
+  ],
+  "changelog": [
+    "翻页、上下阅读复用全书分页索引，减少重复打开时的页数统计。",
+    "EPUB / MOBI 新增原书 CSS 开关，可保留原书正文排版，字体仍使用所选字体。",
+    "更多功能请自行体验。"
+  ]
+}

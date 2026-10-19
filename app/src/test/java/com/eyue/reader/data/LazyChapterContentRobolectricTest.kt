@@ -23,6 +23,24 @@ class LazyChapterContentRobolectricTest {
     private lateinit var context: Context
     private lateinit var root: File
 
+    @Test fun preparedCacheStoresBothCssProjectionsAndSwitchingNeedsNoSourceManifest() = runBlocking {
+        val book = fixtureBook()
+        val prepared = loadChapterContent(context, book, 0)
+        assertTrue(prepared.chapter.sourceCssStyles.size > prepared.chapter.sourceStyles.size)
+        assertEquals(prepared.chapter.sourceStyles, prepared.chapter.readerSourceStyles(false))
+        assertEquals(prepared.chapter.sourceCssStyles, prepared.chapter.readerSourceStyles(true))
+        val metadata = File("${book.chapters[0].lazySourcePath}.prepared.json")
+        assertEquals(1, JSONObject(metadata.readText()).getInt("sourceCssVersion"))
+        metadata.writeText(JSONObject(metadata.readText()).apply { remove("sourceCssVersion"); remove("sourceCssStyles") }.toString())
+        val upgraded = loadChapterContent(context, book, 0)
+        assertEquals(prepared, upgraded)
+        assertTrue(File(book.chapters[0].lazySourcePath!!).delete())
+        val repeated = loadChapterContent(context, book, 0)
+        assertEquals(prepared, repeated)
+        assertEquals(prepared.chapter.sourceStyles, repeated.chapter.readerSourceStyles(false))
+        assertEquals(prepared.chapter.sourceCssStyles, repeated.chapter.readerSourceStyles(true))
+    }
+
     @Before fun setUp() {
         root = File("build/robolectric-lazy-${UUID.randomUUID()}").absoluteFile.apply { mkdirs() }
         context = object : ContextWrapper(RuntimeEnvironment.getApplication()) {

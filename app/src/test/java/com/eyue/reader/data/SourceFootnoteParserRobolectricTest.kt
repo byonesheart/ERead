@@ -10,6 +10,22 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
 class SourceFootnoteParserRobolectricTest {
+    @Test fun bothCssProjectionsShareCanonicalTextImagesAndFootnoteOffsets() {
+        val html = "<body><h1>标题🙂</h1><p class='body'>甲<a role='doc-noteref' href='#fn1'>[1]</a>" +
+            "<strong>乙</strong><img src='body.png'/></p><p class='body'>丙</p><aside id='fn1'>解释</aside></body>"
+        val css = ".body{text-indent:2em;line-height:1.3;margin-bottom:.7em;letter-spacing:.1em}"
+        val plain = HtmlChapterParser.readPlain("正文", html) { "body.png" }
+        val prepared = HtmlChapterParser.read("正文", html, css) { "body.png" }
+        assertEquals(plain.text, prepared.text)
+        assertEquals(plain.inlineImages, prepared.inlineImages)
+        assertEquals(plain.sourceFootnotes, prepared.sourceFootnotes)
+        assertTrue(prepared.sourceCssStyles.size > prepared.sourceStyles.size)
+        val body = prepared.sourceCssStyles.first { prepared.text.substring(it.start, it.end).startsWith("甲") }
+        assertEquals(1.3f, body.lineHeightEm!!, .001f)
+        assertEquals(.7f, body.spaceAfterEm!!, .001f)
+        assertTrue(prepared.text.none { it == '\uE000' || it == '\uE001' })
+    }
+
     @Test fun localNotesKeepCanonicalTextOffsetsAndRemoveBacklinksFromPopupContent() {
         val html = "<body><p>甲🙂 <a epub:type='noteref' href='#fn1'><sup>[1]</sup></a> 后文。</p>" +
             "<aside id='fn1' role='doc-footnote'><p>这是原书注释。<a role='doc-backlink' href='#fnref1'>↩</a></p></aside></body>"

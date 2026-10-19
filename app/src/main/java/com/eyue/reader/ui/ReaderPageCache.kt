@@ -10,6 +10,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import com.eyue.reader.data.Book
 import com.eyue.reader.data.Chapter
 import com.eyue.reader.data.ReaderSettings
+import com.eyue.reader.data.readerSourceStyles
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -27,7 +28,7 @@ import java.security.MessageDigest
 private const val CACHE_MAGIC = 0x45525043
 private const val CACHE_FORMAT = 1
 // Bump when page boundaries or inline-image placement rules change.
-private const val PAGINATION_ALGORITHM_VERSION = 8
+private const val PAGINATION_ALGORITHM_VERSION = 9
 private const val MAX_CACHE_PAGES = 200_000
 private const val MAX_CACHE_BYTES = 4L * 1024 * 1024
 private const val MAX_BOOK_LAYOUTS = 3
@@ -68,7 +69,8 @@ internal suspend fun readerCachedPages(
 internal suspend fun readerCachedChapterPages(
     context: Context, book: Book, chapterIndex: Int, settings: ReaderSettings, density: Density,
     direction: LayoutDirection, width: Int, height: Int, chapterText: String,
-    chapter: Chapter = book.chapters[chapterIndex], paginate: suspend () -> List<ReaderTextPage>
+    chapter: Chapter = book.chapters[chapterIndex], bookPageIndex: ReaderBookPageIndex? = null,
+    paginate: suspend () -> List<ReaderTextPage>
 ): List<ReaderTextPage> {
     val texts = listOf(chapterText)
     val images = listOf(chapter.inlineImages.map { "${it.offset}:${it.path}" })
@@ -84,7 +86,10 @@ internal suspend fun readerCachedChapterPages(
     val cached = withContext(Dispatchers.IO) {
         cacheIo.withLock { readCache(file, key, texts, offsets) }
     }
-    if (cached != null) return cached.single()
+    if (cached != null) {
+        bookPageIndex?.record(chapterIndex, cached.single(), chapterText, chapter, key)
+        return cached.single()
+    }
     val result = paginate()
     currentCoroutineContext().ensureActive()
     withContext(Dispatchers.IO) {
@@ -94,10 +99,11 @@ internal suspend fun readerCachedChapterPages(
         }
     }
     currentCoroutineContext().ensureActive()
+    bookPageIndex?.record(chapterIndex, result, chapterText, chapter, key)
     return result
 }
 
-private fun readerLayoutPlatform(context: Context, settings: ReaderSettings): String {
+internal fun readerLayoutPlatform(context: Context, settings: ReaderSettings): String {
     val configuration = context.resources.configuration
     val systemFont = if (settings.fontPath == null) {
         val family = when (settings.fontName) {
@@ -147,6 +153,7 @@ internal fun readerLayoutCacheKey(
         val source = path?.let(::File)
         text((source?.length() ?: -1).toString())
         text((source?.lastModified() ?: -1).toString())
+        text(source?.let(::readerFileChangeToken).orEmpty())
     }
     integer(PAGINATION_ALGORITHM_VERSION)
     text(platform)
@@ -156,6 +163,7 @@ internal fun readerLayoutCacheKey(
     text(settings.fontName); file(settings.fontPath); text(settings.chineseConversion.name)
     integer(settings.fontSize.toBits()); integer(if (settings.bold) 1 else 0)
     integer(settings.lineHeight.toBits()); integer(settings.letterSpacing.toBits()); integer(settings.paragraphSpacing.toBits())
+    integer(if (settings.useSourceCss) 1 else 0)
     integer(chapterTexts.size)
     chapterTexts.forEachIndexed { index, content ->
         file(book.chapters.getOrNull(index)?.textPath)
@@ -163,7 +171,7 @@ internal fun readerLayoutCacheKey(
         val images = imageIdentities.getOrNull(index).orEmpty()
         integer(images.size)
         images.forEach { identity -> text(identity.substringBefore(':')); file(identity.substringAfter(':', "")) }
-        val styles = book.chapters.getOrNull(index)?.sourceStyles.orEmpty()
+        val styles = book.chapters.getOrNull(index)?.readerSourceStyles(settings.useSourceCss).orEmpty()
         integer(styles.size)
         styles.forEach { source ->
             checkActive()
@@ -175,6 +183,10 @@ internal fun readerLayoutCacheKey(
             text(source.firstLineIndentEm?.toBits()?.toString().orEmpty())
             text(source.restLineIndentEm?.toBits()?.toString().orEmpty())
             integer(if (source.paragraph) 1 else 0)
+            text(source.lineHeightEm?.toBits()?.toString().orEmpty())
+            text(source.letterSpacingEm?.toBits()?.toString().orEmpty())
+            text(source.spaceBeforeEm?.toBits()?.toString().orEmpty())
+            text(source.spaceAfterEm?.toBits()?.toString().orEmpty())
         }
     }
     return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
@@ -187,6 +199,7 @@ private fun cacheFile(context: Context, bookId: String, key: String): AtomicFile
     AtomicFile(File(context.cacheDir, "reader-page-cache/${cacheBookPrefix(bookId)}_$key.bin"))
 
 internal suspend fun removeReaderPageCaches(context: Context, bookId: String) = cacheIo.withLock {
+    removeReaderBookPageIndexes(context, bookId)
     val prefix = cacheBookPrefix(bookId)
     AtomicFile(File(context.cacheDir, "reader-chapter-lengths/$prefix.json")).delete()
     listOf("reader-page-cache", "reader-chapter-page-cache").forEach { directory ->
@@ -259,23 +272,25 @@ private suspend fun writeCache(file: AtomicFile, key: String, pages: List<List<R
 private fun validCachedPages(pages: List<List<ReaderTextPage>>, texts: List<String>, images: List<List<Int>>): Boolean {
     if (pages.size != texts.size || pages.size != images.size) return false
     return pages.indices.all { index ->
-        val chapter = pages[index]
-        val offsets = images[index]
+        readerValidPageRanges(pages[index], texts[index].length, images[index])
+    }
+}
+
+internal fun readerValidPageRanges(chapter: List<ReaderTextPage>, textLength: Int, offsets: List<Int>): Boolean {
         var cursor = 0
         var image = 0
-        chapter.isNotEmpty() && chapter.all { page ->
+        return chapter.isNotEmpty() && chapter.all { page ->
             if (page.imageIndex >= 0) {
                 val expected = offsets.getOrNull(image)
-                val valid = page.imageIndex == image && expected != null && expected in 0..texts[index].length &&
+                val valid = page.imageIndex == image && expected != null && expected in 0..textLength &&
                     page.start == expected && page.end == expected && page.start == cursor
                 if (valid) image++
                 valid
             } else {
-                val valid = page.imageIndex == -1 && page.start == cursor && page.end in cursor..texts[index].length &&
-                    (page.end > cursor || texts[index].isEmpty() && offsets.isEmpty() && chapter.size == 1)
+                val valid = page.imageIndex == -1 && page.start == cursor && page.end in cursor..textLength &&
+                    (page.end > cursor || textLength == 0 && offsets.isEmpty() && chapter.size == 1)
                 cursor = page.end
                 valid
             }
-        } && cursor == texts[index].length && image == offsets.size
-    }
+        } && cursor == textLength && image == offsets.size
 }

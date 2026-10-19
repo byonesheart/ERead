@@ -178,7 +178,7 @@ class ReaderScreenStartupRobolectricTest {
         revealToolbar()
         compose.onNodeWithContentDescription("界面设置").assertIsDisplayed()
         compose.onNodeWithContentDescription("阅读设置").performClick()
-        compose.onNodeWithText("音量键翻页").assertIsDisplayed()
+        compose.onNodeWithText("音量键翻页").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
         compose.onNodeWithTag("reader_settings_tab_interface").assertDoesNotExist()
         compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(center.x, height * .1f)) }

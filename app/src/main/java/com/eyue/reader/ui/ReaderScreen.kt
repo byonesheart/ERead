@@ -148,7 +148,9 @@ internal fun ReaderScreen(
     val importedBook = book
     var document by remember(book.id) { mutableStateOf<ReaderDocument?>(null) }
     val book = importedBook.copy(chapters = document?.chapters?.takeIf { it.size == importedBook.chapters.size } ?: importedBook.chapters)
-    val chapterStore = remember(importedBook.id, importedBook.chapters) { ReaderChapterStore(context, importedBook) }
+    val chapterStore = remember(importedBook.id, importedBook.chapters, settings.useSourceCss) {
+        ReaderChapterStore(context, importedBook, useSourceCss = settings.useSourceCss)
+    }
     val activity = remember(context) {
         generateSequence(context) { (it as? ContextWrapper)?.baseContext }.filterIsInstance<Activity>().firstOrNull()
     }
@@ -227,6 +229,9 @@ internal fun ReaderScreen(
     var textPages by remember(book.id) { mutableStateOf(List(book.chapters.size) { emptyList<ReaderTextPage>() }) }
     var paginatedChapters by remember(book.id) { mutableStateOf<Set<Int>>(emptySet()) }
     var layoutGeneration by remember(book.id) { mutableIntStateOf(0) }
+    var bookPageIndex by remember(importedBook.id, importedBook.chapters, layoutGeneration) {
+        mutableStateOf<ReaderBookPageIndex?>(null)
+    }
     var lastPagePending by remember(book.id) { mutableStateOf(false) }
     var layoutImageHint by remember(book.id) { mutableStateOf<Int?>(null) }
     var speechPreparation by remember(book.id) { mutableStateOf<Job?>(null) }
@@ -239,7 +244,7 @@ internal fun ReaderScreen(
     val scrolling by remember { derivedStateOf { listState.isScrollInProgress } }
     val textLayouts = remember(book.id, settings.fontSize, settings.fontPath, settings.fontName,
         settings.bold, settings.lineHeight, settings.letterSpacing, settings.paragraphSpacing, chineseConverter, pageViewport, settings.readingMode,
-        density, layoutDirection) { linkedMapOf<Pair<Int, Int>, ReaderTextLayout>() }
+        density, layoutDirection, settings.useSourceCss) { linkedMapOf<Pair<Int, Int>, ReaderTextLayout>() }
     val measurer = rememberTextMeasurer(cacheSize = 0)
     val layoutSpec = remember(settings.fontPath, settings.fontName, settings.fontSize, settings.bold,
         settings.lineHeight, settings.letterSpacing, density, layoutDirection, pageViewport) {
@@ -839,7 +844,7 @@ internal fun ReaderScreen(
         } }
         onDispose { if (window != null && previous != null) window.attributes = window.attributes.apply { screenBrightness = previous } }
     }
-    LaunchedEffect(importedBook.id, importedBook.chapters) {
+    LaunchedEffect(importedBook.id, importedBook.chapters, settings.useSourceCss) {
         document = null
         if (!raster) {
             val lengths = readerChapterLengths(context, importedBook)
@@ -860,9 +865,9 @@ internal fun ReaderScreen(
         }
         document?.errors?.firstOrNull()?.let { snackbar.showSnackbar(it) }
     }
-    LaunchedEffect(book.id, textWidth, textHeight, settings.fontSize, settings.lineHeight,
+    LaunchedEffect(book.id, importedBook.contentVersion, importedBook.chapters, textWidth, textHeight, settings.fontSize, settings.lineHeight,
         settings.letterSpacing, settings.paragraphSpacing, settings.fontPath, settings.fontName, settings.bold, density, layoutDirection,
-        settings.readingMode, settings.chineseConversion, chineseConverter) {
+        settings.readingMode, settings.chineseConversion, chineseConverter, settings.useSourceCss) {
         if (raster) return@LaunchedEffect
         layoutImageHint = textPages.getOrNull(chapterIndex)?.getOrNull(pageIndex)?.imageIndex?.takeIf { it >= 0 }
         textPages = if (directScroll) document?.scrollBlocks ?: List(book.chapters.size) { emptyList() }
@@ -873,7 +878,7 @@ internal fun ReaderScreen(
     }
     LaunchedEffect(book.id, document?.scrollIndex, chapterIndex, layoutGeneration, viewport, conversionReady) {
         if (document == null || !conversionReady) return@LaunchedEffect
-        if (raster || viewport.width == 0 || viewport.height == 0) return@LaunchedEffect
+        if (raster || viewport.width == 0 || viewport.height == 0 || textWidth <= 1 || textHeight <= 1) return@LaunchedEffect
         val target = chapterIndex
         val ready = if (directScroll) target in document!!.readyChapters && textPages[target].isNotEmpty()
             else target in paginatedChapters && target in document!!.readyChapters
@@ -883,12 +888,21 @@ internal fun ReaderScreen(
         paginationError = null
         try {
             val workerDensity = Density(density.density, density.fontScale)
+            val pageIndexCache = if (directScroll) null else bookPageIndex ?: readerBookPageIndex(context,
+                importedBook, settings, workerDensity, layoutDirection, textWidth, textHeight).also { restored ->
+                currentCoroutineContext().ensureActive()
+                bookPageIndex = restored
+                val cached = restored.pages
+                textPages = textPages.toMutableList().apply { cached.forEach { (index, pages) -> this[index] = pages } }
+                paginatedChapters = cached.keys
+            }
             suspend fun prepare(index: Int, visible: Boolean): List<ReaderTextPage> {
                 val loaded = chapterStore.load(index)
                 currentCoroutineContext().ensureActive()
                 if (visible) publishChapter(index, loaded)
-                val pages = if (directScroll) loaded.blocks else readerCachedChapterPages(context, importedBook, index,
-                    settings, workerDensity, layoutDirection, textWidth, textHeight, loaded.text, loaded.chapter) {
+                val pages = if (directScroll) loaded.blocks else textPages[index].takeIf { index in paginatedChapters }
+                    ?: readerCachedChapterPages(context, importedBook, index,
+                    settings, workerDensity, layoutDirection, textWidth, textHeight, loaded.text, loaded.chapter, pageIndexCache) {
                     readerPaginate(context, listOf(loaded.text), textStyle, workerDensity, layoutDirection, textWidth, textHeight,
                         inlineImages = listOf(loaded.chapter.inlineImages), sourceStyles = listOf(loaded.styles), paragraphSpacing = settings.paragraphSpacing,
                         chineseConverter = chineseConverter) { fraction ->
@@ -1072,7 +1086,8 @@ internal fun ReaderScreen(
                                 document?.chapters?.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty()), textStyle, sourceChapter, index, page.start, selectionReset,
                                 onAction = { selection, kind -> openSelection(selection, kind) }, modifier = Modifier.fillMaxWidth().padding(bottom =
                                     if (readerParagraphGapAfter(document?.text?.getOrNull(sourceChapter).orEmpty(), page.end))
-                                        with(density) { (textStyle.fontSize.value * settings.paragraphSpacing).sp.toDp() } else 0.dp),
+                                        with(density) { (textStyle.fontSize.value * (document?.sourceStyles?.getOrNull(sourceChapter)
+                                            ?.paragraphGapAfter(page.end, settings.paragraphSpacing) ?: settings.paragraphSpacing)).sp.toDp() } else 0.dp),
                                 onTextLayout = { rememberLayout(sourceChapter, index, it) },
                                 onTextTap = { offset, anchor -> tapText(sourceChapter, offset, anchor) }, onEdit = if (editable) { selection -> openTxtEditor(selection) } else null,
                                 onRole = onRoleSelection?.let { callback -> { passage -> selectionReset++; callback(passage.quote) } },
@@ -1284,7 +1299,8 @@ internal fun ReaderScreen(
                 modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = halfScreen).testTag("reader_settings_sheet")) {
                 if (panel != ReaderPanel.SETTINGS) ReaderCompactSettings(settings, raster, onSettings,
                     onImportFont, onImportBackground, onFonts = { panel = ReaderPanel.FONTS })
-                else ReaderPreferencesPanel(settings, onSettings, onResetDefaults)
+                else ReaderPreferencesPanel(settings, onSettings, onResetDefaults,
+                    sourceCssAvailable = !raster && book.format in setOf(BookFormat.EPUB, BookFormat.MOBI))
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))

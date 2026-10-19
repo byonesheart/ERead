@@ -56,11 +56,11 @@ internal fun ReaderCompactSettings(
 
 @Composable
 internal fun ReaderPreferencesPanel(settings: ReaderSettings, onSettings: (ReaderSettings) -> Unit,
-    onResetDefaults: () -> Unit = {}) {
+    onResetDefaults: () -> Unit = {}, sourceCssAvailable: Boolean = false) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
         Text("设置", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = 12.dp))
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-            ReaderPreferenceSettings(settings, onSettings, onResetDefaults)
+            ReaderPreferenceSettings(settings, onSettings, onResetDefaults, sourceCssAvailable)
         }
     }
 }

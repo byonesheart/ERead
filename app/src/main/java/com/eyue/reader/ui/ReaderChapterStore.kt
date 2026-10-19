@@ -6,6 +6,7 @@ import com.eyue.reader.data.Book
 import com.eyue.reader.data.Chapter
 import com.eyue.reader.data.PreparedChapter
 import com.eyue.reader.data.loadChapterContent
+import com.eyue.reader.data.readerSourceStyles
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -22,6 +23,7 @@ internal data class ReaderLoadedChapter(val chapter: Chapter, val text: String,
 
 /** Styles and scroll blocks belong to requested chapters; unseen chapters stay on disk. */
 internal class ReaderChapterStore(private val context: Context, private val book: Book,
+    private val useSourceCss: Boolean = false,
     private val read: suspend (Int) -> PreparedChapter = { loadChapterContent(context, book, it) }) {
     private val locks = book.chapters.map { Mutex() }
     private val cache = java.util.Collections.synchronizedMap(object : LinkedHashMap<Int, ReaderLoadedChapter>(8, .75f, true) {
@@ -34,7 +36,7 @@ internal class ReaderChapterStore(private val context: Context, private val book
         val result = withContext(Dispatchers.Default) {
             val work = currentCoroutineContext()
             ReaderLoadedChapter(prepared.chapter, prepared.text,
-                ReaderSourceStyles(prepared.text, prepared.chapter.sourceStyles) { work.ensureActive() },
+                ReaderSourceStyles(prepared.text, prepared.chapter.readerSourceStyles(useSourceCss)) { work.ensureActive() },
                 readerScrollBlocks(prepared.text, prepared.chapter.inlineImages) { work.ensureActive() })
         }
         currentCoroutineContext().ensureActive()

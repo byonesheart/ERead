@@ -31,11 +31,12 @@ suspend fun loadChapterContent(context: Context, book: Book, chapterIndex: Int):
         val repository = LibraryRepository(context)
         val cached = runCatching {
             val json = JSONObject(metadata.readFully().toString(Charsets.UTF_8))
-            if (json.optString("textSha256") == textHash && json.optInt("sourceFootnotesVersion") == 1)
+            if (json.optString("textSha256") == textHash && json.optInt("sourceFootnotesVersion") == 1 && json.optInt("sourceCssVersion") == 1)
                 repository.readChapter(json) else null
         }.getOrNull()?.takeIf { it.id == chapter.id && it.textPath == chapter.textPath && it.title == chapter.title &&
             it.lazySourcePath == sourcePath && it.characterCount == text.length && it.inlineImages == chapter.inlineImages &&
             it.sourceStyles.all { style -> style.start >= 0 && style.end > style.start && style.end <= text.length } &&
+            it.sourceCssStyles.all { style -> style.start >= 0 && style.end > style.start && style.end <= text.length } &&
             it.sourceFootnotes.all { note -> note.start >= 0 && note.end >= note.start && note.end <= text.length &&
                 (note.end > note.start || note.imagePath != null) } }
         if (cached != null) return@withLock PreparedChapter(cached, text)
@@ -51,10 +52,11 @@ suspend fun loadChapterContent(context: Context, book: Book, chapterIndex: Int):
         }
         val styles = mapCanonicalStyles(styled.text, text, styled.sourceStyles)
         val prepared = chapter.copy(characterCount = text.length, sourceStyles = styles,
+            sourceCssStyles = mapCanonicalStyles(styled.text, text, styled.sourceCssStyles),
             sourceFootnotes = mapCanonicalFootnotes(styled.text, text, styled.sourceFootnotes))
         job.ensureActive()
         writeChapterAtomic(metadata, repository.writeChapter(prepared).put("textSha256", textHash)
-            .put("sourceFootnotesVersion", 1).toString())
+            .put("sourceFootnotesVersion", 1).put("sourceCssVersion", 1).toString())
         PreparedChapter(prepared, text)
     }
 }
@@ -73,7 +75,7 @@ internal fun saveLazyChapter(directory: File, index: Int, parsed: ParsedTextChap
         .put("images", JSONObject(images)).put("noteTargets", JSONObject(noteTargets)).toString())
     return Chapter(title = parsed.title, textPath = text.absolutePath, inlineImages = parsed.inlineImages,
         characterCount = parsed.text.length, lazySourcePath = manifest.absolutePath, tocParentTitle = parsed.tocParentTitle,
-        sourceFootnotes = parsed.sourceFootnotes)
+        sourceFootnotes = parsed.sourceFootnotes, sourceCssStyles = parsed.sourceCssStyles)
 }
 
 private fun chapterTextHash(file: File, checkActive: () -> Unit): String {

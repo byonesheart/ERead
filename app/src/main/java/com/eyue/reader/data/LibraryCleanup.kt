@@ -48,8 +48,12 @@ internal suspend fun localBookStorageBytes(context: Context, book: Book): Long =
     require(directory.parentFile == books) { "图书目录越界" }
     val owned = if (directory.isDirectory) directory.walkTopDown().filter { it.isFile && it.canonicalFile.toPath().startsWith(directory.toPath()) }.sumOf { it.length() } else 0L
     val prefix = MessageDigest.getInstance("SHA-256").digest(book.id.toByteArray()).joinToString("") { "%02x".format(it) }
-    val pages = listOf("reader-page-cache", "reader-chapter-page-cache", "reader-chapter-lengths").sumOf { name ->
-        File(context.cacheDir, name).listFiles().orEmpty().filter { it.isFile && (it.name == "$prefix.bin" || it.name == "$prefix.json" || it.name.startsWith("${prefix}_")) }.sumOf { it.length() }
+    val pages = listOf("reader-page-cache", "reader-chapter-page-cache", "reader-chapter-lengths", "reader-book-page-index").sumOf { name ->
+        File(context.cacheDir, name).listFiles().orEmpty().filter { it.name == "$prefix.bin" || it.name == "$prefix.json" || it.name.startsWith("${prefix}_") }.sumOf { item ->
+            if (item.isFile) item.length() else item.walkTopDown().filter {
+                it.isFile && it.canonicalFile.toPath().startsWith(item.canonicalFile.toPath())
+            }.sumOf { it.length() }
+        }
     }
     owned + pages + AiSpeechCache(context).bytes(book.id)
 }

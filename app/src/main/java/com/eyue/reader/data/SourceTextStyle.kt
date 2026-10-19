@@ -6,7 +6,7 @@ enum class SourceTextAlignment { START, CENTER, END, JUSTIFY }
 
 /** UTF-16 [start, end) in the saved chapter. Later non-null properties override earlier ones.
  * Sizes and total first/rest-line indents are relative to the reader's body font size.
- * Source font families, ordinary body formatting and line spacing are intentionally absent. */
+ * Source font families are always supplied by the reader. CSS spacing uses body-font em units. */
 data class SourceTextStyle(
     val start: Int,
     val end: Int,
@@ -16,10 +16,18 @@ data class SourceTextStyle(
     val alignment: SourceTextAlignment? = null,
     val firstLineIndentEm: Float? = null,
     val restLineIndentEm: Float? = null,
-    val paragraph: Boolean = false
+    val paragraph: Boolean = false,
+    val lineHeightEm: Float? = null,
+    val letterSpacingEm: Float? = null,
+    val spaceBeforeEm: Float? = null,
+    val spaceAfterEm: Float? = null
 )
 
-internal data class MarkedSourceHtml(val html: String, val styles: List<SourceTextStyle>)
+fun Chapter.readerSourceStyles(useSourceCss: Boolean): List<SourceTextStyle> =
+    if (useSourceCss && sourceCssStyles.isNotEmpty()) sourceCssStyles else sourceStyles
+
+internal data class MarkedSourceHtml(val html: String, val styles: List<SourceTextStyle>,
+                                     val sourceCssStyles: List<SourceTextStyle> = emptyList())
 
 /** The common ebook subset: tags, class/id selectors, descendants, inline declarations.
  * It does not fetch resources or implement a browser layout engine. */
@@ -31,7 +39,8 @@ internal object SourceStyleParser {
     private data class SelectorKey(val parent: Int, val tag: String, val id: String, val classes: Set<String>)
     private data class Properties(val font: Float = 16f, val bold: Boolean = false, val italic: Boolean = false,
                                   val alignment: SourceTextAlignment = SourceTextAlignment.START,
-                                  val firstIndent: Float = 0f, val margin: Float = 0f, val special: Boolean = false)
+                                  val firstIndent: Float = 0f, val margin: Float = 0f, val special: Boolean = false,
+                                  val lineHeight: Float? = null, val lineFactor: Float? = null, val letterSpacing: Float? = null)
     private data class SelectorPart(val tag: String, val id: String?, val classes: Set<String>, val directParent: Boolean = false)
     private data class Rule(val parts: List<SelectorPart>, val declarations: Map<String, String>, val specificity: Int, val order: Int)
     private val blocks = setOf("p", "div", "blockquote", "center", "pre", "address", "dd", "dt", "li", "h1", "h2", "h3", "h4", "h5", "h6")
@@ -49,7 +58,13 @@ internal object SourceStyleParser {
     private var cachedSheet: String? = null
     private var cachedRules: List<Rule> = emptyList()
 
-    fun mark(html: String, css: String, prefix: String, checkActive: () -> Unit = {}): MarkedSourceHtml {
+    fun mark(html: String, css: String, prefix: String, checkActive: () -> Unit = {}): MarkedSourceHtml =
+        markContent(html, css, prefix, false, checkActive)
+
+    fun markWithSourceCss(html: String, css: String, prefix: String, checkActive: () -> Unit = {}): MarkedSourceHtml =
+        markContent(html, css, prefix, true, checkActive)
+
+    private fun markContent(html: String, css: String, prefix: String, includeSourceCss: Boolean, checkActive: () -> Unit): MarkedSourceHtml {
         checkActive()
         val visibleHtml = removeHtmlComments(html)
         val sheet = css + "\n" + sourceHtmlElements(visibleHtml, setOf("style"), checkActive)
@@ -132,8 +147,10 @@ internal object SourceStyleParser {
         // A common plain-p class is ordinary body formatting too (e.g. calibre's default paragraph class).
         val ordinary = elements.filter { it.tag == "p" && !it.properties.special && !it.properties.bold && !it.properties.italic &&
             it.properties.alignment in setOf(SourceTextAlignment.START, SourceTextAlignment.JUSTIFY) }
-            .groupBy { it.properties }.maxByOrNull { it.value.size }?.key ?: body
+            .groupBy { it.properties.copy(lineHeight = null, lineFactor = null, letterSpacing = null) }
+            .maxByOrNull { it.value.size }?.key ?: body
         val styles = mutableListOf<SourceTextStyle>()
+        val cssStyles = mutableListOf<SourceTextStyle>()
         val insertions = mutableMapOf<Int, MutableList<Pair<Int, String>>>()
         elements.forEach { element ->
             if (element.order % 256 == 0) checkActive()
@@ -161,6 +178,30 @@ internal object SourceStyleParser {
                 insertions.getOrPut(element.openingEnd) { mutableListOf() } += element.order to "$prefix${index}B\uE001"
                 insertions.getOrPut(element.closing) { mutableListOf() } += -element.order - 1 to "$prefix${index}E\uE001"
             }
+            if (includeSourceCss && !wrapper && (paragraph || element.tag in inlineTags)) {
+                fun space(side: String): Float? {
+                    val margin = element.declarations["margin-$side"] ?: element.declarations["margin"]?.split(whitespace)?.let { values ->
+                        when (side) { "top" -> values.firstOrNull(); else -> values.getOrNull(2) ?: values.firstOrNull() }
+                    }
+                    return length(margin, p.font, rootFont)?.div(ordinary.font)?.coerceIn(0f, 8f)
+                }
+                val full = if (paragraph) SourceTextStyle(0, 0, fontScale = (p.font / ordinary.font).coerceIn(.25f, 4f),
+                    bold = p.bold, italic = p.italic, alignment = p.alignment,
+                    firstLineIndentEm = ((p.margin + p.firstIndent) / ordinary.font).coerceIn(-8f, 12f),
+                    restLineIndentEm = (p.margin / ordinary.font).coerceIn(-8f, 12f), paragraph = true,
+                    lineHeightEm = (p.lineFactor?.times(p.font) ?: p.lineHeight)?.div(ordinary.font)?.coerceIn(.25f, 8f),
+                    letterSpacingEm = p.letterSpacing?.div(ordinary.font)?.coerceIn(-.5f, 2f),
+                    spaceBeforeEm = space("top"), spaceAfterEm = space("bottom"))
+                else SourceTextStyle(0, 0,
+                    fontScale = style?.fontScale, bold = style?.bold, italic = style?.italic,
+                    letterSpacingEm = if ("letter-spacing" in element.declarations) p.letterSpacing?.div(ordinary.font)?.coerceIn(-.5f, 2f) else null)
+                if (full.paragraph || full.fontScale != null || full.bold != null || full.italic != null || full.letterSpacingEm != null) {
+                    val index = cssStyles.size
+                    cssStyles += full
+                    insertions.getOrPut(element.openingEnd) { mutableListOf() } += element.order to "${prefix}C${index}B\uE001"
+                    insertions.getOrPut(element.closing) { mutableListOf() } += -element.order - 1 to "${prefix}C${index}E\uE001"
+                }
+            }
         }
         val marked = StringBuilder()
         var cursor = 0
@@ -170,7 +211,7 @@ internal object SourceStyleParser {
             cursor = position
         }
         marked.append(cleaned, cursor, cleaned.length)
-        return MarkedSourceHtml(marked.toString(), styles)
+        return MarkedSourceHtml(marked.toString(), styles, cssStyles)
     }
 
     private fun properties(tag: String, parent: Properties, declared: Map<String, String>, rootFont: Float): Properties {
@@ -188,9 +229,16 @@ internal object SourceStyleParser {
         val align = alignment(declared["text-align"]) ?: if (tag == "center") SourceTextAlignment.CENTER else parent.alignment
         val margin = (length(declared["margin-left"], font, rootFont) ?: if (tag == "blockquote") font else 0f) +
             (length(declared["padding-left"], font, rootFont) ?: 0f)
+        val height = declared["line-height"]?.lowercase()
+        val factor = height?.toFloatOrNull()?.takeIf { it.isFinite() && it > 0f }
+        val absoluteHeight = if (height == "normal") null else length(height, font, rootFont)
+        val letter = declared["letter-spacing"]
         return Properties(font.coerceIn(4f, 256f), bold, italic, align,
             length(declared["text-indent"], font, rootFont) ?: parent.firstIndent, parent.margin + margin,
-            parent.special || heading || tag in setOf("blockquote", "center", "pre", "address", "dd", "dt"))
+            parent.special || heading || tag in setOf("blockquote", "center", "pre", "address", "dd", "dt"),
+            lineHeight = if (height == null) parent.lineHeight else if (factor == null) absoluteHeight else null,
+            lineFactor = if (height == null) parent.lineFactor else factor,
+            letterSpacing = if (letter == null) parent.letterSpacing else if (letter == "normal") 0f else length(letter, font, rootFont))
     }
 
     private fun alignment(value: String?): SourceTextAlignment? = when (value?.lowercase()) {

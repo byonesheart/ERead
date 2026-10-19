@@ -79,7 +79,11 @@ internal class EbookTextEdit(
         }
         return chapter.copy(textPath = textPath, characterCount = text.length, lazySourcePath = null,
             inlineImages = chapter.inlineImages.map { it.copy(offset = offset(it.offset)) }, sourceStyles = styles,
-            sourceFootnotes = footnotes)
+            sourceFootnotes = footnotes, sourceCssStyles = chapter.sourceCssStyles.mapNotNull { style ->
+                val start = offset(style.start)
+                val end = offset(style.end)
+                if (end > start) style.copy(start = start, end = end) else null
+            })
     }
 
     fun book(book: Book, updatedChapter: Chapter, chapterLengths: List<Int>): Book {
@@ -140,6 +144,11 @@ internal fun splitEditedTextChapters(chapters: List<ParsedTextChapter>, rule: St
             val until = minOf(end, oldStarts[index] + style.end)
             if (until > from) style.copy(start = from - start, end = until - start) else null
         } }
-        chapter.copy(inlineImages = images[target], sourceStyles = styles, sourceFootnotes = footnotes[target])
+        val cssStyles = chapters.flatMapIndexed { index, old -> old.sourceCssStyles.mapNotNull { style ->
+            val from = maxOf(start, oldStarts[index] + style.start)
+            val until = minOf(end, oldStarts[index] + style.end)
+            if (until > from) style.copy(start = from - start, end = until - start) else null
+        } }
+        chapter.copy(inlineImages = images[target], sourceStyles = styles, sourceFootnotes = footnotes[target], sourceCssStyles = cssStyles)
     }
 }

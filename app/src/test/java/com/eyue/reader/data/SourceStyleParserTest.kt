@@ -7,6 +7,40 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SourceStyleParserTest {
+    @Test fun sourceSpacingCannotChangeTheLegacyOrdinaryFontBaseline() {
+        val html = "<body><h1>标题</h1><p class='body' style='line-height:1.1;letter-spacing:.1em'>正文一</p>" +
+            "<p class='body' style='line-height:1.2;letter-spacing:.2em'>正文二</p>" +
+            "<p class='body' style='line-height:1.3;letter-spacing:.3em'>正文三</p>" +
+            "<p>小字一</p><p>小字二</p></body>"
+        val css = ".body{font-size:20px;text-indent:2em}"
+        val legacy = SourceStyleParser.mark(html, css, "legacy_")
+        val complete = SourceStyleParser.markWithSourceCss(html, css, "complete_")
+        assertEquals(listOf(1.6f, .8f, .8f), legacy.styles.map { it.fontScale })
+        assertEquals(legacy.styles, complete.styles)
+        assertEquals(listOf(1.1f, 1.2f, 1.3f), complete.sourceCssStyles.drop(1).take(3).map { it.lineHeightEm })
+        assertEquals(listOf(.1f, .2f, .3f), complete.sourceCssStyles.drop(1).take(3).map { it.letterSpacingEm })
+    }
+
+    @Test fun completeCssProjectionKeepsBodySpacingAndDoesNotChangeTheDefaultProjection() {
+        val html = "<body><h1>标题</h1><p class='body'>正文一</p><p class='body'>正文二</p></body>"
+        val css = "p.body{font-size:20px;line-height:1.4;letter-spacing:.1em;text-align:justify;text-indent:2em;margin:.25em 0 .5em;font-family:ignored}"
+        val default = SourceStyleParser.mark(html, css, "default_")
+        val complete = SourceStyleParser.markWithSourceCss(html, css, "both_")
+        assertEquals(default.styles, complete.styles)
+        assertEquals(1, default.styles.size)
+        assertTrue(default.sourceCssStyles.isEmpty())
+        assertEquals(3, complete.sourceCssStyles.size)
+        val body = complete.sourceCssStyles[1]
+        assertTrue(body.paragraph)
+        assertEquals(1f, body.fontScale!!, .001f)
+        assertEquals(1.4f, body.lineHeightEm!!, .001f)
+        assertEquals(.1f, body.letterSpacingEm!!, .001f)
+        assertEquals(2f, body.firstLineIndentEm!!, .001f)
+        assertEquals(SourceTextAlignment.JUSTIFY, body.alignment)
+        assertEquals(.25f, body.spaceBeforeEm!!, .001f)
+        assertEquals(.5f, body.spaceAfterEm!!, .001f)
+    }
+
     private fun styles(html: String, css: String = "") = SourceStyleParser.mark(html, css, "test_").styles
 
     @Test fun normalMobiJustifiedParagraphsUseReaderFormattingWithoutSeparateParagraphStyles() {

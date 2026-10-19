@@ -14,17 +14,24 @@ import com.eyue.reader.data.SourceTextAlignment
 import com.eyue.reader.data.SourceTextStyle
 import java.util.TreeMap
 
+internal const val ReaderSourceParagraphGapTag = "reader_source_paragraph_gap"
+
 private data class ReaderStyleValues(
     val scale: Float? = null, val bold: Boolean? = null, val italic: Boolean? = null,
     val alignment: SourceTextAlignment? = null, val firstIndent: Float? = null, val restIndent: Float? = null,
-    val paragraphScale: Float? = null
+    val paragraphScale: Float? = null, val lineHeight: Float? = null, val letterSpacing: Float? = null,
+    val spaceBefore: Float? = null, val spaceAfter: Float? = null
 ) {
     fun with(source: SourceTextStyle) = copy(scale = source.fontScale ?: scale, bold = source.bold ?: bold,
         italic = source.italic ?: italic,
         alignment = if (source.paragraph) source.alignment ?: alignment else alignment,
         firstIndent = if (source.paragraph) source.firstLineIndentEm ?: firstIndent else firstIndent,
         restIndent = if (source.paragraph) source.restLineIndentEm ?: restIndent else restIndent,
-        paragraphScale = if (source.paragraph) source.fontScale ?: paragraphScale else paragraphScale)
+        paragraphScale = if (source.paragraph) source.fontScale ?: paragraphScale else paragraphScale,
+        lineHeight = if (source.paragraph) source.lineHeightEm ?: lineHeight else lineHeight,
+        letterSpacing = source.letterSpacingEm ?: letterSpacing,
+        spaceBefore = if (source.paragraph) source.spaceBeforeEm ?: spaceBefore else spaceBefore,
+        spaceAfter = if (source.paragraph) source.spaceAfterEm ?: spaceAfter else spaceAfter)
 }
 
 private data class ReaderStyleRun(val start: Int, val end: Int, val values: ReaderStyleValues)
@@ -35,7 +42,9 @@ private data class ReaderStyleEdge(val offset: Int, val order: Int, val enters: 
 internal class ReaderSourceStyles(text: String, sources: List<SourceTextStyle>, checkActive: () -> Unit = {}) {
     private val spans: List<ReaderStyleRun>
     private val paragraphs: List<ReaderParagraphRun>
-    val maximumScale: Float = sources.mapNotNull { it.fontScale }.maxOrNull()?.coerceAtLeast(1f) ?: 1f
+    val maximumScale: Float = sources.maxOfOrNull {
+        maxOf(it.fontScale ?: 1f, it.lineHeightEm ?: 1f, it.spaceBeforeEm ?: 1f, it.spaceAfterEm ?: 1f)
+    }?.coerceAtLeast(1f) ?: 1f
 
     init {
         val edges = ArrayList<ReaderStyleEdge>(sources.size * 2)
@@ -83,11 +92,13 @@ internal class ReaderSourceStyles(text: String, sources: List<SourceTextStyle>, 
                     if (run.start > cursor) scale = maxOf(scale, 1f)
                     scale = maxOf(scale, run.values.scale ?: 1f)
                     cursor = maxOf(cursor, minOf(run.end, visibleEnd))
-                    if (run.values.alignment != null || run.values.firstIndent != null || run.values.restIndent != null || run.values.paragraphScale != null)
+                    if (run.values.alignment != null || run.values.firstIndent != null || run.values.restIndent != null || run.values.paragraphScale != null ||
+                        run.values.lineHeight != null || run.values.spaceBefore != null || run.values.spaceAfter != null)
                         paragraph = run.values
                 }
                 if (cursor < visibleEnd || scale == 0f) scale = maxOf(scale, 1f)
-                if (scale != 1f || paragraph.alignment != null || paragraph.firstIndent != null || paragraph.restIndent != null)
+                if (scale != 1f || paragraph.alignment != null || paragraph.firstIndent != null || paragraph.restIndent != null ||
+                    paragraph.lineHeight != null || paragraph.spaceBefore != null || paragraph.spaceAfter != null)
                     paragraphRuns += ReaderParagraphRun(start, end, paragraph, scale)
                 start = end
             }
@@ -108,10 +119,11 @@ internal class ReaderSourceStyles(text: String, sources: List<SourceTextStyle>, 
         while (index < spans.size && spans[index].start < visibleEnd) {
             val run = spans[index++]
             val values = run.values
-            if (values.scale == null && values.bold == null && values.italic == null) continue
+            if (values.scale == null && values.bold == null && values.italic == null && values.letterSpacing == null) continue
             val span = SpanStyle(fontSize = values.scale?.let { (base.fontSize.value * it).sp } ?: TextUnit.Unspecified,
                 fontWeight = values.bold?.let { if (it) FontWeight.Bold else FontWeight.Normal },
-                fontStyle = values.italic?.let { if (it) FontStyle.Italic else FontStyle.Normal })
+                fontStyle = values.italic?.let { if (it) FontStyle.Italic else FontStyle.Normal },
+                letterSpacing = values.letterSpacing?.let { (base.fontSize.value * it).sp } ?: TextUnit.Unspecified)
             result.addStyle(span, maxOf(run.start, start) - start, minOf(run.end, visibleEnd) - start)
         }
         index = firstParagraph
@@ -127,10 +139,24 @@ internal class ReaderSourceStyles(text: String, sources: List<SourceTextStyle>, 
                 SourceTextAlignment.END -> TextAlign.End; SourceTextAlignment.JUSTIFY -> TextAlign.Justify
                 null -> TextAlign.Unspecified
             }, textIndent = if (values.firstIndent != null || values.restIndent != null) TextIndent(first, rest) else null,
-                lineHeight = if (run.lineScale == 1f) TextUnit.Unspecified else (base.lineHeight.value * run.lineScale).sp),
+                lineHeight = values.lineHeight?.let { (base.fontSize.value * it).sp }
+                    ?: if (run.lineScale == 1f) TextUnit.Unspecified else (base.lineHeight.value * run.lineScale).sp),
                 maxOf(run.start, start) - start, minOf(run.end, visibleEnd) - start)
+            sourceGapAfter(index - 1)?.let { gap -> result.addStringAnnotation(ReaderSourceParagraphGapTag, gap.toString(),
+                maxOf(run.start, start) - start, minOf(run.end, visibleEnd) - start) }
         }
         return result.toAnnotatedString()
+    }
+
+    fun paragraphGapAfter(end: Int, fallback: Float): Float {
+        val index = firstOverlapping(paragraphs.size, { paragraphs[it].end }, (end - 1).coerceAtLeast(0))
+        return sourceGapAfter(index) ?: fallback
+    }
+
+    private fun sourceGapAfter(index: Int): Float? {
+        val after = paragraphs.getOrNull(index)?.values?.spaceAfter
+        val before = paragraphs.getOrNull(index + 1)?.values?.spaceBefore
+        return if (after == null && before == null) null else maxOf(after ?: 0f, before ?: 0f).coerceIn(0f, 8f)
     }
 }
 

@@ -8,8 +8,8 @@
 
 | 渠道 | 下载链接 | 提取码 |
 | --- | --- | --- |
-| 百度网盘 | [点击下载](https://pan.baidu.com/s/1sRaWiXAhpeXX_jkrf6fXUw?pwd=READ) | `READ` |
-| 夸克网盘 | [点击下载](https://pan.quark.cn/s/e0816d5df7ed) | `PfWV` |
+| 百度网盘 | [点击下载](https://pan.baidu.com/s/1yuvwV84QbuWgxwXxznd2wQ?pwd=READ) | `READ` |
+| 夸克网盘 | [点击下载](https://pan.quark.cn/s/3f8c60c4fb84) | `mm4a` |
 | GitHub Releases | [查看版本与安装包](https://github.com/byonesheart/ERead/releases) | 无 |
 
 下载 APK 后安装即可使用。
@@ -41,7 +41,7 @@
 | 类别 | 主要功能 |
 | --- | --- |
 | 文件导入 | EPUB、TXT、未加密 MOBI、PDF、图片及多层漫画文件夹。 |
-| 阅读体验 | 滚动、左右／上下翻页；左右翻页支持覆盖、滑动、仿真效果；二级折叠目录、原文注释、字体导入、背景图片、多主题、简繁转换及浅色／深色／跟随系统。 |
+| 阅读体验 | 滚动、左右／上下翻页；左右翻页支持覆盖、滑动、仿真效果；分页缓存、可选原书 CSS、二级折叠目录、原文注释、字体导入、背景图片、多主题、简繁转换及浅色／深色／跟随系统。 |
 | 书架管理 | 阅读历史、自定义分组、书名与作者搜索、封面和阅读进度；批量删除、上传或下载。 |
 | 标注与编辑 | 书签、笔记、彩色标记、直线／波浪划线；TXT、EPUB、MOBI 支持全文搜索与替换、文本预览编辑及手动保存。 |
 | 有声阅读 | 系统 TTS、自配在线 AI（OpenAI 兼容／MiMo）；段落高亮、页面同步、耳机控制及 AI 整书／选章后台语音缓存。 |

@@ -310,7 +310,7 @@ class DocumentImporter(private val context: Context) {
         val indexed = book.chapters.mapIndexedNotNull { index, chapter ->
             val pages = chapter.pages.ifEmpty { chapter.inlineImages.map { PageSource(it.path) } }
             pages.takeIf { it.isNotEmpty() }?.let { index to chapter.copy(textPath = null, pages = pages,
-                inlineImages = emptyList(), sourceStyles = emptyList()) }
+                inlineImages = emptyList(), sourceStyles = emptyList(), sourceCssStyles = emptyList()) }
         }
         fun position(chapter: Int, page: Int, offset: Int, imagePath: String?): Pair<Int, Int> {
             val target = indexed.indexOfFirst { it.first >= chapter }.takeIf { it >= 0 } ?: indexed.lastIndex
@@ -339,7 +339,8 @@ class DocumentImporter(private val context: Context) {
     private fun compactCachedBook(book: Book, annotations: List<Annotation>): Pair<Book, List<Annotation>> {
         val original = book.chapters.map { chapter -> chapter.textPath?.let { File(it).readText() }.orEmpty() }
         val compacted = book.chapters.mapIndexed { index, chapter ->
-            TextParser.compactParagraphs(ParsedTextChapter(chapter.title, original[index], chapter.inlineImages, chapter.sourceStyles, chapter.tocParentTitle, chapter.sourceFootnotes))
+            TextParser.compactParagraphs(ParsedTextChapter(chapter.title, original[index], chapter.inlineImages, chapter.sourceStyles,
+                chapter.tocParentTitle, chapter.sourceFootnotes, chapter.sourceCssStyles))
         }
         val directory = File(context.filesDir, "books/${book.id}/chapters-compact-${UUID.randomUUID()}").apply { mkdirs() }
         try {
@@ -347,7 +348,8 @@ class DocumentImporter(private val context: Context) {
                 val parsed = compacted[index].first
                 val path = if (parsed.text == original[index]) chapter.textPath else
                     File(directory, "chapter-$index.txt").apply { writeText(parsed.text) }.absolutePath
-                chapter.copy(textPath = path, inlineImages = parsed.inlineImages, sourceStyles = parsed.sourceStyles)
+                chapter.copy(textPath = path, inlineImages = parsed.inlineImages, sourceStyles = parsed.sourceStyles,
+                    sourceCssStyles = parsed.sourceCssStyles, sourceFootnotes = parsed.sourceFootnotes)
             }
             fun offset(chapter: Int, old: Int): Int {
                 val map = compacted.getOrNull(chapter)?.second ?: return 0
@@ -401,7 +403,8 @@ class DocumentImporter(private val context: Context) {
             val parsed = if (book.hasTextEdits) {
                 val cached = book.chapters.mapIndexed { index, chapter ->
                     val prepared = loadChapterContent(context, book, index)
-                    ParsedTextChapter(chapter.title, prepared.text, prepared.chapter.inlineImages, prepared.chapter.sourceStyles, chapter.tocParentTitle, prepared.chapter.sourceFootnotes)
+                    ParsedTextChapter(chapter.title, prepared.text, prepared.chapter.inlineImages, prepared.chapter.sourceStyles,
+                        chapter.tocParentTitle, prepared.chapter.sourceFootnotes, prepared.chapter.sourceCssStyles)
                 }
                 splitEditedTextChapters(cached, rule)
             } else withLocalDocument(context, bookSource(book)) { source ->
@@ -698,7 +701,7 @@ class DocumentImporter(private val context: Context) {
             report("保存阅读章节", chapter.title, index + 1, chapters.size)
             Chapter(title = chapter.title, textPath = path, inlineImages = chapter.inlineImages,
                 sourceStyles = chapter.sourceStyles, characterCount = chapter.text.length, tocParentTitle = chapter.tocParentTitle,
-                sourceFootnotes = chapter.sourceFootnotes)
+                sourceFootnotes = chapter.sourceFootnotes, sourceCssStyles = chapter.sourceCssStyles)
         }
 
     private data class SourceReference(val path: String, val linked: Boolean)

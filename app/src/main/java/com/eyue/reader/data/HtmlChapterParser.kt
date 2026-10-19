@@ -47,7 +47,7 @@ internal object HtmlChapterParser {
             }
             append(html, cursor, html.length)
         }
-        val source = if (includeStyles) SourceStyleParser.mark(notedHtml, css, "${prefix}S", checkActive)
+        val source = if (includeStyles) SourceStyleParser.markWithSourceCss(notedHtml, css, "${prefix}S", checkActive)
             else MarkedSourceHtml(hideHtmlContent(removeHtmlComments(notedHtml), false, checkActive), emptyList())
         val marked = buildString(source.html.length) {
             var cursor = 0
@@ -68,17 +68,21 @@ internal object HtmlChapterParser {
         val images = mutableListOf<InlineImage>()
         val starts = IntArray(source.styles.size)
         val ends = IntArray(source.styles.size)
+        val cssStarts = IntArray(source.sourceCssStyles.size)
+        val cssEnds = IntArray(source.sourceCssStyles.size)
         val noteStarts = IntArray(notes.size)
         val noteEnds = IntArray(notes.size)
         val noteImages = arrayOfNulls<String>(notes.size)
         val activeNotes = mutableSetOf<Int>()
         var cursor = 0
-        Regex("${Regex.escape(prefix)}([ISN])(\\d+)([BE]?)\uE001").findAll(plain).forEach { marker ->
+        Regex("${Regex.escape(prefix)}(SC|I|S|N)(\\d+)([BE]?)\uE001").findAll(plain).forEach { marker ->
             result.append(plain, cursor, marker.range.first)
             val index = marker.groupValues[2].toInt()
             if (marker.groupValues[1] == "I") {
                 images += InlineImage(result.length, paths[index])
                 activeNotes.forEach { if (noteImages[it] == null) noteImages[it] = paths[index] }
+            } else if (marker.groupValues[1] == "SC") {
+                if (marker.groupValues[3] == "B") cssStarts[index] = result.length else cssEnds[index] = result.length
             } else if (marker.groupValues[1] == "N") {
                 if (marker.groupValues[3] == "B") { noteStarts[index] = result.length; activeNotes += index }
                 else { noteEnds[index] = result.length; activeNotes -= index }
@@ -87,7 +91,7 @@ internal object HtmlChapterParser {
             cursor = marker.range.last + 1
         }
         result.append(plain, cursor, plain.length)
-        val normalized = normalizeHtmlText(result.toString(), starts + ends + noteStarts + noteEnds + images.map { it.offset }.toIntArray(), checkActive)
+        val normalized = normalizeHtmlText(result.toString(), starts + ends + cssStarts + cssEnds + noteStarts + noteEnds + images.map { it.offset }.toIntArray(), checkActive)
         val text = normalized.text
         val styles = source.styles.mapIndexedNotNull { index, style ->
             val start = normalized.offset(starts[index])
@@ -100,22 +104,30 @@ internal object HtmlChapterParser {
             if (end <= start && noteImages[index] == null) null else SourceFootnote(start, end,
                 text.substring(start, end).ifBlank { reference.label.ifBlank { "注释" } }, content, noteImages[index])
         }
-        return ParsedTextChapter(title, text, images.map { it.copy(offset = normalized.offset(it.offset)) }, styles, sourceFootnotes = footnotes)
+        val sourceCss = source.sourceCssStyles.mapIndexedNotNull { index, style ->
+            val start = normalized.offset(cssStarts[index])
+            val end = normalized.offset(cssEnds[index])
+            if (end > start) style.copy(start = start, end = end) else null
+        }
+        return ParsedTextChapter(title, text, images.map { it.copy(offset = normalized.offset(it.offset)) }, styles,
+            sourceFootnotes = footnotes, sourceCssStyles = sourceCss)
     }
 
     fun merge(chapters: List<ParsedTextChapter>): ParsedTextChapter {
         val text = StringBuilder()
         val images = mutableListOf<InlineImage>()
         val styles = mutableListOf<SourceTextStyle>()
+        val cssStyles = mutableListOf<SourceTextStyle>()
         val footnotes = mutableListOf<SourceFootnote>()
         chapters.forEachIndexed { index, chapter ->
             if (index > 0) text.append("\n\n")
             images += chapter.inlineImages.map { it.copy(offset = text.length + it.offset) }
             styles += chapter.sourceStyles.map { it.copy(start = text.length + it.start, end = text.length + it.end) }
+            cssStyles += chapter.sourceCssStyles.map { it.copy(start = text.length + it.start, end = text.length + it.end) }
             footnotes += chapter.sourceFootnotes.map { it.copy(start = text.length + it.start, end = text.length + it.end) }
             text.append(chapter.text)
         }
-        return ParsedTextChapter("正文", text.toString(), images, styles, sourceFootnotes = footnotes)
+        return ParsedTextChapter("正文", text.toString(), images, styles, sourceFootnotes = footnotes, sourceCssStyles = cssStyles)
     }
 
     fun split(content: ParsedTextChapter, rule: String): List<ParsedTextChapter> {
@@ -142,12 +154,24 @@ internal object HtmlChapterParser {
             }
         }
         val notes = List(chapters.size) { mutableListOf<SourceFootnote>() }
+        val cssStyles = List(chapters.size) { mutableListOf<SourceTextStyle>() }
+        content.sourceCssStyles.forEach { style ->
+            var chapter = starts.binarySearch(style.start).let { if (it >= 0) it else (-it - 2).coerceAtLeast(0) }
+            while (chapter < chapters.size && starts[chapter] < style.end) {
+                val start = starts[chapter]
+                val end = start + chapters[chapter].text.length
+                if (style.end > start && style.start < end) cssStyles[chapter] += style.copy(
+                    start = (style.start - start).coerceAtLeast(0), end = (style.end - start).coerceAtMost(end - start))
+                chapter++
+            }
+        }
         content.sourceFootnotes.forEach { note ->
             val chapter = starts.binarySearch(note.start).let { if (it >= 0) it else (-it - 2).coerceAtLeast(0) }
             val start = starts[chapter]
             if (note.end <= start + chapters[chapter].text.length) notes[chapter] += note.copy(start = note.start - start, end = note.end - start)
         }
-        return chapters.mapIndexed { index, chapter -> chapter.copy(inlineImages = images[index], sourceStyles = styles[index], sourceFootnotes = notes[index]) }
+        return chapters.mapIndexed { index, chapter -> chapter.copy(inlineImages = images[index], sourceStyles = styles[index],
+            sourceFootnotes = notes[index], sourceCssStyles = cssStyles[index]) }
     }
 
     fun attribute(attributes: String, name: String): String? =

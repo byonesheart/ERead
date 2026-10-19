@@ -109,9 +109,17 @@ internal fun ReaderMoreSettings(settings: ReaderSettings, onSettings: (ReaderSet
 
 @Composable
 internal fun ReaderPreferenceSettings(settings: ReaderSettings, onSettings: (ReaderSettings) -> Unit,
-    onResetDefaults: () -> Unit = {}) {
+    onResetDefaults: () -> Unit = {}, sourceCssAvailable: Boolean = false) {
     var confirmReset by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        if (sourceCssAvailable) {
+            ReaderToggle("使用原书 CSS", settings.useSourceCss, Modifier.testTag("reader_use_source_css")) {
+                onSettings(settings.copy(useSourceCss = it))
+            }
+            Text("保留原书文字排版，字体使用当前所选字体。", fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            HorizontalDivider()
+        }
         ReaderToggle("时间", settings.showTime) { onSettings(settings.copy(showTime = it)) }
         ReaderToggle("电量", settings.showBattery) { onSettings(settings.copy(showBattery = it)) }
         ReaderToggle("章节名称", settings.showChapter) { onSettings(settings.copy(showChapter = it)) }
@@ -615,8 +623,8 @@ private fun ReaderSettingLabel(label: String, value: String = "") {
 }
 
 @Composable
-private fun ReaderToggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+private fun ReaderToggle(label: String, checked: Boolean, modifier: Modifier = Modifier, onChange: (Boolean) -> Unit) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f), fontSize = 14.sp)
         Switch(checked, onChange)
     }
