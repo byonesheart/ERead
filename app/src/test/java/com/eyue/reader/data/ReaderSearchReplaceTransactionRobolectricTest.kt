@@ -91,6 +91,10 @@ class ReaderSearchReplaceTransactionRobolectricTest {
 
         vm.replaceAllBookMatches("旧词", "新名称")
         await { !vm.importing }
+        assertEquals(texts, chapterTexts(repository.load().books.single()))
+        assertTrue(vm.hasBookDraft(book.id))
+        vm.saveBookDraft(book.id)
+        await { !vm.importing && !vm.hasBookDraft(book.id) }
 
         val saved = repository.load()
         val updated = saved.books.single()
@@ -155,6 +159,10 @@ class ReaderSearchReplaceTransactionRobolectricTest {
 
         vm.replaceAllBookMatches("旧词", "新的名称")
         await { !vm.importing }
+        assertEquals(texts, chapterTexts(repository.load().books.single()))
+        assertTrue(vm.hasBookDraft(book.id))
+        vm.saveBookDraft(book.id)
+        await { !vm.importing && !vm.hasBookDraft(book.id) }
 
         val saved = repository.load()
         val updated = saved.books.single()
@@ -204,6 +212,13 @@ class ReaderSearchReplaceTransactionRobolectricTest {
 
         vm.replaceAllBookMatches("旧词", "获权后的新词")
         await { !vm.importing }
+        assertNull(vm.pendingSourceWriteUri)
+        assertTrue(vm.hasBookDraft(book.id))
+        assertTrue(vm.message.orEmpty().contains("4"))
+        var saved = false
+        vm.saveBookDraft(book.id) { saved = true }
+        await { !vm.importing }
+        assertFalse(saved)
         assertEquals(uri.toString(), vm.pendingSourceWriteUri)
         assertArrayEquals(originalBytes, source.readBytes())
         assertEquals(texts, chapterTexts(repository.load().books.single()))
@@ -212,11 +227,12 @@ class ReaderSearchReplaceTransactionRobolectricTest {
         vm.resumeSourceWrite(uri)
         await { !vm.importing }
 
+        assertTrue(saved)
         assertNull(vm.pendingSourceWriteUri)
+        assertFalse(vm.hasBookDraft(book.id))
         val expected = texts.map { it.replace("旧词", "获权后的新词") }
         assertEquals(expected, EpubArchive.read(source).sections.map { SourceHtmlEdit.plain(it.html) { null } })
         assertEquals(expected, chapterTexts(repository.load().books.single()))
-        assertTrue(vm.message.orEmpty().contains("4"))
     }
 
     private fun open(state: LibraryState): LibraryRepository {

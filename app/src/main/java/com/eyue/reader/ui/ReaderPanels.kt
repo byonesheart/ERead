@@ -3,6 +3,7 @@ package com.eyue.reader.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,7 +20,6 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -30,6 +30,8 @@ import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
@@ -247,6 +249,7 @@ internal fun ReaderColorPicker(selected: Long, onColor: (Long) -> Unit) {
 private data class ReaderSearchHit(val result: ReaderSearchResult, val matchedText: String)
 
 @Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 internal fun ReaderSearchPanel(book: Book, document: ReaderDocument?, raster: Boolean, query: String,
     onQuery: (String) -> Unit,
     onReplaceMatch: ((ReaderSearchResult, String, String) -> Unit)? = null,
@@ -261,10 +264,14 @@ internal fun ReaderSearchPanel(book: Book, document: ReaderDocument?, raster: Bo
     var editing by remember(book.id, book.contentVersion) { mutableStateOf<ReaderSearchHit?>(null) }
     var editText by remember(editing) { mutableStateOf(editing?.matchedText.orEmpty()) }
     var confirmingAll by remember(book.id, book.contentVersion) { mutableStateOf(false) }
+    val locationLabels = remember(book.chapters) { readerSearchLocationIndex(book.chapters) }
+    val searchSources = remember(book.chapters) { book.chapters.map { it.id to it.textPath } }
     val editable = book.mode == LibraryMode.NOVEL && !raster && !book.cloudOnly &&
         book.format in setOf(BookFormat.TXT, BookFormat.EPUB, BookFormat.MOBI)
     val canReplace = editable && (onReplaceMatch != null || onReplaceAll != null)
-    LaunchedEffect(book.id, book.contentVersion, book.chapters, query, document?.readText, document?.text, document?.pageText) {
+    // Preparing an unchanged chapter's styles must not remove a result between its two taps.
+    LaunchedEffect(book.id, book.contentVersion, searchSources, query, document?.readText,
+        if (document?.readText == null) document?.text else null, document?.pageText) {
         results = emptyList()
         searchFailure = null
         if (query.isBlank() || document == null) { searching = false; return@LaunchedEffect }
@@ -304,7 +311,7 @@ internal fun ReaderSearchPanel(book: Book, document: ReaderDocument?, raster: Bo
           catch (error: Exception) { searchFailure = error.message ?: "无法读取书籍正文" }
           finally { searching = false }
     }
-    ReaderPanelTitle("全文搜索与替换", if (raster) "搜索已导入的文字层" else "搜索整本书，点击结果返回原文")
+    ReaderPanelTitle("全文搜索与替换", if (raster) "搜索已导入的文字层，双击结果返回原文" else "搜索整本书，双击结果返回原文")
     OutlinedTextField(query, onQuery, Modifier.fillMaxWidth().padding(horizontal = 24.dp).testTag("reader_search_query"), singleLine = true,
         enabled = !replacing, placeholder = { Text("输入关键词") }, leadingIcon = { Icon(Icons.Outlined.Search, null) },
         trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { onQuery("") }, enabled = !replacing) { Icon(Icons.Outlined.Close, "清空") } })
@@ -321,7 +328,7 @@ internal fun ReaderSearchPanel(book: Book, document: ReaderDocument?, raster: Bo
     val hasText = document?.let { if (raster) it.pageText.any { pages -> pages.any(String::isNotBlank) }
         else it.readText != null || it.text.any(String::isNotBlank) } ?: false
     Text(when {
-        replacing -> "正在保存替换…"
+        replacing -> "正在应用修改…"
         document == null -> "正在读取文字…"
         searchFailure != null -> "搜索失败：$searchFailure"
         !hasText -> "没有可搜索的文字。漫画按原页阅读，导入时不提取文字；图片和扫描 PDF 需先识别文字。"
@@ -338,10 +345,11 @@ internal fun ReaderSearchPanel(book: Book, document: ReaderDocument?, raster: Bo
             val result = hit.result
             val tag = "${result.chapter}_${result.page}_${result.offset}"
             Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth().testTag("reader_search_result_$tag").clickable(enabled = !replacing) { onResult(result) }) {
+                modifier = Modifier.fillMaxWidth().testTag("reader_search_result_$tag").combinedClickable(enabled = !replacing,
+                    onClick = {}, onDoubleClick = { onResult(result) })) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("${book.chapters.getOrNull(result.chapter)?.title.orEmpty()}${if (raster) " · 第 ${result.page + 1} 页" else ""}",
-                        color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                    Text(locationLabels.label(result.chapter, result.page) + if (raster) " · 第 ${result.page + 1} 页" else "",
+                        modifier = Modifier.testTag("reader_search_location_$tag"), color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
                     Text(readerSearchHighlight(result.snippet, query.trim(), matchColor), fontSize = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                     if (editable && onReplaceMatch != null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         TextButton(onClick = { editing = hit }, enabled = !replacing && !searching,
@@ -360,7 +368,7 @@ internal fun ReaderSearchPanel(book: Book, document: ReaderDocument?, raster: Bo
             confirmButton = { TextButton(onClick = {
                 onReplaceMatch?.invoke(hit.result, hit.matchedText, editText)
                 editing = null
-            }, enabled = !replacing, modifier = Modifier.testTag("reader_search_edit_confirm")) { Text("保存") } },
+            }, enabled = !replacing, modifier = Modifier.testTag("reader_search_edit_confirm")) { Text("应用修改") } },
             dismissButton = { TextButton(onClick = { editing = null }, enabled = !replacing) { Text("取消") } })
     }
     if (confirmingAll && canReplace && onReplaceAll != null) AlertDialog(onDismissRequest = { confirmingAll = false },
@@ -369,6 +377,7 @@ internal fun ReaderSearchPanel(book: Book, document: ReaderDocument?, raster: Bo
             Text("查找：${query.trim()}")
             Text(if (replacement.isEmpty()) "替换为：删除匹配文字" else "替换为：$replacement")
             Text("忽略大小写，按普通文字匹配。处理整本书所有匹配，包括未显示的结果。")
+            Text("先在页面预览，点击阅读页右上角“保存”后才写入文件。")
         } },
         confirmButton = { TextButton(onClick = { confirmingAll = false; onReplaceAll(query.trim(), replacement) },
             enabled = !replacing, modifier = Modifier.testTag("reader_search_replace_all_confirm")) { Text("全部替换") } },
@@ -418,18 +427,49 @@ internal fun ReaderContentsPanel(book: Book, chapter: Int, page: Int, settings: 
     onGenerateSpeech: ((Set<Int>) -> Unit)? = null, speechGenerationBusy: Boolean = false,
     cachedSpeechChapters: Set<Int> = emptySet(), speechGeneration: AiSpeechBatchProgress? = null,
     speechBookComplete: Boolean = false, onCancelSpeech: (() -> Unit)? = null,
-    otherCachedSpeechChapters: Set<Int> = emptySet(), onJump: (Int, Int) -> Unit) {
-    val entries = remember(book.chapters) { readerContentsEntries(book.chapters) }
-    val current = remember(entries, chapter, page) { readerCurrentContentsEntry(entries, chapter, page) }
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = current.coerceAtLeast(0))
-    val sections = entries.size - book.chapters.size
+    otherCachedSpeechChapters: Set<Int> = emptySet(), onHierarchyChange: (Boolean) -> Unit = {}, onJump: (Int, Int) -> Unit) {
+    val hierarchical = settings.hierarchicalContents
+    val entries = remember(book.chapters, book.mode, hierarchical) { readerContentsEntries(book.chapters, hierarchical && book.mode == LibraryMode.NOVEL) }
+    val positionIndex = remember(entries) { readerContentsPositionIndex(entries) }
+    val current = remember(positionIndex, chapter, page) { positionIndex.current(chapter, page) }
+    val parents = remember(entries) { entries.associateBy { it.key } }
+    val rootOrdinals = remember(entries) { entries.filter { it.parentKey == null }.mapIndexed { index, item -> item.key to index + 1 }.toMap() }
+    val groupKeys = remember(entries) { entries.mapNotNull { it.parentKey }.toSet() }
+    fun currentGroups(): Set<String> = buildSet {
+        val item = entries.getOrNull(current)
+        if (item?.key in groupKeys) add(requireNotNull(item).key)
+        var parent = item?.parentKey
+        while (parent != null) { add(parent); parent = parents[parent]?.parentKey }
+    }
+    var expandedGroups by remember(book.id) { mutableStateOf(currentGroups()) }
+    fun visibleContents(expanded: Set<String>): List<ReaderContentsEntry> = if (!hierarchical) entries else entries.filter { item ->
+        var parent = item.parentKey
+        var visible = true
+        while (parent != null && visible) { visible = parent in expanded; parent = parents[parent]?.parentKey }
+        visible
+    }
+    val visibleEntries = remember(entries, expandedGroups, hierarchical) { visibleContents(expandedGroups) }
+    val visiblePositions = remember(visibleEntries) { visibleEntries.mapIndexed { index, item -> item.key to index }.toMap() }
+    val visiblePositionIndex = remember(visibleEntries) { readerContentsPositionIndex(visibleEntries) }
+    val selectedKey = remember(visiblePositionIndex, chapter, page) { visibleEntries.getOrNull(visiblePositionIndex.current(chapter, page))?.key }
+    val currentKey = entries.getOrNull(current)?.key
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = visiblePositions[currentKey] ?: 0)
+    LaunchedEffect(book.id, currentKey, hierarchical) {
+        val expanded = expandedGroups + currentGroups()
+        val position = if (expanded == expandedGroups) visiblePositions[currentKey] ?: -1 else {
+            expandedGroups = expanded
+            visibleContents(expanded).indexOfFirst { it.key == currentKey }
+        }
+        if (position >= 0) listState.scrollToItem(position)
+    }
+    val sections = if (hierarchical) entries.count { it.parentKey != null } else entries.size - book.chapters.size
     val colors = MaterialTheme.colorScheme
     var selectingSpeech by remember(book.id) { mutableStateOf(false) }
     var speechSelection by remember(book.id) { mutableStateOf<Set<Int>>(emptySet()) }
     val canGenerateSpeech = book.mode == LibraryMode.NOVEL && !book.cloudOnly && onGenerateSpeech != null
     val generation = speechGeneration?.takeIf { it.bookId == book.id && it.running }
-    fun toggleSpeechChapter(index: Int) {
-        speechSelection = if (index in speechSelection) speechSelection - index else speechSelection + index
+    fun toggleSpeechChapters(indices: Set<Int>) {
+        speechSelection = if (speechSelection.containsAll(indices)) speechSelection - indices else speechSelection + indices
     }
     Dialog(onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
@@ -458,6 +498,10 @@ internal fun ReaderContentsPanel(book: Book, chapter: Int, page: Int, settings: 
                             if (speechBookComplete) "全书当前音色语音已缓存" else "批量生成 AI 语音",
                             Modifier.testTag("reader_contents_book_speech_status"))
                     }
+                }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("二级目录", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                    Switch(settings.hierarchicalContents, onHierarchyChange, modifier = Modifier.height(36.dp).testTag("reader_contents_hierarchy"))
                 }
                 HorizontalDivider()
                 if (generation != null && onCancelSpeech != null) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
@@ -490,24 +534,28 @@ internal fun ReaderContentsPanel(book: Book, chapter: Int, page: Int, settings: 
                 }
                 LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("reader_contents_list"), state = listState,
                     contentPadding = PaddingValues(bottom = 24.dp)) {
-                    itemsIndexed(entries, key = { _, item -> item.key }, contentType = { _, _ -> "chapter" }) { index, item ->
-                        val selected = index == current
+                    items(visibleEntries, key = { it.key }, contentType = { "chapter" }) { item ->
+                        val selected = item.key == selectedKey
+                        val group = hierarchical && item.key in groupKeys
+                        val physical = book.chapters.getOrNull(item.chapter)?.id == item.key
                         Row(Modifier.fillMaxWidth().testTag("reader_contents_entry_${item.key}")
                             .clickable(enabled = !selectingSpeech || !speechGenerationBusy) {
-                                if (selectingSpeech && canGenerateSpeech) toggleSpeechChapter(item.chapter)
+                                if (selectingSpeech && canGenerateSpeech) toggleSpeechChapters(if (group) item.groupChapters else setOf(item.chapter))
                                 else onJump(item.chapter, item.startPage)
                             }
                             .padding(start = 24.dp + 16.dp * item.depth, end = 24.dp, top = 16.dp, bottom = 16.dp),
                             verticalAlignment = Alignment.CenterVertically) {
-                            if (selectingSpeech && canGenerateSpeech && item.depth == 0) Checkbox(item.chapter in speechSelection,
-                                { toggleSpeechChapter(item.chapter) }, enabled = !speechGenerationBusy,
-                                modifier = Modifier.testTag("reader_contents_select_${item.chapter}"))
-                            Text(if (item.depth == 0) "${item.chapter + 1}".padStart(2, '0') else "·",
+                            if (selectingSpeech && canGenerateSpeech && (book.mode == LibraryMode.NOVEL || item.depth == 0)) {
+                                val indices = if (group) item.groupChapters else setOf(item.chapter)
+                                Checkbox(speechSelection.containsAll(indices), { toggleSpeechChapters(indices) }, enabled = !speechGenerationBusy,
+                                    modifier = Modifier.testTag(if (group) "reader_contents_select_group_${item.key}" else "reader_contents_select_${item.chapter}"))
+                            }
+                            Text(if (item.depth == 0) "${if (hierarchical) rootOrdinals[item.key] ?: item.chapter + 1 else item.chapter + 1}".padStart(2, '0') else "·",
                                 Modifier.width(32.dp), fontSize = 12.sp, color = colors.onSurfaceVariant)
                             Text(item.title, Modifier.weight(1f), color = if (selected) colors.primary else colors.onSurface,
                                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                                 maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            if (item.depth == 0) {
+                            if (physical) {
                                 val chapterProgress = generation?.chapterProgress?.get(item.chapter) ?: generation?.takeIf {
                                     item.chapter == it.chapterIndex
                                 }?.let { com.eyue.reader.data.AiSpeechChapterProgress(it.chapterCompleted, it.chapterTotal) }
@@ -534,6 +582,12 @@ internal fun ReaderContentsPanel(book: Book, chapter: Int, page: Int, settings: 
                                     Icon(Icons.Outlined.Headphones, "本章其他配置语音已缓存", Modifier.size(16.dp), tint = colors.onSurfaceVariant)
                                     Text("其他配置", fontSize = 10.sp, color = colors.onSurfaceVariant)
                                 }
+                            }
+                            if (group) IconButton(onClick = {
+                                expandedGroups = if (item.key in expandedGroups) expandedGroups - item.key else expandedGroups + item.key
+                            }, modifier = Modifier.size(32.dp).testTag("reader_contents_toggle_${item.key}")) {
+                                Icon(if (item.key in expandedGroups) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                                    if (item.key in expandedGroups) "收起${item.title}" else "展开${item.title}", Modifier.size(20.dp), tint = colors.onSurfaceVariant)
                             }
                             if (selected) Text("在读", fontSize = 11.sp, color = colors.primary)
                         }

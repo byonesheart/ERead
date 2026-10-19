@@ -85,7 +85,7 @@ class ImportQueueRobolectricTest {
                 val name = requireNotNull(uri.lastPathSegment)
                 opened += name
                 check(gates[name]?.await(15, TimeUnit.SECONDS) != false) { "Test source did not release" }
-                return ParcelFileDescriptor.open(File(root, uri.pathSegments.joinToString("/")), ParcelFileDescriptor.MODE_READ_ONLY)
+                return ParcelFileDescriptor.open(File(root, uri.pathSegments.joinToString("/")), ParcelFileDescriptor.parseMode(mode))
             }
             override fun insert(uri: Uri, values: ContentValues?): Uri? = null
             override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?) = 0
@@ -248,7 +248,7 @@ class ImportQueueRobolectricTest {
         assertEquals(listOf("early"), vm.state.books.map { it.title })
     }
 
-    @Test fun anotherImportWaitsForAnExistingTextEditAndKeepsItsSavedChanges() {
+    @Test fun anotherImportWaitsForPreviewPreparationAndDoesNotSaveItsDraft() {
         val original = source("editable.txt")
         val next = source("after-edit.txt")
         openLibrary()
@@ -269,6 +269,12 @@ class ImportQueueRobolectricTest {
         cloudOperationMutex.unlock(editLockOwner)
         editLockHeld = false
         await { !vm.importing && vm.pendingImports.isEmpty() && vm.state.books.size == 2 }
+        assertTrue(vm.hasBookDraft(book.id))
+        assertFalse(LibraryRepository(app).load().books.single { it.id == book.id }.chapters.map {
+            File(requireNotNull(it.textPath)).readText()
+        }.joinToString("\n").contains("保留下来的修改。"))
+        vm.saveBookDraft(book.id)
+        await { !vm.importing && !vm.hasBookDraft(book.id) }
         val saved = LibraryRepository(app).load().books.single { it.id == book.id }
         assertTrue(saved.chapters.map { File(requireNotNull(it.textPath)).readText() }.joinToString("\n").contains("保留下来的修改。"))
     }

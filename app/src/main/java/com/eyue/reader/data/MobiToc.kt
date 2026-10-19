@@ -4,14 +4,16 @@ import java.nio.ByteBuffer
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
 
-internal data class MobiTocEntry(val byteOffset: Int, val title: String)
+internal data class MobiTocEntry(val byteOffset: Int, val title: String, val tocParentTitle: String? = null)
 
 /** MOBI6 NCX record format: INDX headers, TAGX controls, IDXT offsets and CTOC strings.
  * Format reference: https://github.com/kevinhendricks/KindleUnpack/blob/master/lib/mobi_index.py
+ * Parent entry numbers (tag 21): https://github.com/kevinhendricks/KindleUnpack/blob/master/lib/mobi_ncx.py
  * Independent implementation; an invalid optional directory falls back to the HTML directory. */
 internal object MobiToc {
     private data class Tag(val id: Int, val values: Int, val mask: Int, val nextControl: Boolean)
     private data class Values(val tag: Tag, val count: Int?, val bytes: Int?)
+    private data class Entry(val offset: Int, val label: Long, val parent: Long?)
     private class Cursor(val data: ByteArray, var position: Int, val end: Int) {
         fun value(): Long {
             var value = 0L
@@ -56,7 +58,7 @@ internal object MobiToc {
                 Tag(main[at].toInt() and 255, main[at + 1].toInt() and 255,
                     main[at + 2].toInt() and 255, (main[at + 3].toInt() and 255).also { require(it in 0..1) } == 1)
             }
-            val entries = mutableListOf<Pair<Int, Long>>()
+            val entries = mutableListOf<Entry>()
             var totalEntries = 0
             repeat(records) { section ->
                 val data = load(index + section + 1)
@@ -94,11 +96,13 @@ internal object MobiToc {
                     }
                     var offset: Long? = null
                     var label: Long? = null
+                    var parent: Long? = null
                     plans.forEach { plan ->
                         fun consume() {
                             val value = cursor.value()
                             if (plan.tag.id == 1 && offset == null) offset = value
                             if (plan.tag.id == 3 && label == null) label = value
+                            if (plan.tag.id == 21 && parent == null && value != 0xffffffffL) parent = value
                         }
                         if (plan.bytes != null) {
                             val limit = cursor.position.toLong() + plan.bytes
@@ -112,14 +116,15 @@ internal object MobiToc {
                         }
                     }
                     require(offset != null && offset!! < textLength && label != null)
-                    entries += offset!!.toInt() to label!!
+                    entries += Entry(offset!!.toInt(), label!!, parent)
                 }
             }
             val strings = mutableMapOf<Int, ByteArray>()
             val labels = mutableMapOf<Long, String>()
-            entries.mapNotNull { (position, stringOffset) ->
+            val titles = entries.map { entry ->
                 checkActive()
-                val title = labels.getOrPut(stringOffset) {
+                labels.getOrPut(entry.label) {
+                    val stringOffset = entry.label
                     val section = stringOffset / 0x10000
                     require(section < stringRecords)
                     val data = strings.getOrPut(section.toInt()) { load(index + records + 1 + section.toInt()) }
@@ -131,7 +136,28 @@ internal object MobiToc {
                     charset.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
                         .decode(ByteBuffer.wrap(data, cursor.position, length.toInt())).toString().trim()
                 }
-                if (title.isEmpty()) null else MobiTocEntry(position, title)
+            }
+            val roots = IntArray(entries.size) { -2 }
+            fun root(index: Int): Int {
+                var current = index
+                val path = mutableSetOf<Int>()
+                val result: Int
+                while (true) {
+                    checkActive()
+                    if (roots[current] != -2) { result = roots[current]; break }
+                    if (!path.add(current)) { result = -1; break }
+                    val parent = entries[current].parent
+                    if (parent == null) { result = current; break }
+                    if (parent !in 0L until entries.size.toLong()) { result = -1; break }
+                    current = parent.toInt()
+                }
+                path.forEach { roots[it] = result }
+                return result
+            }
+            entries.mapIndexedNotNull { index, entry ->
+                val title = titles[index]
+                val parent = root(index).takeIf { it >= 0 && it != index }?.let { titles[it].takeIf(String::isNotBlank) }
+                if (title.isEmpty()) null else MobiTocEntry(entry.offset, title, parent)
             }
         } catch (_: IllegalArgumentException) { emptyList() }
           catch (_: java.nio.charset.CharacterCodingException) { emptyList() }

@@ -84,6 +84,19 @@ class ReaderScreenStartupRobolectricTest {
         awaitText(marker)
     }
 
+    @Test fun finalSaveProgressRemainsVisibleAfterTheDraftFlagClears() {
+        val marker = "FINAL_SAVE_PROGRESS_BODY"
+        showReader(textBook(BookFormat.TXT, marker), ReadingMode.SCROLL, { SilentSpeech() },
+            saveProgress = com.eyue.reader.data.BookSaveProgress("清理保存缓存", .99f))
+        awaitText(marker)
+        compose.onNodeWithTag("reader_save_book").assertIsDisplayed().assertIsNotEnabled()
+        compose.onNodeWithTag("reader_save_progress").assertIsDisplayed()
+        compose.onNodeWithText("99%").assertIsDisplayed()
+        val progress = compose.onNodeWithTag("reader_save_progress").fetchSemanticsNode().boundsInRoot
+        val bounds = compose.onRoot().fetchSemanticsNode().boundsInRoot
+        assertTrue("Save progress must fit within the phone width", progress.right <= bounds.right)
+    }
+
     @Test fun imageComicOpensWithSpeechFactoryIsolated() {
         val image = File(root, "page.png")
         val bitmap = Bitmap.createBitmap(64, 96, Bitmap.Config.ARGB_8888)
@@ -252,7 +265,8 @@ class ReaderScreenStartupRobolectricTest {
                 characterCount = text.length)
         })
 
-    private fun showReader(book: Book, mode: ReadingMode, factory: ((Context) -> ReaderSpeechController)? = null) {
+    private fun showReader(book: Book, mode: ReadingMode, factory: ((Context) -> ReaderSpeechController)? = null,
+        saveProgress: com.eyue.reader.data.BookSaveProgress? = null) {
         compose.setContent {
             MaterialTheme {
                 windowHeight = LocalWindowInfo.current.containerSize.height
@@ -260,7 +274,7 @@ class ReaderScreenStartupRobolectricTest {
                 val reader: @Composable () -> Unit = {
                     ReaderScreen(book, settings,
                         emptyList(), {}, { chapter, _, offset, progress, _ -> position.set(Position(chapter, offset, progress)) },
-                        { settings = it }, {}, {}, {}, emptyFlow())
+                        { settings = it }, {}, {}, {}, emptyFlow(), saveProgress = saveProgress)
                 }
                 if (factory == null) reader()
                 else CompositionLocalProvider(LocalReaderSpeechFactory provides factory) { reader() }

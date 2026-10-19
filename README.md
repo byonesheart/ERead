@@ -8,11 +8,26 @@
 
 | 渠道 | 下载链接 | 提取码 |
 | --- | --- | --- |
-| 百度网盘 | [点击下载](https://pan.baidu.com/s/1zYjhP5-T1oQ6nUWAuA64uw?pwd=READ) | `READ` |
-| 夸克网盘 | [点击下载](https://pan.quark.cn/s/c025f118a6f3) | `UFmT` |
+| 百度网盘 | [点击下载](https://pan.baidu.com/s/1sRaWiXAhpeXX_jkrf6fXUw?pwd=READ) | `READ` |
+| 夸克网盘 | [点击下载](https://pan.quark.cn/s/e0816d5df7ed) | `PfWV` |
 | GitHub Releases | [查看版本与安装包](https://github.com/byonesheart/ERead/releases) | 无 |
 
 下载 APK 后安装即可使用。
+
+## 软件预览
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/images/promo/01_导入.png" width="280" alt="导入书籍" /></td>
+    <td width="33%"><img src="docs/images/promo/02_阅读.png" width="280" alt="阅读与听书" /></td>
+    <td width="33%"><img src="docs/images/promo/03_界面管理.png" width="280" alt="界面管理" /></td>
+  </tr>
+  <tr>
+    <td width="33%"><img src="docs/images/promo/04_笔记.png" width="280" alt="笔记与标注" /></td>
+    <td width="33%"><img src="docs/images/promo/05_云端.png" width="280" alt="云端备份" /></td>
+    <td width="33%"><img src="docs/images/promo/06_结尾总结.png" width="280" alt="软件功能总结" /></td>
+  </tr>
+</table>
 
 ## 软件特点
 
@@ -26,9 +41,9 @@
 | 类别 | 主要功能 |
 | --- | --- |
 | 文件导入 | EPUB、TXT、未加密 MOBI、PDF、图片及多层漫画文件夹。 |
-| 阅读体验 | 滚动、左右／上下翻页；左右翻页支持覆盖、滑动、仿真效果；字体导入、背景图片、多主题、简繁转换及浅色／深色／跟随系统。 |
-| 书架管理 | 阅读历史、自定义分组、书名与作者搜索、封面和阅读进度。 |
-| 标注与编辑 | 书签、笔记、彩色标记、直线／波浪划线；TXT、EPUB、MOBI 支持全文搜索与替换、文本编辑。 |
+| 阅读体验 | 滚动、左右／上下翻页；左右翻页支持覆盖、滑动、仿真效果；二级折叠目录、原文注释、字体导入、背景图片、多主题、简繁转换及浅色／深色／跟随系统。 |
+| 书架管理 | 阅读历史、自定义分组、书名与作者搜索、封面和阅读进度；批量删除、上传或下载。 |
+| 标注与编辑 | 书签、笔记、彩色标记、直线／波浪划线；TXT、EPUB、MOBI 支持全文搜索与替换、文本预览编辑及手动保存。 |
 | 有声阅读 | 系统 TTS、自配在线 AI（OpenAI 兼容／MiMo）；段落高亮、页面同步、耳机控制及 AI 整书／选章后台语音缓存。 |
 | 云端备份 | 自配 WebDAV，按书或批量备份、分块续传、多本并行上传、可选自动备份与手动还原。 |
 | 设备适配 | 墨水屏模式、平板横屏双页阅读。 |

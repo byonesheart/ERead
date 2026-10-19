@@ -24,16 +24,27 @@ internal class EbookSourceWriteback private constructor(
     var recoveryRequired = false
         private set
 
-    fun commit() {
-        require(documentHash(context, source) == fileHash(backup)) { "源文件在编辑期间发生变化，修改未保存，请重新导入" }
+    fun commit(onProgress: (String, Float) -> Unit = { _, _ -> }) {
+        val progress = Progress(onProgress)
+        progress.report("检查源文件", 0f)
+        val originalHash = fileHash(backup)
+        require(openDocumentStream(context, source).use { input ->
+            hash(input) { copied -> progress.report("检查源文件", .15f * copied / backup.length().coerceAtLeast(1)) }
+        } == originalHash) { "源文件在编辑期间发生变化，修改未保存，请重新导入" }
         try {
-            replace(prepared)
-            check(documentHash(context, source) == fileHash(prepared)) { "源文件写入校验失败" }
+            progress.report("写入源文件", .15f)
+            replace(prepared) { copied -> progress.report("写入源文件", .15f + .65f * copied / prepared.length().coerceAtLeast(1)) }
+            progress.report("校验保存结果", .8f)
+            val expectedHash = fileHash(prepared)
+            check(openDocumentStream(context, source).use { input ->
+                hash(input) { copied -> progress.report("校验保存结果", .8f + .19f * copied / prepared.length().coerceAtLeast(1)) }
+            } == expectedHash) { "源文件写入校验失败" }
             committed = true
         } catch (error: Exception) {
             restoreBackup()
             throw error
         }
+        progress.report("保存完成", 1f)
     }
 
     fun rollback() {
@@ -55,11 +66,11 @@ internal class EbookSourceWriteback private constructor(
 
     fun finish() { backup.delete(); prepared.delete() }
 
-    private fun replace(file: File) {
+    private fun replace(file: File, onCopied: (Long) -> Unit = {}) {
         documentFile(source)?.let { target ->
             val staging = File.createTempFile(".eyue-edit-", ".tmp", target.absoluteFile.parentFile)
             try {
-                file.inputStream().use { input -> staging.outputStream().use { input.copyTo(it) } }
+                file.inputStream().use { input -> staging.outputStream().use { copy(input, it, onCopied = onCopied) } }
                 try { Files.move(staging.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE) }
                 catch (_: java.nio.file.AtomicMoveNotSupportedException) {
                     Files.move(staging.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
@@ -68,7 +79,7 @@ internal class EbookSourceWriteback private constructor(
             return
         }
         context.contentResolver.openOutputStream(Uri.parse(source), "rwt")?.use { output ->
-            file.inputStream().use { it.copyTo(output) }
+            file.inputStream().use { copy(it, output, onCopied = onCopied) }
         } ?: throw IOException("无法打开源文件进行写入")
     }
 
@@ -92,23 +103,54 @@ internal class EbookSourceWriteback private constructor(
             documentHash(context, first) == documentHash(context, second)
 
         fun prepare(context: Context, before: Book, edited: Book, directory: File,
+                    onProgress: (String, Float) -> Unit = { _, _ -> },
                     checkActive: () -> Unit = {}): EbookSourceWriteback {
             checkActive()
+            val progress = Progress(onProgress)
+            progress.report("读取原文件", 0f)
             val source = source(before)
             requireWritable(context, source)
             val backup = File(directory, "original.${before.format.name.lowercase()}")
-            openDocumentStream(context, source).use { input -> backup.outputStream().use { input.copyTo(it) } }
+            val sourceBytes = documentFile(source)?.length() ?: 0L
+            openDocumentStream(context, source).use { input -> backup.outputStream().use { output ->
+                copy(input, output, checkActive) { copied ->
+                    if (sourceBytes > 0) progress.report("读取原文件", .1f * copied / sourceBytes)
+                }
+            } }
+            progress.report("读取原文件", .1f)
             val prepared = File(directory, "prepared.${before.format.name.lowercase()}")
             when (before.format) {
-                BookFormat.EPUB -> epub(backup, prepared, before, edited, checkActive)
-                BookFormat.MOBI -> mobi(backup, prepared, before, edited, checkActive)
+                BookFormat.TXT -> txt(prepared, edited, progress, checkActive)
+                BookFormat.EPUB -> epub(backup, prepared, before, edited, progress, checkActive)
+                BookFormat.MOBI -> mobi(backup, prepared, before, edited, progress, checkActive)
                 else -> error("不支持覆盖此格式")
             }
+            progress.report("文件准备完成", 1f)
             return EbookSourceWriteback(context, source, backup, prepared)
         }
 
-        private fun epub(source: File, destination: File, before: Book, edited: Book, checkActive: () -> Unit) {
-            val parsed = EpubArchive.read(source, onProgress = { checkActive() })
+        private fun txt(destination: File, edited: Book, progress: Progress, checkActive: () -> Unit) {
+            val text = File(requireNotNull(edited.sourcePath) { "修改后的 TXT 正文不存在" })
+            require(text.isFile) { "修改后的 TXT 正文不存在" }
+            progress.report("准备 TXT 正文", .1f)
+            text.inputStream().use { input -> destination.outputStream().use { output ->
+                copy(input, output, checkActive) { copied ->
+                    progress.report("准备 TXT 正文", .1f + .7f * copied / text.length().coerceAtLeast(1))
+                }
+            } }
+            checkActive()
+            progress.report("校验 TXT 正文", .8f)
+            val expected = text.readText(Charsets.UTF_8)
+            checkActive()
+            check(destination.readText(Charsets.UTF_8) == expected && fileHash(destination) == fileHash(text)) {
+                "TXT 正文校验失败，原文件未修改"
+            }
+        }
+
+        private fun epub(source: File, destination: File, before: Book, edited: Book, progress: Progress, checkActive: () -> Unit) {
+            val parsed = EpubArchive.read(source, onProgress = {
+                checkActive(); progress.report("读取 EPUB 正文", .1f + .15f * it)
+            })
             require(parsed.sections.size == edited.chapters.size) { "源文件目录与书架记录不一致，修改未保存，请重新导入" }
             val validImages = parsed.imagePaths.toSet()
             fun image(path: String): (String) -> String? = { attributes ->
@@ -121,6 +163,7 @@ internal class EbookSourceWriteback private constructor(
             ZipFile(source).use { zip ->
                 parsed.sections.forEachIndexed { index, section ->
                     checkActive()
+                    progress.report("处理 EPUB 第 ${index + 1} 章", .25f + .4f * index / parsed.sections.size.coerceAtLeast(1))
                     val old = SourceHtmlEdit.plain(section.html, checkActive, image(section.path))
                     val cached = File(requireNotNull(before.chapters[index].textPath)).readText()
                     require(before.hasTextEdits || old == cached) { "源文件正文已变化，修改未保存，请重新导入" }
@@ -137,8 +180,9 @@ internal class EbookSourceWriteback private constructor(
                     }
                 }
                 ZipOutputStream(destination.outputStream().buffered()).use { output ->
-                    zip.entries().asSequence().forEach { entry ->
+                    zip.entries().asSequence().forEachIndexed { index, entry ->
                         checkActive()
+                        progress.report("重新打包 EPUB", .65f + .15f * index / zip.size().coerceAtLeast(1))
                         val path = EpubArchive.safePath(entry.name)
                         val edits = changes[path]
                         val bytes = if (edits == null) null else zip.getInputStream(entry).use {
@@ -155,17 +199,22 @@ internal class EbookSourceWriteback private constructor(
                     }
                 }
             }
-            val verified = EpubArchive.read(destination, onProgress = { checkActive() })
+            val verified = EpubArchive.read(destination, onProgress = {
+                checkActive(); progress.report("校验 EPUB 文件", .8f + .1f * it)
+            })
             check(verified.title == parsed.title && verified.author == parsed.author && verified.sections.size == parsed.sections.size &&
                 verified.imagePaths == parsed.imagePaths) { "EPUB 写入校验失败，原文件未修改" }
             verified.sections.forEachIndexed { index, section ->
+                checkActive()
                 check(SourceHtmlEdit.plain(section.html, checkActive, image(section.path)) == expected[index]) { "EPUB 正文校验失败，原文件未修改" }
+                progress.report("校验 EPUB 第 ${index + 1} 章", .9f + .1f * (index + 1) / verified.sections.size.coerceAtLeast(1))
             }
         }
 
-        private fun mobi(source: File, destination: File, before: Book, edited: Book, checkActive: () -> Unit) {
+        private fun mobi(source: File, destination: File, before: Book, edited: Book, progress: Progress, checkActive: () -> Unit) {
             var html = ""
-            val parsed = MobiArchive.read(source, checkActive = checkActive, captureHtml = { html = it })
+            val parsed = MobiArchive.read(source, checkActive = checkActive, captureHtml = { html = it },
+                onProgress = { progress.report("读取 MOBI 正文", .1f + .25f * it) })
             val image: (String) -> String? = { attributes ->
                 val reference = HtmlChapterParser.attribute(attributes, "recindex")?.toIntOrNull()
                     ?: (HtmlChapterParser.attribute(attributes, "src") ?: HtmlChapterParser.attribute(attributes, "xlink:href")
@@ -186,6 +235,7 @@ internal class EbookSourceWriteback private constructor(
                 // that need not exist in MOBI (notably pagebreaks and inline TOC anchors).
                 val changes = parsed.sections.flatMapIndexed { index, section ->
                     checkActive()
+                    progress.report("处理 MOBI 第 ${index + 1} 章", .35f + .3f * index / parsed.sections.size.coerceAtLeast(1))
                     val old = SourceHtmlEdit.plain(section.html, checkActive, image)
                     val cached = File(requireNotNull(before.chapters[index].textPath)).readText()
                     require(before.hasTextEdits || old == cached) { "源文件正文与书架记录不一致，修改未保存，请重新导入" }
@@ -201,22 +251,27 @@ internal class EbookSourceWriteback private constructor(
                 }
                 SourceHtmlEdit.apply(html, changes)
             } else {
+                progress.report("处理 MOBI 正文", .35f)
                 val old = SourceHtmlEdit.plain(html, checkActive, image)
                 require(before.hasTextEdits || old == canonical(before)) { "源文件正文与书架记录不一致，修改未保存，请重新导入" }
                 SourceHtmlEdit.replace(html, requireNotNull(target), checkActive, image)
             }
             checkActive()
+            progress.report("重新打包 MOBI", .65f)
             MobiSourceWriter.write(source, destination, html, result, parsed.sections)
             var verifiedHtml = ""
-            val verified = MobiArchive.read(destination, checkActive = checkActive, captureHtml = { verifiedHtml = it })
+            val verified = MobiArchive.read(destination, checkActive = checkActive, captureHtml = { verifiedHtml = it },
+                onProgress = { progress.report("校验 MOBI 文件", .75f + .15f * it) })
             check(verified.title == parsed.title && verified.author == parsed.author && verified.images.size == parsed.images.size &&
                 verified.sections.map { it.title } == parsed.sections.map { it.title }) { "MOBI 写入校验失败，原文件未修改" }
             if (bySection) verified.sections.forEachIndexed { index, section ->
                 check(SourceHtmlEdit.plain(section.html, checkActive, image) == targets[index]) { "MOBI 正文校验失败，原文件未修改" }
+                progress.report("校验 MOBI 第 ${index + 1} 章", .9f + .07f * (index + 1) / verified.sections.size.coerceAtLeast(1))
             } else check(SourceHtmlEdit.plain(verifiedHtml, checkActive, image) == target) { "MOBI 正文校验失败，原文件未修改" }
-            parsed.images.zip(verified.images).forEach { (oldImage, newImage) ->
+            parsed.images.zip(verified.images).forEachIndexed { index, (oldImage, newImage) ->
                 checkActive()
                 check(resourceHash(source, oldImage) == resourceHash(destination, newImage)) { "MOBI 插图校验失败，原文件未修改" }
+                progress.report("校验 MOBI 插图", .97f + .03f * (index + 1) / parsed.images.size.coerceAtLeast(1))
             }
         }
 
@@ -240,13 +295,39 @@ internal class EbookSourceWriteback private constructor(
             }
             return digest.digest().joinToString("") { "%02x".format(it) }
         }
-        private fun fileHash(file: File): String = file.inputStream().use(::hash)
-        private fun documentHash(context: Context, source: String): String = openDocumentStream(context, source).use(::hash)
-        private fun hash(input: java.io.InputStream): String {
+        private fun fileHash(file: File): String = file.inputStream().use { hash(it) }
+        private fun documentHash(context: Context, source: String): String = openDocumentStream(context, source).use { hash(it) }
+        private fun hash(input: java.io.InputStream, onRead: (Long) -> Unit = {}): String {
             val digest = MessageDigest.getInstance("SHA-256")
             val buffer = ByteArray(64 * 1024)
-            while (true) { val count = input.read(buffer); if (count < 0) break; digest.update(buffer, 0, count) }
+            var copied = 0L
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count); copied += count; onRead(copied)
+            }
             return digest.digest().joinToString("") { "%02x".format(it) }
+        }
+        private fun copy(input: java.io.InputStream, output: java.io.OutputStream,
+                         checkActive: () -> Unit = {}, onCopied: (Long) -> Unit = {}) {
+            val buffer = ByteArray(64 * 1024)
+            var copied = 0L
+            while (true) {
+                checkActive()
+                val count = input.read(buffer)
+                if (count < 0) break
+                output.write(buffer, 0, count); copied += count; onCopied(copied)
+            }
+        }
+        private class Progress(private val callback: (String, Float) -> Unit) {
+            private var fraction = -1f
+            private var stage = ""
+            fun report(nextStage: String, nextFraction: Float) {
+                val value = nextFraction.coerceIn(0f, 1f).coerceAtLeast(fraction)
+                if (nextStage != stage || value - fraction >= .005f || value == 1f) {
+                    stage = nextStage; fraction = value; callback(nextStage, value)
+                }
+            }
         }
     }
 }

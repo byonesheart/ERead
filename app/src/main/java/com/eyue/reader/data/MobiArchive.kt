@@ -7,7 +7,8 @@ import java.nio.ByteBuffer
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
 
-data class MobiSection(val title: String, val html: String, val sourceStart: Int = 0, val sourceEnd: Int = html.length)
+data class MobiSection(val title: String, val html: String, val sourceStart: Int = 0, val sourceEnd: Int = html.length,
+                       val tocParentTitle: String? = null, val sourceNoteTargets: Map<String, String> = emptyMap())
 data class MobiCover(val bytes: ByteArray, val extension: String)
 data class MobiImageResource(val recIndex: Int, val offset: Long, val length: Long, val extension: String)
 data class ParsedMobi(val title: String, val author: String, val sections: List<MobiSection>, val cover: MobiCover?,
@@ -178,8 +179,18 @@ object MobiArchive {
             record(index)
         }, checkActive) }.orEmpty()
         val (sections, hasEmbeddedToc) = splitHtml(html, content, encoding, toc, checkActive) { progress(0.965f + 0.034f * it, force = true) }
+        val noteReferences = sourceNoteReferences(html, checkActive)
+        val notePositions = try { fileposLocations(content, encoding, noteReferences.mapNotNull { it.filepos?.takeIf { at -> at in content.indices } }, checkActive) }
+            catch (_: IllegalArgumentException) { emptyMap() }
+        val noteTargets = sourceNoteTargets(html, noteReferences.filter { it.href?.startsWith('#') == true }
+            .mapNotNull { ref -> ref.href?.let(::sourceNoteFragment)?.let { ref.target to it } }.toMap(),
+            noteReferences.mapNotNull { ref -> ref.filepos?.let(notePositions::get)?.let { ref.target to it } }.toMap(), checkActive)
+        val notedSections = if (noteTargets.isEmpty()) sections else sections.map { section ->
+            val keys = sourceNoteReferences(section.html, checkActive).map { it.target }.toSet()
+            section.copy(sourceNoteTargets = noteTargets.filterKeys { it in keys })
+        }
         progress(1f, force = true)
-        ParsedMobi(title, author, sections, cover, images, css, hasEmbeddedToc)
+        ParsedMobi(title, author, notedSections, cover, images, css, hasEmbeddedToc)
     }
 
     fun copyImage(archive: File, resource: MobiImageResource, destination: File) {
@@ -264,14 +275,18 @@ object MobiArchive {
         onProgress(.3f)
         val boundaries = mutableMapOf<Int, String>()
         if (toc.isNotEmpty()) {
+            val parents = mutableMapOf<Int, String>()
             val offsets = try { fileposLocations(raw, encoding, toc.map { it.byteOffset }, checkActive) }
                 catch (_: IllegalArgumentException) { emptyMap() }
             toc.forEach { entry ->
                 offsets[entry.byteOffset]?.takeIf { !notes.contains(it) && !isNoteReference("", entry.title) }
-                    ?.let { boundaries.putIfAbsent(it, entry.title) }
+                    ?.let { offset ->
+                        if (boundaries.putIfAbsent(offset, entry.title) == null) entry.tocParentTitle?.let { parents[offset] = it }
+                    }
             }
             if (boundaries.isNotEmpty()) {
                 val output = sectionsAtBoundaries(html, bodyTag, boundaries, checkActive)
+                    .map { it.copy(tocParentTitle = parents[it.sourceStart]) }
                 onProgress(1f)
                 return output to true
             }

@@ -161,6 +161,91 @@ class EbookSourceWritebackRobolectricTest {
         assertArrayEquals(external, source.readBytes())
     }
 
+    @Test fun txtPrepareKeepsTheSourceUntilCommitAndRollbackRestoresItsOriginalEncoding() {
+        val source = File(root, "source.txt").apply { writeBytes("第一章\r\n原来的正文".toByteArray(charset("GB18030"))) }
+        val original = source.readBytes()
+        val editedSource = File(root, "draft.txt").apply { writeText("第一章\n已经修改的正文🙂", Charsets.UTF_8) }
+        val book = Book(title = "TXT", format = BookFormat.TXT, mode = LibraryMode.NOVEL, sourcePath = source.absolutePath, chapters = emptyList())
+        val transaction = EbookSourceWriteback.prepare(context, book, book.copy(sourcePath = editedSource.absolutePath), folder("txt"))
+        assertArrayEquals(original, source.readBytes())
+        transaction.commit()
+        assertArrayEquals(editedSource.readBytes(), source.readBytes())
+        assertEquals("第一章\n已经修改的正文🙂", source.readText(Charsets.UTF_8))
+        transaction.rollback()
+        assertArrayEquals(original, source.readBytes())
+        transaction.finish()
+        assertFalse(File(root, "txt/original.txt").exists())
+        assertFalse(File(root, "txt/prepared.txt").exists())
+    }
+
+    @Test fun txtSourceChangedAfterPreparingIsNeverOverwritten() {
+        val source = File(root, "source.txt").apply { writeText("原正文") }
+        val edited = File(root, "draft.txt").apply { writeText("编辑后的正文") }
+        val book = Book(title = "TXT", format = BookFormat.TXT, mode = LibraryMode.NOVEL, sourcePath = source.absolutePath, chapters = emptyList())
+        val transaction = EbookSourceWriteback.prepare(context, book, book.copy(sourcePath = edited.absolutePath), folder("txt-conflict"))
+        source.writeText("其他软件已修改的正文")
+        val external = source.readBytes()
+        assertThrows(IllegalArgumentException::class.java) { transaction.commit() }
+        transaction.rollback()
+        assertArrayEquals(external, source.readBytes())
+        transaction.finish()
+    }
+
+    @Test fun failedOrCancelledTxtPreparationNeverChangesTheOriginalFile() {
+        val source = File(root, "source.txt").apply { writeText("原正文") }
+        val original = source.readBytes()
+        val book = Book(title = "TXT", format = BookFormat.TXT, mode = LibraryMode.NOVEL, sourcePath = source.absolutePath, chapters = emptyList())
+        assertThrows(IllegalArgumentException::class.java) {
+            EbookSourceWriteback.prepare(context, book, book.copy(sourcePath = File(root, "missing.txt").absolutePath), folder("txt-missing"))
+        }
+        assertArrayEquals(original, source.readBytes())
+        val edited = File(root, "large-draft.txt").apply { writeText("修改后的正文".repeat(50_000)) }
+        var checks = 0
+        assertThrows(CancellationException::class.java) {
+            EbookSourceWriteback.prepare(context, book, book.copy(sourcePath = edited.absolutePath), folder("txt-cancelled")) {
+                if (++checks > 5) throw CancellationException("cancel")
+            }
+        }
+        assertArrayEquals(original, source.readBytes())
+    }
+
+    @Test fun txtEpubAndMobiReportMonotonicPreparationAndCommitProgress() {
+        val text = File(root, "source.txt").apply { writeText("原正文") }
+        val editedText = File(root, "draft.txt").apply { writeText("修改正文🙂".repeat(20_000)) }
+        val txt = Book(title = "TXT", format = BookFormat.TXT, mode = LibraryMode.NOVEL, sourcePath = text.absolutePath, chapters = emptyList())
+        val epub = epubBook(epubFixture())
+        val mobiSource = mobiFixture()
+        val mobi = mobiBook(mobiSource, MobiArchive.read(mobiSource))
+        listOf(txt to txt.copy(sourcePath = editedText.absolutePath), epub to change(epub, 0, "旧🙂正文", "新正文"),
+            mobi to change(mobi, mobi.chapters.indexOfFirst { File(it.textPath!!).readText().contains("旧🙂正文") }, "旧🙂正文", "新正文"))
+            .forEach { (before, edited) ->
+                val preparation = mutableListOf<Pair<String, Float>>()
+                val transaction = EbookSourceWriteback.prepare(context, before, edited, folder("progress-${before.format}"),
+                    onProgress = { stage, fraction -> preparation += stage to fraction })
+                assertProgress(preparation)
+                assertTrue(preparation.any { it.first.contains("校验") })
+                if (before.format != BookFormat.TXT) {
+                    assertTrue(preparation.any { it.first.contains("处理") })
+                    assertTrue(preparation.any { it.first.contains("重新打包") })
+                }
+                val saving = mutableListOf<Pair<String, Float>>()
+                transaction.commit { stage, fraction -> saving += stage to fraction }
+                assertProgress(saving)
+                assertTrue(saving.any { it.first == "写入源文件" })
+                assertTrue(saving.any { it.first == "校验保存结果" })
+                assertEquals("保存完成", saving.last().first)
+                transaction.finish()
+            }
+    }
+
+    private fun assertProgress(progress: List<Pair<String, Float>>) {
+        assertTrue(progress.size >= 4)
+        assertEquals(0f, progress.first().second)
+        assertEquals(1f, progress.last().second)
+        assertTrue(progress.all { it.first.isNotBlank() && it.second in 0f..1f })
+        assertTrue(progress.zipWithNext().all { (previous, next) -> previous.second <= next.second })
+    }
+
     @Test fun importedMobiPagebreakChaptersEditWithoutInventingParagraphSeparators() = runBlocking {
         val source = mobiFixture("<body>第一段旧正文<mbp:pagebreak/>第二段保持原样</body>", includeCover = false)
         val book = importMobi(source)

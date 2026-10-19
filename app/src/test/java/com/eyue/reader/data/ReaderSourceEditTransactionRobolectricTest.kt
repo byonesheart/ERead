@@ -99,6 +99,12 @@ class ReaderSourceEditTransactionRobolectricTest {
         cloudOperationMutex.unlock(lockOwner)
         locked = false
         await { !vm.importing }
+        assertTrue(vm.hasBookDraft(book.id))
+        assertEquals(text.replace("旧正文", "新的正文"), File(vm.activeReaderBook!!.chapters.single().textPath!!).readText())
+        assertArrayEquals(bytes, source.readBytes())
+        assertEquals(text, File(repository.load().books.single().chapters.single().textPath!!).readText())
+        vm.saveBookDraft(book.id)
+        await { !vm.importing && !vm.hasBookDraft(book.id) }
         assertNull(vm.pendingSourceWriteUri)
         val saved = repository.load().books.single()
         val sourceText = SourceHtmlEdit.plain(EpubArchive.read(source).sections.single().html) { null }

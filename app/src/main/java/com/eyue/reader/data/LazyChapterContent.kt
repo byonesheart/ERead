@@ -31,30 +31,37 @@ suspend fun loadChapterContent(context: Context, book: Book, chapterIndex: Int):
         val repository = LibraryRepository(context)
         val cached = runCatching {
             val json = JSONObject(metadata.readFully().toString(Charsets.UTF_8))
-            if (json.optString("textSha256") == textHash) repository.readChapter(json) else null
+            if (json.optString("textSha256") == textHash && json.optInt("sourceFootnotesVersion") == 1)
+                repository.readChapter(json) else null
         }.getOrNull()?.takeIf { it.id == chapter.id && it.textPath == chapter.textPath && it.title == chapter.title &&
             it.lazySourcePath == sourcePath && it.characterCount == text.length && it.inlineImages == chapter.inlineImages &&
-            it.sourceStyles.all { style -> style.start >= 0 && style.end > style.start && style.end <= text.length } }
+            it.sourceStyles.all { style -> style.start >= 0 && style.end > style.start && style.end <= text.length } &&
+            it.sourceFootnotes.all { note -> note.start >= 0 && note.end >= note.start && note.end <= text.length &&
+                (note.end > note.start || note.imagePath != null) } }
         if (cached != null) return@withLock PreparedChapter(cached, text)
         job.ensureActive()
         val manifest = JSONObject(AtomicFile(File(sourcePath)).readFully().toString(Charsets.UTF_8))
         val images = manifest.getJSONObject("images")
         val css = if (manifest.has("cssPath")) File(manifest.getString("cssPath")).readText() else manifest.optString("css")
-        val styled = HtmlChapterParser.read(chapter.title, manifest.getString("html"), css,
-            checkActive = { job.ensureActive() }) { attributes ->
+        val targets = manifest.optJSONObject("noteTargets")
+        val noteTargets = targets?.keys()?.asSequence()?.associateWith { targets.getString(it) }.orEmpty()
+        val styled = HtmlChapterParser.readWithNotes(chapter.title, manifest.getString("html"), css,
+            checkActive = { job.ensureActive() }, noteTargets = noteTargets) { attributes ->
             images.optString(attributes).takeIf { it.isNotEmpty() }
         }
         val styles = mapCanonicalStyles(styled.text, text, styled.sourceStyles)
-        val prepared = chapter.copy(characterCount = text.length, sourceStyles = styles)
+        val prepared = chapter.copy(characterCount = text.length, sourceStyles = styles,
+            sourceFootnotes = mapCanonicalFootnotes(styled.text, text, styled.sourceFootnotes))
         job.ensureActive()
-        writeChapterAtomic(metadata, repository.writeChapter(prepared).put("textSha256", textHash).toString())
+        writeChapterAtomic(metadata, repository.writeChapter(prepared).put("textSha256", textHash)
+            .put("sourceFootnotesVersion", 1).toString())
         PreparedChapter(prepared, text)
     }
 }
 
 /** Used by imports after lightweight text/image extraction; no source styling is evaluated here. */
 internal fun saveLazyChapter(directory: File, index: Int, parsed: ParsedTextChapter, html: String, css: String,
-                             images: Map<String, String>): Chapter {
+                             images: Map<String, String>, noteTargets: Map<String, String> = emptyMap()): Chapter {
     val text = File(directory, "chapter-$index.txt")
     val manifest = File(directory, "chapter-$index.source.json")
     val cssBytes = css.toByteArray(Charsets.UTF_8)
@@ -62,10 +69,11 @@ internal fun saveLazyChapter(directory: File, index: Int, parsed: ParsedTextChap
     val cssFile = File(directory, "styles-$cssHash.css")
     if (!cssFile.isFile) writeChapterAtomic(AtomicFile(cssFile), css)
     writeChapterAtomic(AtomicFile(text), parsed.text)
-    writeChapterAtomic(AtomicFile(manifest), JSONObject().put("version", 2).put("html", html).put("cssPath", cssFile.absolutePath)
-        .put("images", JSONObject(images)).toString())
+    writeChapterAtomic(AtomicFile(manifest), JSONObject().put("version", 3).put("html", html).put("cssPath", cssFile.absolutePath)
+        .put("images", JSONObject(images)).put("noteTargets", JSONObject(noteTargets)).toString())
     return Chapter(title = parsed.title, textPath = text.absolutePath, inlineImages = parsed.inlineImages,
-        characterCount = parsed.text.length, lazySourcePath = manifest.absolutePath)
+        characterCount = parsed.text.length, lazySourcePath = manifest.absolutePath, tocParentTitle = parsed.tocParentTitle,
+        sourceFootnotes = parsed.sourceFootnotes)
 }
 
 private fun chapterTextHash(file: File, checkActive: () -> Unit): String {
@@ -102,7 +110,26 @@ private fun writeChapterAtomic(file: AtomicFile, text: String) {
 /** HTML style markers may preserve whitespace that the plain import pass collapses. */
 internal fun mapCanonicalStyles(styled: String, canonical: String, styles: List<SourceTextStyle>): List<SourceTextStyle> {
     if (styled == canonical || styles.isEmpty()) return styles
-    val boundaries = styles.flatMap { listOf(it.start, it.end) }.distinct().sorted()
+    val offset = canonicalOffsetMapper(styled, canonical, styles.flatMap { listOf(it.start, it.end) })
+    return styles.mapNotNull { style ->
+        val start = offset(style.start)
+        val end = offset(style.end)
+        if (end > start) style.copy(start = start, end = end) else null
+    }
+}
+
+internal fun mapCanonicalFootnotes(styled: String, canonical: String, notes: List<SourceFootnote>): List<SourceFootnote> {
+    if (styled == canonical || notes.isEmpty()) return notes
+    val offset = canonicalOffsetMapper(styled, canonical, notes.flatMap { listOf(it.start, it.end) })
+    return notes.mapNotNull { note ->
+        val start = offset(note.start)
+        val end = offset(note.end)
+        if (end > start || note.imagePath != null) note.copy(start = start, end = end) else null
+    }
+}
+
+private fun canonicalOffsetMapper(styled: String, canonical: String, offsets: List<Int>): (Int) -> Int {
+    val boundaries = offsets.distinct().sorted()
     val mapped = IntArray(boundaries.size)
     var boundary = 0
     var source = 0
@@ -120,10 +147,5 @@ internal fun mapCanonicalStyles(styled: String, canonical: String, styles: List<
         }
     }
     record()
-    fun offset(value: Int): Int = mapped[boundaries.binarySearch(value)].coerceIn(0, canonical.length)
-    return styles.mapNotNull { style ->
-        val start = offset(style.start)
-        val end = offset(style.end)
-        if (end > start) style.copy(start = start, end = end) else null
-    }
+    return { value -> mapped[boundaries.binarySearch(value)].coerceIn(0, canonical.length) }
 }

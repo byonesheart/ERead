@@ -8,7 +8,8 @@ import java.util.Locale
 import kotlin.math.abs
 
 data class ParsedTextChapter(val title: String, val text: String, val inlineImages: List<InlineImage> = emptyList(),
-                             val sourceStyles: List<SourceTextStyle> = emptyList())
+                             val sourceStyles: List<SourceTextStyle> = emptyList(), val tocParentTitle: String? = null,
+                             val sourceFootnotes: List<SourceFootnote> = emptyList())
 data class TextMetadata(val title: String? = null, val author: String = "")
 
 object TextParser {
@@ -36,6 +37,7 @@ object TextParser {
         }
         val compacted = chapter.copy(text = body.toString(),
             inlineImages = chapter.inlineImages.map { it.copy(offset = offsets[it.offset.coerceIn(0, text.length)]) },
+            sourceFootnotes = chapter.sourceFootnotes.map { it.copy(start = offsets[it.start.coerceIn(0, text.length)], end = offsets[it.end.coerceIn(0, text.length)]) },
             sourceStyles = chapter.sourceStyles.map { it.copy(start = offsets[it.start.coerceIn(0, text.length)], end = offsets[it.end.coerceIn(0, text.length)]) })
         return compacted to offsets
     }

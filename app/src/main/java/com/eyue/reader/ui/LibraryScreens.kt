@@ -163,18 +163,19 @@ private const val UNGROUPED_FILTER = "@ungrouped"
     cloudConfigured: Boolean = false, meteredNetwork: Boolean = false,
     cloudTransfers: Map<String, CloudTransferProgress> = emptyMap(),
     cloudDirtyBookIds: Set<String> = emptySet(),
-    pendingImports: List<PendingImport> = listOfNotNull(pending)) {
+    pendingImports: List<PendingImport> = listOfNotNull(pending),
+    onRemoveBatch: ((List<Book>, Boolean) -> Unit)? = null) {
     fun transfer(book: Book) = cloudTransfers[book.id] ?: if (cloudBookId == book.id)
         CloudTransferProgress(cloudTaskLabel, cloudFraction, cloudCanCancel) else null
     var selectingBackup by remember { mutableStateOf(false) }
     var backupSelection by remember { mutableStateOf<Set<String>>(emptySet()) }
-    fun selectBackup(book: Book) { if (!book.cloudOnly) backupSelection = if (book.id in backupSelection) backupSelection - book.id else backupSelection + book.id }
+    fun selectBackup(book: Book) { backupSelection = if (book.id in backupSelection) backupSelection - book.id else backupSelection + book.id }
     var sort by rememberSaveable { mutableIntStateOf(0) }
     var filter by rememberSaveable { mutableIntStateOf(0) }
     var grid by rememberSaveable { mutableStateOf(true) }
     var sortMenu by remember { mutableStateOf(false) }
-    var cloudMenu by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<Book?>(null) }
+    var deletingBatch by remember { mutableStateOf<List<Book>?>(null) }
     var deletingCloud by remember { mutableStateOf<Book?>(null) }
     var clearingAiSpeech by remember { mutableStateOf<Book?>(null) }
     var details by remember { mutableStateOf<Book?>(null) }
@@ -225,17 +226,15 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                     modifier = Modifier.clip(RoundedCornerShape(9.dp)).clickable { filter = i }.padding(end = 19.dp, top = 8.dp, bottom = 8.dp))
             }
             Spacer(Modifier.weight(1f))
-            if (onCloudBatch != null || onRestoreCloudBookInfo != null) Box {
-                IconButton(enabled = !cloudBusy, onClick = { cloudMenu = true },
-                    modifier = Modifier.size(34.dp).testTag("shelf_cloud_menu")) {
-                    Icon(Icons.Outlined.Cloud, "云端备份", Modifier.size(20.dp), tint = Muted)
+            if (onCloudBatch != null || onRemoveBatch != null) {
+                IconButton(onClick = { selectingBackup = true },
+                    modifier = Modifier.size(34.dp).testTag("shelf_batch_manage")) {
+                    Icon(Icons.Outlined.Checklist, "批量管理", Modifier.size(20.dp), tint = Muted)
                 }
-                DropdownMenu(expanded = cloudMenu, onDismissRequest = { cloudMenu = false }) {
-                    DropdownMenuItem(text = { Text("批量备份") }, enabled = !cloudBusy && onCloudBatch != null,
-                        modifier = Modifier.testTag("shelf_batch_backup"), onClick = { cloudMenu = false; selectingBackup = true })
-                    DropdownMenuItem(text = { Text("还原书籍信息") }, enabled = !cloudBusy && onRestoreCloudBookInfo != null,
-                        modifier = Modifier.testTag("shelf_restore_cloud_info"), onClick = { cloudMenu = false; onRestoreCloudBookInfo?.invoke() })
-                }
+            }
+            if (onRestoreCloudBookInfo != null) IconButton(enabled = !cloudBusy, onClick = onRestoreCloudBookInfo,
+                modifier = Modifier.size(34.dp).testTag("shelf_restore_cloud_info")) {
+                Icon(Icons.Outlined.CloudDownload, "还原书籍信息", Modifier.size(20.dp), tint = Muted)
             }
             Box {
                 IconButton(onClick = { sortMenu = true }, modifier = Modifier.size(34.dp)) { Icon(Icons.Outlined.Sort, "排序", Modifier.size(20.dp), tint = Muted) }
@@ -250,16 +249,29 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 Icon(if (grid) Icons.Outlined.ViewList else Icons.Outlined.GridView, "切换书架布局", Modifier.size(20.dp), tint = Muted)
             }
         }
-        if (onCloudBatch != null && selectingBackup) Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp).testTag("shelf_backup_actions"), verticalAlignment = Alignment.CenterVertically) {
-            val available = displayed.filterNot { it.cloudOnly }.map { it.id }.toSet()
+        if (selectingBackup) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("shelf_backup_actions"), verticalAlignment = Alignment.CenterVertically) {
+            val available = displayed.map { it.id }.toSet()
+            val selected = books.filter { it.id in backupSelection }
             Checkbox(available.isNotEmpty() && backupSelection.containsAll(available), { checked ->
                 backupSelection = if (checked) backupSelection + available else backupSelection - available
-            }, modifier = Modifier.testTag("shelf_backup_select_all"))
-            Text("已选 ${backupSelection.size} 本", Modifier.weight(1f), fontSize = 12.sp)
-            TextButton(enabled = backupSelection.isNotEmpty() && !cloudBusy, onClick = {
-                onCloudBatch(books.filter { it.id in backupSelection }); selectingBackup = false; backupSelection = emptySet()
-            }) { Text("上传备份") }
-            TextButton(onClick = { selectingBackup = false; backupSelection = emptySet() }) { Text("取消") }
+            }, modifier = Modifier.size(36.dp).testTag("shelf_backup_select_all"))
+            Column(Modifier.weight(1f)) {
+                Text("全选", fontSize = 11.sp)
+                Text("已选 ${selected.size} 本", fontSize = 10.sp, color = Muted, maxLines = 1)
+            }
+            FilledTonalButton(enabled = selected.isNotEmpty() && !cloudBusy && onCloudBatch != null, onClick = {
+                onCloudBatch?.invoke(selected); selectingBackup = false; backupSelection = emptySet()
+            }, modifier = Modifier.height(34.dp).testTag("shelf_batch_transfer"), contentPadding = PaddingValues(horizontal = 9.dp)) {
+                Text("上传或下载", fontSize = 11.sp, maxLines = 1)
+            }
+            Spacer(Modifier.width(5.dp))
+            FilledTonalButton(enabled = selected.isNotEmpty() && onRemoveBatch != null, onClick = { deletingBatch = selected },
+                modifier = Modifier.height(34.dp).testTag("shelf_batch_delete"), contentPadding = PaddingValues(horizontal = 9.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("删除", fontSize = 11.sp) }
+            TextButton(onClick = { selectingBackup = false; backupSelection = emptySet() },
+                modifier = Modifier.widthIn(min = 44.dp).height(34.dp).testTag("shelf_batch_cancel"), contentPadding = PaddingValues(horizontal = 5.dp)) {
+                Text("取消", fontSize = 11.sp)
+            }
         }
         if (displayed.isEmpty() && pendingImports.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -276,12 +288,12 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 items(displayed, key = { it.id }) { book ->
                     Column {
                         Box {
-                            BookCover(book, Modifier.fillMaxWidth().aspectRatio(.72f).clickable(enabled = !book.cloudOnly) { if (selectingBackup) selectBackup(book) else onOpen(book) },
+                            BookCover(book, Modifier.fillMaxWidth().aspectRatio(.72f).clickable(enabled = selectingBackup || !book.cloudOnly) { if (selectingBackup) selectBackup(book) else onOpen(book) },
                                 onCloud?.let { { it(book) } }, cloudBusy || transfer(book) != null, transfer(book) != null,
                                 transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
                                 onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds)
                             Surface(Modifier.align(Alignment.TopStart).padding(8.dp), shape = RoundedCornerShape(5.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .9f)) {
-                                if (selectingBackup) Checkbox(book.id in backupSelection, { selectBackup(book) }, enabled = !book.cloudOnly,
+                                if (selectingBackup) Checkbox(book.id in backupSelection, { selectBackup(book) },
                                     modifier = Modifier.testTag("backup_select_${book.id}"))
                                 else Text(if (book.isDemo) "示例" else book.format.name, fontSize = 9.sp, color = Olive, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
                             }
@@ -294,7 +306,9 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                                 onVoiceRoles = onVoiceRoles?.let { { it(book.id) } })
                         }
                         Text(book.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1,
-                            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 11.dp).clickable(enabled = !book.cloudOnly) { onOpen(book) })
+                            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 11.dp).testTag("shelf_book_title_${book.id}").clickable(enabled = selectingBackup || !book.cloudOnly) {
+                                if (selectingBackup) selectBackup(book) else onOpen(book)
+                            })
                         if (book.author.isNotEmpty()) Text(book.author, fontSize = 10.sp, color = Muted,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
                         Text("第 ${book.chapterIndex + 1} / ${book.chapters.size} 章 · ${(book.progress * 100).toInt()}%", fontSize = 10.sp,
@@ -313,7 +327,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 items(displayed, key = { it.id }) { book ->
                     Column {
                         if (selectingBackup) Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(book.id in backupSelection, { selectBackup(book) }, enabled = !book.cloudOnly,
+                            Checkbox(book.id in backupSelection, { selectBackup(book) },
                                 modifier = Modifier.testTag("backup_select_${book.id}"))
                             Text(book.title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
@@ -333,6 +347,13 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 }
             }
         }
+    }
+    deletingBatch?.let { selected ->
+        BatchRemoveBooksDialog(selected, speechCacheRevision, cloudConfigured && onRemoveBatch != null, meteredNetwork,
+            onConfirm = { includeCloud ->
+                onRemoveBatch?.invoke(selected, includeCloud)
+                deletingBatch = null; selectingBackup = false; backupSelection = emptySet()
+            }, onDismiss = { deletingBatch = null })
     }
     if (managingGroups) {
         AlertDialog(onDismissRequest = { managingGroups = false }, modifier = Modifier.testTag("shelf_groups_dialog"),
@@ -474,6 +495,74 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 clearingAiSpeech = null
             }, onDismiss = { clearingAiSpeech = null }, tag = "shelf_clear_ai_speech", sizeError = bytes?.isFailure == true)
     }
+}
+
+@Composable private fun BatchRemoveBooksDialog(books: List<Book>, speechCacheRevision: Int, cloudConfigured: Boolean,
+    meteredNetwork: Boolean, onConfirm: (Boolean) -> Unit, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var includeCloud by remember(books) { mutableStateOf(false) }
+    var allowMetered by remember(books) { mutableStateOf(false) }
+    val sizes by produceState<Map<String, Result<Long>>?>(null, books, speechCacheRevision) {
+        value = withContext(Dispatchers.IO) {
+            books.associate { book -> book.id to try { Result.success(localBookStorageBytes(context, book)) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) { Result.failure(failure) } }
+        }
+    }
+    val ready = sizes?.let { measured -> books.all { measured[it.id]?.isSuccess == true } } == true
+    val cloud = includeCloud && cloudConfigured
+    val canRemove = ready && (!cloud || !meteredNetwork || allowMetered)
+    fun sizeLabel(bytes: Result<Long>?): String = when {
+        bytes == null -> "统计中…"
+        bytes.isFailure -> "统计失败"
+        else -> android.text.format.Formatter.formatShortFileSize(context, bytes.getOrThrow())
+    }
+    AlertDialog(onDismissRequest = onDismiss, modifier = Modifier.testTag("shelf_batch_remove_dialog"),
+        title = { Text("删除选中的 ${books.size} 本书？") }, text = {
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                item { Text("删除本应用中的书籍缓存、AI 音频、阅读进度及标注。原始外部文件保留，不计入本地占用。",
+                    style = MaterialTheme.typography.bodySmall) }
+                items(books, key = { it.id }) { book ->
+                    Column(Modifier.fillMaxWidth()) {
+                        Text(book.title, style = MaterialTheme.typography.bodyMedium)
+                        Text("本地占用：${sizeLabel(sizes?.get(book.id))}", style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.testTag("shelf_batch_remove_${book.id}_space"), color = Muted)
+                        if (book.cloudOnly) Text("待下载占位：仅统计本地占位缓存，云端原文件未计入本地占用。",
+                            style = MaterialTheme.typography.bodySmall, color = Muted)
+                    }
+                }
+                item {
+                    Text("本地占用合计：" + when {
+                        sizes == null -> "统计中…"
+                        !ready -> "统计失败，请取消后重试"
+                        else -> android.text.format.Formatter.formatShortFileSize(context, sizes!!.values.sumOf { it.getOrThrow() })
+                    }, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("shelf_batch_remove_space"))
+                }
+                item {
+                    Row(Modifier.fillMaxWidth().clickable(enabled = cloudConfigured) { includeCloud = !includeCloud; allowMetered = false },
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(cloud, { includeCloud = it; allowMetered = false }, enabled = cloudConfigured,
+                            modifier = Modifier.testTag("shelf_batch_remove_cloud"))
+                        Text("同时删除云端备份", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Text(if (cloud) "同时删除所选书籍的云端正文和阅读记录，并关闭其自动备份。"
+                        else "仅移除本地书籍及记录，云端正文和记录保留。", style = MaterialTheme.typography.bodySmall, color = Muted)
+                    if (!cloudConfigured) Text("配置 WebDAV 网盘后可同步删除云端备份。", style = MaterialTheme.typography.bodySmall, color = Muted)
+                }
+                if (cloud && meteredNetwork) item {
+                    Row(Modifier.fillMaxWidth().clickable { allowMetered = !allowMetered }, verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(allowMetered, { allowMetered = it }, modifier = Modifier.testTag("shelf_batch_remove_metered"))
+                        Text("当前为计费网络，允许本次云端操作", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }, confirmButton = {
+            TextButton(enabled = canRemove, onClick = { onConfirm(cloud) }, modifier = Modifier.testTag("shelf_batch_remove_confirm")) {
+                Text("删除", color = if (canRemove) MaterialTheme.colorScheme.error else Muted)
+            }
+        }, dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.testTag("shelf_batch_remove_cancel")) { Text("取消") }
+        })
 }
 
 @Composable private fun PendingShelfBook(pending: PendingImport, grid: Boolean) {

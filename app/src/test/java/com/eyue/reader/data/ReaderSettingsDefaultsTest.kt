@@ -9,7 +9,7 @@ class ReaderSettingsDefaultsTest {
         val rule = ChapterRulePreset("custom", "卷规则", "^第.*卷$")
         val novel = ReaderSettings(fontSize = 31f, bold = true, readingMode = ReadingMode.PAGED,
             nightMode = true, fonts = listOf(font), fontPath = font.path, fontName = font.name,
-            chapterRules = listOf(rule), activeChapterRuleId = rule.id, chapterRule = rule.pattern)
+            chapterRules = listOf(rule), activeChapterRuleId = rule.id, chapterRule = rule.pattern, hierarchicalContents = false)
         val comic = ReaderSettings(brightness = .3f, readingMode = ReadingMode.VERTICAL_PAGED, nightMode = true)
         val state = LibraryState(settings = novel, comicSettings = comic, themeMode = ThemeMode.SYSTEM)
         val result = state.resetReaderPreferences(LibraryMode.NOVEL)
@@ -17,6 +17,7 @@ class ReaderSettingsDefaultsTest {
         assertFalse(result.settings.bold)
         assertNull(result.settings.fontPath)
         assertEquals(ReadingMode.SCROLL, result.settings.readingMode)
+        assertTrue(result.settings.hierarchicalContents)
         assertEquals(novel.fonts, result.settings.fonts)
         assertEquals(novel.chapterRules, result.settings.chapterRules)
         assertEquals(novel.chapterRule, result.settings.chapterRule)

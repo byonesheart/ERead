@@ -157,4 +157,100 @@ class EbookTextEditTest {
             SourceTextStyle(4, 9, italic = true)), edit.chapter(chapter, "edited.txt").sourceStyles)
         assertThrows(IllegalArgumentException::class.java) { EbookTextEdit(0, "cat CAT", literalTextReplacements("cat CAT", "cat", "")) }
     }
+
+    @Test fun untouchedSourceFootnotesShiftWithoutChangingTheirContentsOrImages() {
+        val old = "标题\n甲[1]乙\n丙[2]丁"
+        val first = SourceFootnote(old.indexOf("[1]"), old.indexOf("[1]") + 3, "[1]", "第一条原生注释")
+        val second = SourceFootnote(old.indexOf("[2]"), old.indexOf("[2]") + 3, "[2]", "第二条原生注释", "note.png")
+        val chapter = Chapter(title = "原章节", sourceFootnotes = listOf(first, second))
+        val edit = EbookTextEdit(0, old, 3, 4, "更长的甲")
+        val updated = edit.chapter(chapter, "preview.txt")
+        assertEquals(listOf(first.copy(start = edit.text.indexOf("[1]"), end = edit.text.indexOf("[1]") + 3),
+            second.copy(start = edit.text.indexOf("[2]"), end = edit.text.indexOf("[2]") + 3)), updated.sourceFootnotes)
+        assertEquals(chapter.sourceFootnotes.map { it.content }, updated.sourceFootnotes.map { it.content })
+        assertEquals("note.png", updated.sourceFootnotes.last().imagePath)
+    }
+
+    @Test fun insertionsAtSourceReferenceBoundariesStayOutsideTheClickableMarker() {
+        val old = "甲[1]乙"
+        val note = SourceFootnote(1, 4, "[1]", "注释")
+        val edit = EbookTextEdit(0, old, listOf(TextReplacement(1, 1, "++"), TextReplacement(4, 4, "--")))
+        val updated = edit.chapter(Chapter(title = "章", sourceFootnotes = listOf(note)), "preview.txt")
+        assertEquals("甲++[1]--乙", edit.text)
+        assertEquals(listOf(note.copy(start = 3, end = 6)), updated.sourceFootnotes)
+        assertEquals("[1]", edit.text.substring(updated.sourceFootnotes.single().start, updated.sourceFootnotes.single().end))
+    }
+
+    @Test fun deletingChangingOrCoveringAReferenceRemovesOnlyTheAffectedSourceFootnote() {
+        val old = "标题\n甲[1]乙\n丙[2]丁"
+        val first = SourceFootnote(old.indexOf("[1]"), old.indexOf("[1]") + 3, "[1]", "第一条")
+        val second = SourceFootnote(old.indexOf("[2]"), old.indexOf("[2]") + 3, "[2]", "第二条")
+        val chapter = Chapter(title = "章", sourceFootnotes = listOf(first, second))
+        val edits = listOf(EbookTextEdit(0, old, first.start, first.end, ""),
+            EbookTextEdit(0, old, first.start + 1, first.start + 2, "9"),
+            EbookTextEdit(0, old, first.start + 1, first.start + 1, "新增"),
+            EbookTextEdit(0, old, 3, old.indexOf('\n', 3), "改写段落仍有[1]"))
+        edits.forEach { edit ->
+            val notes = edit.chapter(chapter, "preview.txt").sourceFootnotes
+            assertEquals(listOf("第二条"), notes.map { it.content })
+            assertEquals("[2]", edit.text.substring(notes.single().start, notes.single().end))
+        }
+        val replaced = EbookTextEdit(0, old, 0, old.length, "覆盖整章")
+        assertTrue(replaced.chapter(chapter, "preview.txt").sourceFootnotes.isEmpty())
+        val unchanged = EbookTextEdit(0, old, first.start, first.end, "[1]")
+        assertEquals(chapter.sourceFootnotes, unchanged.chapter(chapter, "preview.txt").sourceFootnotes)
+    }
+
+    @Test fun splittingAndMergingEditedChaptersKeepsWholeSourceReferencesInTheirNewChapters() {
+        val text = "第一章 起点\n甲[1]乙\n第二章 远行\n丙[2]丁"
+        val tail = "后续[3]内容"
+        val first = ParsedTextChapter("旧目录", text, sourceFootnotes = listOf(
+            SourceFootnote(text.indexOf("[1]"), text.indexOf("[1]") + 3, "[1]", "一"),
+            SourceFootnote(text.indexOf("[2]"), text.indexOf("[2]") + 3, "[2]", "二", "source-note.png")))
+        val second = ParsedTextChapter("后续", tail, sourceFootnotes = listOf(SourceFootnote(2, 5, "[3]", "三")))
+        val parsed = splitEditedTextChapters(listOf(first, second), DEFAULT_CHAPTER_RULE)
+        assertEquals(listOf("第一章 起点", "第二章 远行"), parsed.map { it.title })
+        assertEquals(listOf("一"), parsed.first().sourceFootnotes.map { it.content })
+        assertEquals(listOf("二", "三"), parsed.last().sourceFootnotes.map { it.content })
+        parsed.forEach { chapter -> chapter.sourceFootnotes.forEach { note ->
+            assertEquals(note.label, chapter.text.substring(note.start, note.end))
+        } }
+        val merged = splitEditedTextChapters(parsed, "^不存在的章节规则$").single()
+        assertEquals(listOf("一", "二", "三"), merged.sourceFootnotes.map { it.content })
+        merged.sourceFootnotes.forEach { assertEquals(it.label, merged.text.substring(it.start, it.end)) }
+        assertEquals("source-note.png", merged.sourceFootnotes[1].imagePath)
+    }
+
+    @Test fun zeroWidthImageReferenceFootnotesKeepTheSameAnchorsAsTheirImages() {
+        val original = "甲乙丙"
+        val image = InlineImage(1, "note-icon.png")
+        val note = SourceFootnote(1, 1, "注释", "图片图标对应注释", image.path)
+        val chapter = Chapter(title = "图标注释", inlineImages = listOf(image), sourceFootnotes = listOf(note))
+        val before = EbookTextEdit(0, original, 0, 1, "更长的甲").chapter(chapter, "preview.txt")
+        assertEquals(note.copy(start = 4, end = 4), before.sourceFootnotes.single())
+        assertEquals(before.inlineImages.single().offset, before.sourceFootnotes.single().start)
+        val boundary = EbookTextEdit(0, original, 1, 1, "插入文字").chapter(chapter, "preview.txt")
+        assertEquals(listOf(note), boundary.sourceFootnotes)
+        assertEquals(boundary.inlineImages.single().offset, boundary.sourceFootnotes.single().start)
+        val covered = EbookTextEdit(0, original, 0, 3, "覆盖整段").chapter(chapter, "preview.txt")
+        assertTrue(covered.sourceFootnotes.isEmpty())
+    }
+
+    @Test fun splittingAndMergingEditedChaptersRetainZeroWidthImageReferenceNotes() {
+        val text = "第一章 起点\n甲乙\n第二章 远行\n丙丁"
+        val one = text.indexOf('乙')
+        val two = text.indexOf('丁')
+        val chapter = ParsedTextChapter("旧目录", text, inlineImages = listOf(InlineImage(one, "one.png"), InlineImage(two, "two.png")),
+            sourceFootnotes = listOf(SourceFootnote(one, one, "注1", "第一条图标注释", "one.png"),
+                SourceFootnote(two, two, "注2", "第二条图标注释", "two.png")))
+        val split = splitEditedTextChapters(listOf(chapter), DEFAULT_CHAPTER_RULE)
+        assertEquals(listOf("第一章 起点", "第二章 远行"), split.map { it.title })
+        split.forEach { section ->
+            assertEquals(section.inlineImages.single().offset, section.sourceFootnotes.single().start)
+            assertEquals(section.sourceFootnotes.single().start, section.sourceFootnotes.single().end)
+        }
+        val merged = splitEditedTextChapters(split, "^不存在的章节规则$").single()
+        assertEquals(chapter.sourceFootnotes.map { it.content }, merged.sourceFootnotes.map { it.content })
+        assertEquals(merged.inlineImages.map { it.offset }, merged.sourceFootnotes.map { it.start })
+    }
 }

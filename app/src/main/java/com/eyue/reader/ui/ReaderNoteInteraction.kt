@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.eyue.reader.data.Annotation
 import com.eyue.reader.data.AnnotationKind
 import com.eyue.reader.data.ReaderSettings
+import com.eyue.reader.data.SourceFootnote
 import com.eyue.reader.data.UnderlineStyle
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -53,6 +54,20 @@ internal fun readerTextAnnotations(text: String, annotations: List<Annotation>, 
     annotations.filter { item -> item.bookId == bookId && item.chapterIndex == chapter && item.imagePath == null &&
         item.kind != AnnotationKind.BOOKMARK && (item.kind != AnnotationKind.NOTE || item.note.isNotBlank()) &&
         readerAnnotationRange(text, item)?.contains(offset) == true }.sortedByDescending { it.createdAt }
+
+internal fun readerSourceFootnoteAt(footnotes: List<SourceFootnote>, offset: Int, imagePath: String? = null): SourceFootnote? =
+    footnotes.firstOrNull { item -> item.imagePath == imagePath &&
+        (offset >= item.start && offset < item.end || imagePath != null && offset == item.start) }
+
+@Composable
+internal fun ReaderSourceFootnotePreview(footnote: SourceFootnote, anchor: Rect, onDismiss: () -> Unit) {
+    ReaderAnnotationPopup(anchor, onDismiss) {
+        Column(Modifier.fillMaxWidth().testTag("reader_source_footnote_popup"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("原文注释", style = MaterialTheme.typography.labelLarge, modifier = Modifier.testTag("reader_source_footnote_title"))
+            Text(footnote.content, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("reader_source_footnote_content"))
+        }
+    }
+}
 
 internal fun readerAnnotationNeedsDialog(items: List<Annotation>): Boolean =
     items.any { it.kind == AnnotationKind.NOTE && it.note.codePointCount(0, it.note.length) > 20 }
@@ -115,15 +130,14 @@ internal fun ReaderNoteDialog(settings: ReaderSettings, notes: List<Annotation>,
 
 @Composable
 internal fun ReaderTxtEditor(settings: ReaderSettings, selection: ReaderSelectedPassage,
-    onSave: (String) -> Unit, onDismiss: () -> Unit, overwriteSource: Boolean = false) {
+    onSave: (String) -> Unit, onDismiss: () -> Unit) {
     var draft by remember(selection) { mutableStateOf(selection.quote) }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("编辑正文") },
         text = {
             ReaderDialogAppearance(settings)
             OutlinedTextField(draft, { draft = it }, Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 400.dp)
                 .testTag("reader_txt_editor"), label = { Text("替换内容") }, minLines = 6,
-                supportingText = { Text(if (overwriteSource) "保存将覆盖原始书籍文件，并更新阅读器内的正文与标注" else
-                    "修改保存在阅读器内并参与书籍备份，原文件不变") })
-        }, confirmButton = { TextButton(enabled = draft != selection.quote, onClick = { onSave(draft) }) { Text("保存") } },
+                supportingText = { Text("修改先在页面预览，点击阅读页右上角“保存”后才写入文件") })
+        }, confirmButton = { TextButton(enabled = draft != selection.quote, onClick = { onSave(draft) }) { Text("应用修改") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
 }

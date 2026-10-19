@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import android.content.ContextWrapper
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -127,12 +128,34 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
                 if (vm.message == message) vm.message = null
             }
         }
-        val book = state.books.find { it.id == vm.activeBookId }
+        val book = vm.activeReaderBook
         val view = LocalView.current
-        val window = remember(view) {
+        val activity = remember(view) {
             var context = view.context
             while (context is ContextWrapper && context !is Activity) context = context.baseContext
-            (context as? Activity)?.window
+            context as? Activity
+        }
+        val window = activity?.window
+        var leavingDraftIds by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+        var finishAfterDrafts by rememberSaveable { mutableStateOf(false) }
+        fun finishLeaving() {
+            leavingDraftIds = emptyList()
+            if (finishAfterDrafts) activity?.finish() else vm.close()
+        }
+        fun saveBeforeLeaving(ids: List<String>) {
+            if (ids.isEmpty()) finishLeaving()
+            else vm.saveBookDraft(ids.first()) { saveBeforeLeaving(ids.drop(1)) }
+        }
+        fun closeReader() {
+            val id = vm.activeBookId
+            if (id != null && (vm.hasBookDraft(id) || id in vm.editingBookIds)) {
+                finishAfterDrafts = false
+                leavingDraftIds = listOf(id)
+            } else vm.close()
+        }
+        BackHandler(enabled = book == null && (vm.unsavedBookIds.isNotEmpty() || vm.editingBookIds.isNotEmpty())) {
+            finishAfterDrafts = true
+            leavingDraftIds = (vm.unsavedBookIds + vm.editingBookIds).toList()
         }
         SideEffect {
             if (book == null && window != null) {
@@ -154,8 +177,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
                         bookProvider = { book }, onCacheChanged = vm::notifyAiSpeechCacheChanged) else ReaderSpeech(context) }
                 }
                 CompositionLocalProvider(LocalReaderSpeechFactory provides speechFactory) {
-                ReaderScreen(book, settings, state.annotations.filter { it.bookId == book.id },
-                    onClose = vm::close,
+                ReaderScreen(book, settings, vm.readerAnnotations(book.id),
+                    onClose = ::closeReader,
                     onProgress = { chapter, page, offset, progress, imagePath -> vm.progress(chapter, page, offset, progress, book.id, imagePath) },
                     onSettings = vm::settings,
                     onAddAnnotation = vm::annotate, onDeleteAnnotation = vm::deleteAnnotation,
@@ -176,6 +199,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
                     onResetDefaults = { vm.resetReaderSettings(book.mode) }, speechGeneration = vm.aiSpeechGenerations[book.id],
                     onCancelSpeech = { vm.cancelAiSpeechGeneration(book.id) },
                     einkMode = state.einkMode, tabletDualPage = state.tabletDualPage,
+                    hasUnsavedText = vm.hasBookDraft(book.id), saveProgress = vm.bookSaveProgress[book.id],
+                    onSaveText = { vm.saveBookDraft(book.id) },
                     onRoleSelection = if (book.mode == LibraryMode.NOVEL) { text ->
                         selectedRoleText = text; voiceRolesBookId = book.id
                     } else null)
@@ -227,7 +252,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
                                         cloudTaskLabel = vm.cloudTaskLabel, cloudFraction = vm.cloudFraction,
                                         onCancelCloud = vm::cancelCloudUpload, onDeleteCloud = vm::deleteCloudBook,
                                         cloudCanCancel = vm.cloudUploadCancellable, onClearAiSpeechCache = vm::clearAiSpeechCache, onCloudBatch = { books ->
-                                            if (!vm.cloudConfigured) { tab = 2; vm.message = "请先配置 WebDAV 网盘" } else vm.uploadCloudBooks(books)
+                                            if (!vm.cloudConfigured) { tab = 2; vm.message = "请先配置 WebDAV 网盘" } else vm.transferCloudBooks(books)
                                         }, onRestoreCloudBookInfo = {
                                             if (!vm.cloudConfigured) { tab = 2; vm.message = "请先配置 WebDAV 网盘" }
                                             else vm.restoreCloudBookInfo()
@@ -236,7 +261,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
                                         onRemoveWithCloud = vm::removeBook, onClearSpeechWithCloud = { book, _ -> vm.clearAiSpeechCache(book) },
                                         cloudConfigured = vm.cloudConfigured, meteredNetwork = vm.meteredNetwork,
                                         speechCacheRevision = vm.aiSpeechCacheRevision, cloudTransfers = vm.cloudTransfers,
-                                        cloudDirtyBookIds = vm.cloudDirtyBookIds, pendingImports = vm.pendingImports.filter { it.mode == vm.mode })
+                                        cloudDirtyBookIds = vm.cloudDirtyBookIds, pendingImports = vm.pendingImports.filter { it.mode == vm.mode },
+                                        onRemoveBatch = vm::removeBooks)
                                 }
                                 else -> SettingsScreen(state, { vm.settings(vm.readerSettings.copy(nightMode = it.nightMode)) }, vm::saveChapterRule,
                                     ::importFont, vm::clearHistory, mode = LibraryMode.NOVEL, cloudAccount = vm.cloudAccount,
@@ -309,6 +335,13 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
             AlertDialog(onDismissRequest = {}, confirmButton = {}, title = { Text("正在更新目录") },
                 text = { Text("正在迁移阅读位置、书签和笔记") })
         }
+        if (leavingDraftIds.isNotEmpty()) ReaderUnsavedChangesDialog(
+            titles = leavingDraftIds.mapNotNull { id -> state.books.find { it.id == id }?.title },
+            saving = leavingDraftIds.any { it in vm.editingBookIds || it in vm.bookSaveProgress },
+            onSave = { saveBeforeLeaving(leavingDraftIds.filter(vm::hasBookDraft)) },
+            onDiscard = { leavingDraftIds.forEach(vm::discardBookDraft); finishLeaving() },
+            onCancel = { leavingDraftIds = emptyList() },
+            preparing = leavingDraftIds.any { it in vm.editingBookIds && it !in vm.bookSaveProgress })
     }
 }
 

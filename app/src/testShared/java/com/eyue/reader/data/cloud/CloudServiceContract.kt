@@ -193,6 +193,32 @@ abstract class CloudServiceContract {
         assertFalse(manifest.contains("not-a-real-password"))
     }
 
+    @Test fun sourceFootnotesAndTheirOwnImagesSurviveBackupAndUserAnnotationCleanup() = runBlocking {
+        val (original, originalState) = novel()
+        val text = "第一章\n正文[1]后文。"
+        File(requireNotNull(original.chapters.single().textPath)).writeText(text)
+        val image = File(root, "footnote-only.png").apply { writeBytes(byteArrayOf(11, 12, 13, 14)) }
+        val note = SourceFootnote(text.indexOf("[1]"), text.indexOf("[1]") + 3, "[1]", "源文件内的注释", sourcePath(image))
+        val book = original.copy(chapters = listOf(original.chapters.single().copy(sourceFootnotes = listOf(note))))
+        val state = originalState.copy(books = listOf(book))
+        val uploaded = service.upload(state, book)
+        val portable = uploaded.book.chapters.single().sourceFootnotes.single()
+        assertEquals(note.content, portable.content)
+        assertTrue(requireNotNull(portable.imagePath).startsWith("assets/"))
+        assertFalse(portable.imagePath!!.contains(root.absolutePath))
+        val cleaned = requireNotNull(service.clearBookRecords(book.id, LibraryCleanupKind.ANNOTATIONS))
+        assertTrue(cleaned.annotations.isEmpty())
+        assertEquals(listOf(portable), cleaned.book.chapters.single().sourceFootnotes)
+        val restored = service.download(uploaded)
+        assertTrue(restored.annotations.isEmpty())
+        val restoredChapter = restored.book.chapters.single()
+        val restoredNote = restoredChapter.sourceFootnotes.single()
+        assertEquals(note.copy(imagePath = restoredNote.imagePath), restoredNote)
+        assertEquals("[1]", File(requireNotNull(restoredChapter.textPath)).readText().substring(restoredNote.start, restoredNote.end))
+        assertArrayEquals(image.readBytes(), File(requireNotNull(restoredNote.imagePath)).readBytes())
+        assertEquals(sourcePath(image), book.chapters.single().sourceFootnotes.single().imagePath)
+    }
+
     @Test fun recordChangesReuseUploadedContentAndRestoreLatestSnapshot() = runBlocking {
         val (book, state) = novel()
         val first = service.upload(state, book)

@@ -118,7 +118,12 @@ class LibraryRepository(private val context: Context) {
                 }, inlineImages = chapter.array("inlineImages").objects().map { InlineImage(it.getInt("offset"), it.getString("path")) },
                 sourceStyles = chapter.array("sourceStyles").objects().map(::readSourceStyle),
                 subsections = chapter.array("subsections").objects().map(::readComicSection),
-                characterCount = chapter.optInt("characterCount", -1), lazySourcePath = chapter.nullableString("lazySourcePath"))
+                characterCount = chapter.optInt("characterCount", -1), lazySourcePath = chapter.nullableString("lazySourcePath"),
+                tocParentTitle = chapter.nullableString("tocParentTitle")?.takeIf { it.isNotBlank() },
+                sourceFootnotes = chapter.array("sourceFootnotes").objects().map { footnote ->
+                    SourceFootnote(footnote.getInt("start"), footnote.getInt("end"), footnote.getString("label"),
+                        footnote.getString("content"), footnote.nullableString("imagePath"))
+                })
 
     internal fun writeBook(book: Book): JSONObject = JSONObject()
         .put("id", book.id).put("title", book.title).put("author", book.author)
@@ -144,6 +149,11 @@ class LibraryRepository(private val context: Context) {
                 .put("sourceStyles", JSONArray(chapter.sourceStyles.map(::writeSourceStyle)))
                 .put("subsections", JSONArray(chapter.subsections.map(::writeComicSection)))
                 .put("characterCount", chapter.characterCount).put("lazySourcePath", chapter.lazySourcePath)
+                .put("tocParentTitle", chapter.tocParentTitle)
+                .put("sourceFootnotes", JSONArray(chapter.sourceFootnotes.map { footnote ->
+                    JSONObject().put("start", footnote.start).put("end", footnote.end).put("label", footnote.label)
+                        .put("content", footnote.content).put("imagePath", footnote.imagePath)
+                }))
 
     private fun readComicSection(json: JSONObject): ComicSection = ComicSection(
         json.getString("title"), json.getInt("startPage"), json.getInt("endPage"),
@@ -234,7 +244,8 @@ class LibraryRepository(private val context: Context) {
             fonts = json.array("fonts").objects().map { ImportedFont(it.getString("name"), it.getString("path")) },
             chapterRules = presets, activeChapterRuleId = selected.id,
             appearanceProfiles = readReaderThemeProfiles(json.optJSONArray("appearanceProfiles")),
-            activeAppearanceProfileId = json.nullableString("activeAppearanceProfileId")
+            activeAppearanceProfileId = json.nullableString("activeAppearanceProfileId"),
+            hierarchicalContents = json.optBoolean("hierarchicalContents", defaults.hierarchicalContents)
         )
     }
 
@@ -261,6 +272,7 @@ class LibraryRepository(private val context: Context) {
         .put("ttsFollowPage", settings.ttsFollowPage)
         .put("appearanceProfiles", JSONArray(settings.appearanceProfiles.map { it.toJson() }))
         .put("activeAppearanceProfileId", settings.activeAppearanceProfileId)
+        .put("hierarchicalContents", settings.hierarchicalContents)
         .put("chapterRules", JSONArray(presets.map {
             JSONObject().put("id", it.id).put("name", it.name).put("pattern", it.pattern)
         })).put("activeChapterRuleId", selected.id)

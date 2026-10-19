@@ -8,7 +8,8 @@ import java.util.zip.ZipFile
 import javax.xml.parsers.DocumentBuilderFactory
 
 data class EpubSection(val title: String, val html: String, val path: String, val css: String = "",
-                       val sourceStart: Int = 0, val sourceEnd: Int = html.length)
+                       val sourceStart: Int = 0, val sourceEnd: Int = html.length, val tocParentTitle: String? = null,
+                       val sourceNoteTargets: Map<String, String> = emptyMap())
 data class ParsedEpub(
     val title: String,
     val author: String,
@@ -19,7 +20,7 @@ data class ParsedEpub(
 
 /** EPUB package/spine parsing is independent of Android, so real ZIP fixtures can be tested. */
 object EpubArchive {
-    private data class TocLabel(val title: String, val fragment: String)
+    private data class TocLabel(val title: String, val fragment: String, val parentTitle: String? = null)
 
     fun read(file: File, fallbackTitle: String = file.nameWithoutExtension, onProgress: (Float) -> Unit = {}): ParsedEpub = ZipFile(file).use { zip ->
         onProgress(0f)
@@ -38,16 +39,16 @@ object EpubArchive {
             ?.filter { it.isNotEmpty() }?.joinToString("、").orEmpty()
         val manifest = opf.descendants("manifest").firstOrNull()?.descendants("item").orEmpty()
         val byId = manifest.associateBy { it.getAttribute("id") }
-        val labels = mutableMapOf<String, String>()
+        val labels = mutableMapOf<String, TocLabel>()
         val anchors = mutableMapOf<String, MutableList<TocLabel>>()
-        fun addLabel(base: String, href: String, title: String) {
+        fun addLabel(base: String, href: String, title: String, parentTitle: String? = null) {
             val fragment = URLDecoder.decode(href.substringAfter('#', "").replace("+", "%2B"), "UTF-8")
             if (isNoteReference("", title) || isFootnoteTarget("id='$fragment'")) return
             val path = resolve(base, href)
             if (fragment.isNotBlank()) {
                 val list = anchors.getOrPut(path) { mutableListOf() }
-                if (list.none { it.fragment == fragment }) list += TocLabel(title, fragment)
-            } else labels.putIfAbsent(path, title)
+                if (list.none { it.fragment == fragment }) list += TocLabel(title, fragment, parentTitle)
+            } else labels.putIfAbsent(path, TocLabel(title, fragment, parentTitle))
         }
         val navItem = manifest.firstOrNull { it.getAttribute("properties").split(' ').contains("nav") }
         if (navItem != null) {
@@ -66,7 +67,12 @@ object EpubArchive {
             nav?.descendants("a")?.forEach {
                 val href = it.getAttribute("href")
                 val attributes = "epub:type='${it.getAttributeNS("http://www.idpf.org/2007/ops", "type")} ${it.getAttribute("epub:type")}' role='${it.getAttribute("role")}'"
-                if (href.isNotBlank() && !isNoteReference(attributes, it.textContent)) addLabel(navPath, href, it.textContent.trim())
+                val parentTitle = generateSequence(it.parentNode) { node -> node.parentNode }
+                    .takeWhile { node -> node !== nav }.filterIsInstance<Element>()
+                    .filter { node -> node.elementName() == "li" }.drop(1)
+                    .mapNotNull { point -> point.childElements().firstOrNull { child -> child.elementName() in setOf("a", "span") }
+                        ?.textContent?.trim()?.takeIf(String::isNotBlank) }.lastOrNull()
+                if (href.isNotBlank() && !isNoteReference(attributes, it.textContent)) addLabel(navPath, href, it.textContent.trim(), parentTitle)
             }
         }
         val spine = opf.descendants("spine").firstOrNull()
@@ -88,17 +94,25 @@ object EpubArchive {
             xml(ncxPath).descendants("navPoint").forEach { point ->
                 val src = point.descendants("content").firstOrNull()?.getAttribute("src").orEmpty()
                 val label = point.descendants("navLabel").firstOrNull()?.textContent?.trim().orEmpty()
-                if (src.isNotBlank() && label.isNotBlank()) addLabel(ncxPath, src, label)
+                val parentTitle = generateSequence(point.parentNode) { it.parentNode }.filterIsInstance<Element>()
+                    .filter { it.elementName() == "navPoint" }
+                    .mapNotNull { parent -> parent.childElements().firstOrNull { it.elementName() == "navLabel" }
+                        ?.textContent?.trim()?.takeIf(String::isNotBlank) }.lastOrNull()
+                if (src.isNotBlank() && label.isNotBlank()) addLabel(ncxPath, src, label, parentTitle)
             }
         }
         val references = spine.descendants("itemref").filter { it.getAttribute("linear") != "no" }
+        val sourceDocuments = mutableMapOf<String, String>()
+        fun document(path: String): String = sourceDocuments.getOrPut(path) {
+            val entry = entries[path] ?: throw IllegalArgumentException("EPUB 章节文件缺失：$path")
+            zip.getInputStream(entry).use { decodeMarkup(it.readBytes()) }
+        }
         val sections = references
             .flatMapIndexed { index, ref ->
                 onProgress(index.toFloat() / references.size.coerceAtLeast(1))
                 val item = byId[ref.getAttribute("idref")] ?: return@flatMapIndexed emptyList()
                 val path = resolve(packagePath, item.getAttribute("href"))
-                val entry = entries[path] ?: throw IllegalArgumentException("EPUB 章节文件缺失：$path")
-                val html = zip.getInputStream(entry).use { decodeMarkup(it.readBytes()) }
+                val html = document(path)
                 val scanned = maskHtmlComments(html)
                 val notes = SourceHtmlNotes(scanned)
                 val bodyTag = sourceBodyTag(html)
@@ -115,18 +129,34 @@ object EpubArchive {
                         RegexOption.IGNORE_CASE)
                     label to expression.find(scanned)?.range?.first
                 }.filter { (_, offset) -> offset == null || !notes.contains(offset) }
-                val located = candidates.mapNotNull { (label, offset) -> offset?.let { it to label.title } }
+                val located = candidates.mapNotNull { (label, offset) -> offset?.let { it to label } }
                     .distinctBy { it.first }.sortedBy { it.first }
                 if (located.size > 1) {
                     located.mapIndexed { anchorIndex, (_, label) ->
                         val start = if (anchorIndex == 0) 0 else located[anchorIndex].first
                         val end = located.getOrNull(anchorIndex + 1)?.first ?: html.length
-                        EpubSection(label, sourceBodyFragment(html.substring(start, end), bodyTag), path, css, start, end)
+                        EpubSection(label.title, sourceBodyFragment(html.substring(start, end), bodyTag), path, css, start, end, label.parentTitle)
                     }
-                } else listOf(EpubSection((located.firstOrNull()?.second ?: labels[path] ?: candidates.firstOrNull()?.first?.title)
-                    .orEmpty().ifBlank { "第 ${index + 1} 章" }, html, path, css))
+                } else {
+                    val label = located.firstOrNull()?.second ?: labels[path] ?: candidates.firstOrNull()?.first
+                    listOf(EpubSection(label?.title.orEmpty().ifBlank { "第 ${index + 1} 章" }, html, path, css,
+                        tocParentTitle = label?.parentTitle))
+                }
             }
         require(sections.isNotEmpty()) { "EPUB 没有可阅读章节" }
+        val sectionReferences = sections.map { section -> sourceNoteReferences(section.html).mapNotNull { reference ->
+            val href = reference.href ?: return@mapNotNull null
+            val fragment = sourceNoteFragment(href) ?: return@mapNotNull null
+            val path = runCatching { if (href.substringBefore('#').isBlank()) section.path else resolve(section.path, href) }.getOrNull()
+                ?.takeIf { it in entries } ?: return@mapNotNull null
+            Triple(reference.target, path, fragment)
+        } }
+        val noteTargets = sectionReferences.flatten().groupBy { it.second }.mapValues { (path, targets) ->
+            sourceNoteTargets(document(path), targets.associate { "#${it.third}" to it.third })
+        }
+        val notedSections = sections.mapIndexed { index, section -> section.copy(sourceNoteTargets = sectionReferences[index].mapNotNull { (key, path, fragment) ->
+            noteTargets[path]?.get("#$fragment")?.let { key to it }
+        }.toMap()) }
         val coverId = metadata?.descendants("meta")?.firstOrNull { it.getAttribute("name") == "cover" }
             ?.getAttribute("content")
         val cover = manifest.firstOrNull { it.getAttribute("properties").split(' ').contains("cover-image") }
@@ -134,7 +164,7 @@ object EpubArchive {
         val images = manifest.filter { it.getAttribute("media-type").startsWith("image/") }
             .map { resolve(packagePath, it.getAttribute("href")) }.filter { entries.containsKey(it) }
         onProgress(1f)
-        ParsedEpub(title, author, sections,
+        ParsedEpub(title, author, notedSections,
             cover?.let { resolve(packagePath, it.getAttribute("href")) }?.takeIf { entries.containsKey(it) }, images)
     }
 
@@ -197,6 +227,11 @@ object EpubArchive {
         builder.setEntityResolver { _, _ -> org.xml.sax.InputSource(java.io.StringReader("")) }
         return builder.parse(bytes.inputStream()).documentElement
     }
+
+    private fun Element.elementName() = localName ?: tagName.substringAfter(':')
+
+    private fun Element.childElements(): List<Element> = (0 until childNodes.length)
+        .mapNotNull { childNodes.item(it) as? Element }
 
     private fun Element.descendants(name: String): List<Element> {
         val output = mutableListOf<Element>()

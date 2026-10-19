@@ -10,11 +10,71 @@ import java.nio.ByteBuffer
 import java.util.concurrent.CancellationException
 
 class MobiTocTest {
+    @Test fun indexesNumericFilePositionNotesAcrossSectionsWithoutChangingTheNativeDirectory() {
+        val template = "<body><h1>第一章</h1><p>甲🙂<a filepos='0000000000'><sup>1</sup></a>乙" +
+            "<a href='#fn2'>[2]</a></p><h1>第二章</h1><p>后文</p><p id='fn1'>数字小标注释</p>" +
+            "<p><a id='fn2'></a>锚点注释<a role='doc-backlink' href='#fnref2'>↩</a></p></body>"
+        val position = template.substring(0, template.indexOf("<p id='fn1'>")).toByteArray().size
+        val html = template.replace("0000000000", position.toString().padStart(10, '0'))
+        fixture(html, listOf(0 to "第一章", html.indexOf("<h1>第二章") to "第二章")) {
+            val book = MobiArchive.read(it)
+            assertEquals(listOf("第一章", "第二章"), book.sections.map { it.title })
+            assertTrue(book.sections[0].sourceNoteTargets.getValue("filepos:$position").contains("数字小标注释"))
+            assertTrue(book.sections[0].sourceNoteTargets.getValue("#fn2").contains("锚点注释"))
+            assertTrue(book.sections[1].sourceNoteTargets.isEmpty())
+        }
+    }
+
+    @Test fun nativeParentIndexesKeepTheOutermostTitleWithoutMovingChapterBoundaries() {
+        val html = "<body><p>卷首</p><p>第一章正文</p><p>第一节正文</p><p>尾声正文</p></body>"
+        val positions = listOf(0, html.indexOf("<p>第一章"), html.indexOf("<p>第一节"), html.indexOf("<p>尾声"))
+        val titles = listOf("上卷", "第一章", "第一节", "尾声")
+        fixture(html, positions.zip(titles), parents = listOf(null, 0, 1, null)) {
+            val sections = MobiArchive.read(it).sections
+            assertEquals(titles, sections.map { it.title })
+            assertEquals(listOf(null, "上卷", "上卷", null), sections.map { it.tocParentTitle })
+            assertEquals(positions, sections.map { it.sourceStart })
+            assertEquals(html.length, sections.last().sourceEnd)
+            assertTrue(sections[1].html.contains("第一章正文") && !sections[1].html.contains("第一节正文"))
+        }
+    }
+
+    @Test fun invalidOrCyclicParentIndexesLeaveTheFlatDirectoryUsable() {
+        val titles = listOf(10 to "甲", 20 to "乙")
+        for (parents in listOf(listOf(1, 0), listOf(99, 0), listOf(0, null))) {
+            val entries = read(directory(titles, parents))
+            assertEquals(titles.map { it.second }, entries.map { it.title })
+            assertTrue(entries.all { it.tocParentTitle == null })
+        }
+    }
+
+    @Test fun writingEditedMobiRetainsItsNativeParentsAndChapterText() {
+        val html = "<body><p>卷首</p><p>第一章原文</p><p>第二章正文</p><p>尾声正文</p></body>"
+        val positions = listOf(0, html.indexOf("<p>第一章"), html.indexOf("<p>第二章"), html.indexOf("<p>尾声"))
+        val titles = listOf("上卷", "第一章", "第二章", "尾声")
+        fixture(html, positions.zip(titles), parents = listOf(null, 0, 0, null)) { source ->
+            val parsed = MobiArchive.read(source)
+            val at = html.indexOf("原文")
+            val edit = SourceHtmlEdit.apply(html, listOf(SourceHtmlEdit.Change(at, at + 2, "修改后的正文")))
+            val output = File.createTempFile("eread-nested-written-", ".mobi")
+            try {
+                MobiSourceWriter.write(source, output, html, edit, parsed.sections)
+                val reread = MobiArchive.read(output)
+                assertEquals(titles, reread.sections.map { it.title })
+                assertEquals(listOf(null, "上卷", "上卷", null), reread.sections.map { it.tocParentTitle })
+                assertEquals(positions.map(edit::offset), reread.sections.map { it.sourceStart })
+                assertTrue(reread.sections[1].html.contains("第一章修改后的正文"))
+                assertTrue(reread.sections[2].html.contains("第二章正文"))
+            } finally { output.delete() }
+        }
+    }
+
     @Test fun singleEmbeddedEntryRemainsAnExplicitSourceDirectory() {
         fixture("<body><h1>Chapter I</h1><p>正文</p></body>", listOf(0 to "源目录的标题")) {
             val book = MobiArchive.read(it)
             assertTrue(book.hasEmbeddedToc)
             assertEquals("源目录的标题", book.sections.single().title)
+            assertEquals(null, book.sections.single().tocParentTitle)
         }
     }
 
@@ -114,9 +174,10 @@ class MobiTocTest {
         assertTrue(titles.any { it.contains("Alice", ignoreCase = true) && it.contains("Evidence", ignoreCase = true) })
     }
 
-    private fun fixture(html: String, toc: List<Pair<Int, String>>, mutate: (MutableList<ByteArray>) -> Unit = {}, block: (File) -> Unit) {
+    private fun fixture(html: String, toc: List<Pair<Int, String>>, mutate: (MutableList<ByteArray>) -> Unit = {},
+                        parents: List<Int?> = emptyList(), block: (File) -> Unit) {
         val bytes = html.toByteArray()
-        val records = directory(toc.map { (at, title) -> html.substring(0, at).toByteArray().size to title }).toMutableList()
+        val records = directory(toc.map { (at, title) -> html.substring(0, at).toByteArray().size to title }, parents).toMutableList()
         mutate(records)
         val header = ByteArray(252)
         put16(header, 0, 1)
@@ -144,13 +205,13 @@ class MobiTocTest {
         try { file.writeBytes(pdb); block(file) } finally { file.delete() }
     }
 
-    private fun directory(toc: List<Pair<Int, String>>): List<ByteArray> {
+    private fun directory(toc: List<Pair<Int, String>>, parents: List<Int?> = emptyList()): List<ByteArray> {
         val strings = ByteArrayOutputStream()
         val fields = toc.mapIndexed { index, (offset, title) ->
             val at = strings.size()
             val text = title.toByteArray()
             strings.write(vlq(text.size.toLong())); strings.write(text)
-            byteArrayOf(1, ('0'.code + index).toByte(), 7) + vlq(offset.toLong()) + vlq(at.toLong()) + vlq(0xffffffffL)
+            byteArrayOf(1, ('0'.code + index).toByte(), 7) + vlq(offset.toLong()) + vlq(at.toLong()) + vlq(parents.getOrNull(index)?.toLong() ?: 0xffffffffL)
         }
         val main = ByteArray(84)
         "INDX".toByteArray().copyInto(main)

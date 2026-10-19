@@ -9,6 +9,69 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 class EpubArchiveTest {
+    @Test fun indexesSameFileAndCrossFileNotesWithoutAddingChaptersOrFollowingExternalLinks() {
+        val body = "<html><body><p>正文<a epub:type='noteref' href='#fn1'>[1]</a>" +
+            "<a role='doc-noteref' href='notes.xhtml#fn2'>②</a><a href='#next'>下一章</a>" +
+            "<a epub:type='noteref' href='https://example.invalid/#fn3'>[3]</a></p>" +
+            "<aside id='fn1' role='doc-footnote'>同文件注释</aside><h2 id='next'>继续正文</h2></body></html>"
+        val file = archive(mapOf(
+            "META-INF/container.xml" to "<container><rootfile full-path='book.opf'/></container>",
+            "book.opf" to "<package><manifest><item id='body' href='body.xhtml'/><item id='notes' href='notes.xhtml'/></manifest><spine><itemref idref='body'/></spine></package>",
+            "body.xhtml" to body,
+            "notes.xhtml" to "<html><body><aside id='fn2' role='doc-endnote'><p>跨文件注释</p><a role='doc-backlink' href='body.xhtml#ref2'>返回</a></aside></body></html>"))
+        try {
+            val section = EpubArchive.read(file).sections.single()
+            assertEquals(body, section.html)
+            assertEquals(setOf("#fn1", "notes.xhtml#fn2"), section.sourceNoteTargets.keys)
+            assertTrue(section.sourceNoteTargets.getValue("#fn1").contains("同文件注释"))
+            assertTrue(section.sourceNoteTargets.getValue("notes.xhtml#fn2").contains("跨文件注释"))
+        } finally { file.delete() }
+    }
+
+    @Test fun nestedNavKeepsTheOutermostParentWithoutChangingAnchorBoundaries() {
+        val body = """<html><body><h1 id="volume">上卷</h1><p>卷首</p><h2 id="one">第一章</h2><p>正文一</p><h3 id="detail">第一节</h3><p>正文二</p><h1 id="last">尾声</h1><p>结尾</p></body></html>"""
+        val file = noteArchive("""<html xmlns:epub="http://www.idpf.org/2007/ops"><nav epub:type="toc"><ol><li><a href="body.xhtml#volume">上卷</a><ol><li><a href="body.xhtml#one">第一章</a><ol><li><a href="body.xhtml#detail">第一节</a></li></ol></li></ol></li><li><a href="body.xhtml#last">尾声</a></li></ol></nav></html>""", body)
+        try {
+            val sections = EpubArchive.read(file).sections
+            assertEquals(listOf("上卷", "第一章", "第一节", "尾声"), sections.map { it.title })
+            assertEquals(listOf(null, "上卷", "上卷", null), sections.map { it.tocParentTitle })
+            assertEquals(listOf(0, body.indexOf("<h2"), body.indexOf("<h3"), body.indexOf("<h1 id=\"last\"")), sections.map { it.sourceStart })
+            assertEquals(body.length, sections.last().sourceEnd)
+            assertTrue(sections[1].html.contains("正文一") && !sections[1].html.contains("正文二"))
+        } finally { file.delete() }
+    }
+
+    @Test fun spanNavParentIsRetainedForSeparateSpineFiles() {
+        val file = archive(mapOf(
+            "META-INF/container.xml" to "<container><rootfile full-path=\"book.opf\"/></container>",
+            "book.opf" to """<package><manifest><item id="a" href="a.xhtml"/><item id="b" href="b.xhtml"/><item id="nav" href="nav.xhtml" properties="nav"/></manifest><spine><itemref idref="a"/><itemref idref="b"/></spine></package>""",
+            "nav.xhtml" to """<html><nav><ol><li><span>第一部</span><ol><li><a href="a.xhtml">开篇</a></li><li><a href="b.xhtml">相遇</a></li></ol></li></ol></nav></html>""",
+            "a.xhtml" to "<html><body><p>正文一</p></body></html>",
+            "b.xhtml" to "<html><body><p>正文二</p></body></html>"))
+        try {
+            val sections = EpubArchive.read(file).sections
+            assertEquals(listOf("开篇", "相遇"), sections.map { it.title })
+            assertEquals(listOf("第一部", "第一部"), sections.map { it.tocParentTitle })
+            assertEquals(listOf("a.xhtml", "b.xhtml"), sections.map { it.path })
+        } finally { file.delete() }
+    }
+
+    @Test fun nestedNcxKeepsTheOutermostParentAndPhysicalSpineOrder() {
+        val file = archive(mapOf(
+            "META-INF/container.xml" to "<container><rootfile full-path=\"book.opf\"/></container>",
+            "book.opf" to """<package><manifest><item id="v" href="v.xhtml"/><item id="a" href="a.xhtml"/><item id="b" href="b.xhtml"/><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest><spine toc="ncx"><itemref idref="v"/><itemref idref="a"/><itemref idref="b"/></spine></package>""",
+            "toc.ncx" to """<ncx><navMap><navPoint><navLabel><text>卷一</text></navLabel><content src="v.xhtml"/><navPoint><navLabel><text>开篇</text></navLabel><content src="a.xhtml"/><navPoint><navLabel><text>小节</text></navLabel><content src="b.xhtml"/></navPoint></navPoint></navPoint></navMap></ncx>""",
+            "v.xhtml" to "<html><body>卷首</body></html>",
+            "a.xhtml" to "<html><body>正文一</body></html>",
+            "b.xhtml" to "<html><body>正文二</body></html>"))
+        try {
+            val sections = EpubArchive.read(file).sections
+            assertEquals(listOf("卷一", "开篇", "小节"), sections.map { it.title })
+            assertEquals(listOf(null, "卷一", "卷一"), sections.map { it.tocParentTitle })
+            assertEquals(listOf("v.xhtml", "a.xhtml", "b.xhtml"), sections.map { it.path })
+        } finally { file.delete() }
+    }
+
     @Test fun ignoresNotesNavigationAndCommentedAnchorCopies() {
         val file = noteArchive("""<html xmlns:epub="http://www.idpf.org/2007/ops"><nav epub:type="endnotes"><a href="body.xhtml#note">译者说明</a></nav><nav><a href="body.xhtml#one">第一章</a><a href="body.xhtml#two">第二章</a></nav></html>""",
             """<html><body><!--<h1 id="two">注释中的假标题</h1>--><h1 id="one">第一章</h1><p>正文一</p><h1 id="two">第二章</h1><p>正文二</p><aside id="note" role="doc-endnote">保留解释</aside></body></html>""")
@@ -55,6 +118,7 @@ class EpubArchiveTest {
             assertEquals("春日书", book.title)
             assertEquals("张青", book.author)
             assertEquals(listOf("春风", "春雨"), book.sections.map { it.title })
+            assertTrue(book.sections.all { it.tocParentTitle == null })
             assertTrue(book.sections.first().html.contains("第一章正文"))
             assertEquals("OPS/images/cover.png", book.coverPath)
         } finally { file.delete() }
@@ -71,6 +135,7 @@ class EpubArchiveTest {
             val book = EpubArchive.read(file)
             assertEquals("", book.author)
             assertEquals("第一回", book.sections.single().title)
+            assertNull(book.sections.single().tocParentTitle)
             assertNull(book.coverPath)
         } finally { file.delete() }
     }

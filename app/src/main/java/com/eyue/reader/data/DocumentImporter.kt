@@ -339,7 +339,7 @@ class DocumentImporter(private val context: Context) {
     private fun compactCachedBook(book: Book, annotations: List<Annotation>): Pair<Book, List<Annotation>> {
         val original = book.chapters.map { chapter -> chapter.textPath?.let { File(it).readText() }.orEmpty() }
         val compacted = book.chapters.mapIndexed { index, chapter ->
-            TextParser.compactParagraphs(ParsedTextChapter(chapter.title, original[index], chapter.inlineImages, chapter.sourceStyles))
+            TextParser.compactParagraphs(ParsedTextChapter(chapter.title, original[index], chapter.inlineImages, chapter.sourceStyles, chapter.tocParentTitle, chapter.sourceFootnotes))
         }
         val directory = File(context.filesDir, "books/${book.id}/chapters-compact-${UUID.randomUUID()}").apply { mkdirs() }
         try {
@@ -401,7 +401,7 @@ class DocumentImporter(private val context: Context) {
             val parsed = if (book.hasTextEdits) {
                 val cached = book.chapters.mapIndexed { index, chapter ->
                     val prepared = loadChapterContent(context, book, index)
-                    ParsedTextChapter(chapter.title, prepared.text, prepared.chapter.inlineImages, prepared.chapter.sourceStyles)
+                    ParsedTextChapter(chapter.title, prepared.text, prepared.chapter.inlineImages, prepared.chapter.sourceStyles, chapter.tocParentTitle, prepared.chapter.sourceFootnotes)
                 }
                 splitEditedTextChapters(cached, rule)
             } else withLocalDocument(context, bookSource(book)) { source ->
@@ -524,7 +524,7 @@ class DocumentImporter(private val context: Context) {
         return parsed.sections.mapIndexed { index, section ->
             report("缓存 EPUB 章节", section.title, index, parsed.sections.size)
             val images = mutableMapOf<String, String>()
-            val plain = HtmlChapterParser.readPlain(section.title, section.html) { attributes ->
+            val plain = HtmlChapterParser.readPlainWithNotes(section.title, section.html, noteTargets = section.sourceNoteTargets) { attributes ->
                 val reference = HtmlChapterParser.attribute(attributes, "src") ?: HtmlChapterParser.attribute(attributes, "xlink:href")
                     ?: HtmlChapterParser.attribute(attributes, "href")
                 val path = reference?.let { runCatching { EpubArchive.resolve(section.path, it) }.getOrNull() }
@@ -535,7 +535,7 @@ class DocumentImporter(private val context: Context) {
                     image.absolutePath
                 }.also { images[attributes] = it }
             }
-            saveLazyChapter(directory, index, plain, section.html, section.css, images)
+            saveLazyChapter(directory, index, plain, section.html, section.css, images, section.sourceNoteTargets).copy(tocParentTitle = section.tocParentTitle)
         }
     }
 
@@ -545,7 +545,7 @@ class DocumentImporter(private val context: Context) {
         return parsed.sections.mapIndexed { index, section ->
             report("缓存 MOBI 章节", section.title, index, parsed.sections.size)
             val images = mutableMapOf<String, String>()
-            val plain = HtmlChapterParser.readPlain(section.title, section.html, checkActive) { attributes ->
+            val plain = HtmlChapterParser.readPlainWithNotes(section.title, section.html, checkActive, section.sourceNoteTargets) { attributes ->
                 val reference = HtmlChapterParser.attribute(attributes, "recindex")?.toIntOrNull()
                     ?: (HtmlChapterParser.attribute(attributes, "src") ?: HtmlChapterParser.attribute(attributes, "xlink:href")
                         ?: HtmlChapterParser.attribute(attributes, "href"))?.let { src ->
@@ -558,7 +558,7 @@ class DocumentImporter(private val context: Context) {
                     image.absolutePath
                 }.also { images[attributes] = it }
             }
-            saveLazyChapter(directory, index, plain, section.html, parsed.css, images)
+            saveLazyChapter(directory, index, plain, section.html, parsed.css, images, section.sourceNoteTargets).copy(tocParentTitle = section.tocParentTitle)
         }.filter { it.characterCount > 0 || it.inlineImages.isNotEmpty() }
     }
 
@@ -567,7 +567,7 @@ class DocumentImporter(private val context: Context) {
         val available = parsed.imagePaths.toSet()
         return parsed.sections.mapIndexed { index, section ->
             report("解析 EPUB 章节", section.title, index, parsed.sections.size)
-            HtmlChapterParser.read(section.title, section.html, css = section.css) { attributes ->
+            HtmlChapterParser.readWithNotes(section.title, section.html, css = section.css, noteTargets = section.sourceNoteTargets) { attributes ->
                 val reference = HtmlChapterParser.attribute(attributes, "src") ?: HtmlChapterParser.attribute(attributes, "xlink:href")
                     ?: HtmlChapterParser.attribute(attributes, "href")
                 val path = reference?.let { runCatching { EpubArchive.resolve(section.path, it) }.getOrNull() }
@@ -582,7 +582,7 @@ class DocumentImporter(private val context: Context) {
                     }
                     image.absolutePath
                 }
-            }
+            }.copy(tocParentTitle = section.tocParentTitle)
         }
     }
 
@@ -591,7 +591,7 @@ class DocumentImporter(private val context: Context) {
         val cache = mutableMapOf<Int, String>()
         val content = parsed.sections.mapIndexed { index, section ->
             report("解析 MOBI 章节", section.title, index, parsed.sections.size)
-            HtmlChapterParser.read(section.title, section.html, css = parsed.css, checkActive = checkActive) { attributes ->
+            HtmlChapterParser.readWithNotes(section.title, section.html, css = parsed.css, checkActive = checkActive, noteTargets = section.sourceNoteTargets) { attributes ->
                 val reference = HtmlChapterParser.attribute(attributes, "recindex")?.toIntOrNull()
                     ?: (HtmlChapterParser.attribute(attributes, "src") ?: HtmlChapterParser.attribute(attributes, "xlink:href")
                         ?: HtmlChapterParser.attribute(attributes, "href"))?.let { src ->
@@ -608,7 +608,7 @@ class DocumentImporter(private val context: Context) {
                     }
                     image.absolutePath
                 }
-            }
+            }.copy(tocParentTitle = section.tocParentTitle)
         }
         val sections = (if (content.none { it.text.isNotBlank() }) content
             else if (rule != DEFAULT_CHAPTER_RULE) HtmlChapterParser.split(HtmlChapterParser.merge(content), rule)
@@ -697,7 +697,8 @@ class DocumentImporter(private val context: Context) {
             val path = reusable[index] ?: File(directory, "chapter-$index.txt").apply { writeText(chapter.text) }.absolutePath
             report("保存阅读章节", chapter.title, index + 1, chapters.size)
             Chapter(title = chapter.title, textPath = path, inlineImages = chapter.inlineImages,
-                sourceStyles = chapter.sourceStyles, characterCount = chapter.text.length)
+                sourceStyles = chapter.sourceStyles, characterCount = chapter.text.length, tocParentTitle = chapter.tocParentTitle,
+                sourceFootnotes = chapter.sourceFootnotes)
         }
 
     private data class SourceReference(val path: String, val linked: Boolean)

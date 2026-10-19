@@ -61,8 +61,25 @@ internal class EbookTextEdit(
                 }
             }
         }.filter { it.end > it.start }
+        val footnotes = chapter.sourceFootnotes.mapNotNull { footnote ->
+            val imageReference = footnote.start == footnote.end && footnote.imagePath != null
+            if (footnote.start < 0 || footnote.end < footnote.start || footnote.end > original.length ||
+                footnote.end == footnote.start && !imageReference) return@mapNotNull null
+            var index = edits.firstEndingAfter(footnote.start)
+            while (index < edits.replacements.size && edits.replacements[index].start < footnote.end) {
+                val edit = edits.replacements[index++]
+                if (edit.end > footnote.start && edit.end > edit.start &&
+                    edit.text != original.substring(edit.start, edit.end)) return@mapNotNull null
+            }
+            val from = edits.offset(footnote.start, afterInsertion = !imageReference)
+            val until = offset(footnote.end)
+            if (imageReference) footnote.copy(start = from, end = from)
+            else if (until <= from || text.substring(from, until) != original.substring(footnote.start, footnote.end)) null
+            else footnote.copy(start = from, end = until)
+        }
         return chapter.copy(textPath = textPath, characterCount = text.length, lazySourcePath = null,
-            inlineImages = chapter.inlineImages.map { it.copy(offset = offset(it.offset)) }, sourceStyles = styles)
+            inlineImages = chapter.inlineImages.map { it.copy(offset = offset(it.offset)) }, sourceStyles = styles,
+            sourceFootnotes = footnotes)
     }
 
     fun book(book: Book, updatedChapter: Chapter, chapterLengths: List<Int>): Book {
@@ -98,10 +115,22 @@ internal fun splitEditedTextChapters(chapters: List<ParsedTextChapter>, rule: St
         start
     }
     val images = parsed.map { mutableListOf<InlineImage>() }
+    val footnotes = parsed.map { mutableListOf<SourceFootnote>() }
     chapters.forEachIndexed { index, chapter -> chapter.inlineImages.forEach { image ->
         val position = oldStarts[index] + image.offset
         val target = newStarts.indexOfLast { it <= position }.coerceAtLeast(0)
         images[target] += image.copy(offset = (position - newStarts[target]).coerceIn(0, parsed[target].text.length))
+    } }
+    chapters.forEachIndexed { index, chapter -> chapter.sourceFootnotes.forEach { footnote ->
+        if (footnote.start >= 0 && footnote.end <= chapter.text.length &&
+            (footnote.end > footnote.start || footnote.end == footnote.start && footnote.imagePath != null)) {
+            val from = oldStarts[index] + footnote.start
+            val until = oldStarts[index] + footnote.end
+            val target = newStarts.binarySearch(from).let { if (it >= 0) it else -it - 2 }
+            if (target >= 0 && until <= newStarts[target] + parsed[target].text.length) {
+                footnotes[target] += footnote.copy(start = from - newStarts[target], end = until - newStarts[target])
+            }
+        }
     } }
     return parsed.mapIndexed { target, chapter ->
         val start = newStarts[target]
@@ -111,6 +140,6 @@ internal fun splitEditedTextChapters(chapters: List<ParsedTextChapter>, rule: St
             val until = minOf(end, oldStarts[index] + style.end)
             if (until > from) style.copy(start = from - start, end = until - start) else null
         } }
-        chapter.copy(inlineImages = images[target], sourceStyles = styles)
+        chapter.copy(inlineImages = images[target], sourceStyles = styles, sourceFootnotes = footnotes[target])
     }
 }

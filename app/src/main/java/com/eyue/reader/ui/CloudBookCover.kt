@@ -4,7 +4,7 @@ import android.graphics.Bitmap
 
 /** Blur the artwork itself so download controls stay sharp, including on Android 8. */
 internal fun cloudBookCover(source: Bitmap): Bitmap {
-    val scale = minOf(1f, 48f / maxOf(source.width, source.height))
+    val scale = minOf(1f, 96f / maxOf(source.width, source.height))
     val width = (source.width * scale).toInt().coerceAtLeast(1)
     val height = (source.height * scale).toInt().coerceAtLeast(1)
     val reduced = Bitmap.createScaledBitmap(source, width, height, true)

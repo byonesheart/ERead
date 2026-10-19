@@ -1,0 +1,25 @@
+{
+  "versionCode": 34,
+  "versionName": "1.9.5",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.9.5",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.9.5/ERead-1.9.5-debug.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1sRaWiXAhpeXX_jkrf6fXUw?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/e0816d5df7ed",
+      "extractionCode": "PfWV"
+    }
+  ],
+  "changelog": [
+    "TXT / EPUB / MOBI 编辑先预览，手动保存并显示进度，离开时提醒未保存的修改。",
+    "书架新增独立批量管理和云端还原入口，支持批量上传、下载及按书确认占用空间后删除。",
+    "搜索结果双击定位并显示章、节位置，手动移动后清除高亮；新增默认开启的二级折叠目录。",
+    "EPUB / MOBI 原文注释可点击小标查看。",
+    "更多功能请自行体验。"
+  ]
+}

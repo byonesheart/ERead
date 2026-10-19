@@ -42,6 +42,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.*
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
@@ -57,6 +58,7 @@ import com.eyue.reader.data.LibraryMode
 import com.eyue.reader.data.PageSource
 import com.eyue.reader.data.ReaderBackground
 import com.eyue.reader.data.ReaderSettings
+import com.eyue.reader.data.SourceFootnote
 import com.eyue.reader.data.ReadingMode
 import com.eyue.reader.data.AiSpeechConfig
 import com.eyue.reader.data.UnderlineStyle
@@ -131,9 +133,13 @@ internal fun ReaderScreen(
     onCancelSpeech: (() -> Unit)? = null,
     commonVoiceRoles: List<com.eyue.reader.data.BookVoiceRole>? = null,
     einkMode: Boolean = false,
-    tabletDualPage: Boolean = false
+    tabletDualPage: Boolean = false,
+    hasUnsavedText: Boolean = false,
+    saveProgress: com.eyue.reader.data.BookSaveProgress? = null,
+    onSaveText: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val showTextSave = hasUnsavedText || saveProgress != null
     val chineseDisplay by produceState<Pair<ChineseConversion, ChineseTextConverter?>?>(null, settings.chineseConversion) {
         value = settings.chineseConversion to ChineseTextConverter.load(context, settings.chineseConversion)
     }
@@ -201,6 +207,7 @@ internal fun ReaderScreen(
     var selectedPassage by remember(book.id) { mutableStateOf<ReaderSelectedPassage?>(null) }
     var txtSelection by remember(book.id) { mutableStateOf<ReaderSelectedPassage?>(null) }
     var tappedNoteIds by remember(book.id) { mutableStateOf<List<String>>(emptyList()) }
+    var tappedSourceFootnote by remember(book.id) { mutableStateOf<SourceFootnote?>(null) }
     var activeTextSelections by remember(book.id) { mutableStateOf<Set<Pair<Int, Int>>>(emptySet()) }
     var annotationAnchor by remember(book.id) { mutableStateOf(Rect.Zero) }
     var pointerAnchor by remember(book.id) { mutableStateOf<Rect?>(null) }
@@ -303,8 +310,8 @@ internal fun ReaderScreen(
     fun pauseSpeech() { speechPreparation?.cancel(); speechPreparation = null; speechResumePending = false; pendingSpeechLocation = null; speechOwnsPosition = false; if (!speech.pause()) speech.stop(); mediaAudio.pause() }
     fun stopSpeech() { pauseSpeech(); speech.stop(); mediaAudio.stop(); speechTexts = emptyList(); speechSessionActive = false; spokenLocation = null; followPagePrompt = false }
     fun dismissAnnotationBubble() {
-        if (selectedPassage != null || tappedNoteIds.isNotEmpty() || activeTextSelections.isNotEmpty()) {
-            selectedPassage = null; tappedNoteIds = emptyList(); activeTextSelections = emptySet(); selectionReset++
+        if (selectedPassage != null || tappedNoteIds.isNotEmpty() || tappedSourceFootnote != null || activeTextSelections.isNotEmpty()) {
+            selectedPassage = null; tappedNoteIds = emptyList(); tappedSourceFootnote = null; activeTextSelections = emptySet(); selectionReset++
         }
     }
     fun textSelectionChanged(sourceChapter: Int, sourcePage: Int, active: Boolean) {
@@ -340,7 +347,7 @@ internal fun ReaderScreen(
 
     fun jump(chapterNumber: Int, pageNumber: Int = 0, offset: Int = 0, imagePath: String? = null, imageIndexHint: Int? = null,
              fromSpeech: Boolean = false) {
-        if (!fromSpeech) pauseSpeechForNavigation()
+        if (!fromSpeech) { highlightQuery = ""; pauseSpeechForNavigation() }
         lastPagePending = false
         initialPositionPending = false
         restoring = true
@@ -433,6 +440,7 @@ internal fun ReaderScreen(
     }
     fun move(direction: Int) {
         if (book.chapters.isEmpty() || document == null || reflowing || restoring) return
+        highlightQuery = ""
         pauseSpeechForNavigation()
         chromeVisible = false
         if (settings.readingMode == ReadingMode.SCROLL &&
@@ -484,6 +492,7 @@ internal fun ReaderScreen(
     }
     fun openSelection(selection: ReaderSelectedPassage, kind: AnnotationKind) {
         tappedNoteIds = emptyList()
+        tappedSourceFootnote = null
         selectedPassage = selection.copy(anchor = selection.anchor ?: pointerAnchor)
         editorKind = kind
         noteDraft = ""
@@ -495,6 +504,7 @@ internal fun ReaderScreen(
         pauseSpeech()
         selectedPassage = null
         tappedNoteIds = emptyList()
+        tappedSourceFootnote = null
         selectionReset++
         txtSelection = selection
         panel = null
@@ -504,16 +514,30 @@ internal fun ReaderScreen(
         if (notes.isEmpty()) return false
         selectionReset++
         selectedPassage = null
+        tappedSourceFootnote = null
         annotationAnchor = anchor ?: pointerAnchor ?: Rect(view.width / 2f, view.height / 2f, view.width / 2f + 1, view.height / 2f + 1)
         tappedNoteIds = notes.map { it.id }
         chromeVisible = false
         return true
     }
     fun tapText(sourceChapter: Int, offset: Int, anchor: Rect) {
+        val footnote = readerSourceFootnoteAt(document?.chapters?.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty(), offset)
+        if (footnote != null) {
+            selectedPassage = null; tappedNoteIds = emptyList(); selectionReset++
+            annotationAnchor = anchor; tappedSourceFootnote = footnote; noteTapHandled = true
+            return
+        }
         val sourceText = document?.text?.getOrNull(sourceChapter).orEmpty()
         if (showNotes(readerTextAnnotations(sourceText, annotations, book.id, sourceChapter, offset), anchor)) noteTapHandled = true
     }
     fun tapImage(sourceChapter: Int, sourcePage: Int, sourceOffset: Int = 0, imagePath: String? = null) {
+        val footnote = imagePath?.let { readerSourceFootnoteAt(document?.chapters?.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty(), sourceOffset, it) }
+        if (footnote != null) {
+            selectedPassage = null; tappedNoteIds = emptyList(); selectionReset++
+            annotationAnchor = pointerAnchor ?: Rect(view.width / 2f, view.height / 2f, view.width / 2f + 1, view.height / 2f + 1)
+            tappedSourceFootnote = footnote; noteTapHandled = true
+            return
+        }
         val notes = annotations.filter { item -> item.bookId == book.id && item.chapterIndex == sourceChapter &&
             item.kind != AnnotationKind.BOOKMARK && (item.kind != AnnotationKind.NOTE || item.note.isNotBlank()) &&
             if (imagePath == null) item.imagePath == null && item.pageIndex == sourcePage
@@ -767,7 +791,7 @@ internal fun ReaderScreen(
     LaunchedEffect(book.id, listState, speech) {
         listState.interactionSource.interactions.collect { interaction ->
             when (interaction) {
-                is DragInteraction.Start -> { manualDrag = true; pauseSpeechForNavigation() }
+                is DragInteraction.Start -> { highlightQuery = ""; manualDrag = true; pauseSpeechForNavigation() }
                 is DragInteraction.Stop, is DragInteraction.Cancel -> manualDrag = false
             }
         }
@@ -787,9 +811,9 @@ internal fun ReaderScreen(
     }
     LaunchedEffect(scrolling) { if (scrolling) dismissAnnotationBubble() }
     LaunchedEffect(chapterIndex, pageIndex) { dismissAnnotationBubble() }
-    BackHandler(enabled = selectedPassage != null || tappedNoteIds.isNotEmpty()) { dismissAnnotationBubble() }
+    BackHandler(enabled = selectedPassage != null || tappedNoteIds.isNotEmpty() || tappedSourceFootnote != null) { dismissAnnotationBubble() }
     BackHandler(enabled = (panel == null || panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS) && selectedPassage == null && txtSelection == null &&
-        tappedNoteIds.isEmpty() && speechError == null) {
+        tappedNoteIds.isEmpty() && tappedSourceFootnote == null && speechError == null) {
         if (panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS) panel = null
         else if (chromeVisible) chromeVisible = false else { stopSpeech(); onClose() }
     }
@@ -1044,14 +1068,15 @@ internal fun ReaderScreen(
                                     onTap = { tapImage(sourceChapter, index, page.start, image.path) }, onLongPress = { inlineImageSelection(sourceChapter, index, page) }, markColor = color,
                                     modifier = Modifier.then(imageTapObserver).testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode)
                             } else ReaderSelectableText(readerAnnotatedPage(document?.text?.getOrNull(sourceChapter).orEmpty(), page, book.id, sourceChapter, annotations, highlightQuery,
-                                colors.primaryContainer, settings.nightMode, document?.sourceStyles?.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter)), textStyle, sourceChapter, index, page.start, selectionReset,
+                                colors.primaryContainer, settings.nightMode, document?.sourceStyles?.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
+                                document?.chapters?.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty()), textStyle, sourceChapter, index, page.start, selectionReset,
                                 onAction = { selection, kind -> openSelection(selection, kind) }, modifier = Modifier.fillMaxWidth().padding(bottom =
                                     if (readerParagraphGapAfter(document?.text?.getOrNull(sourceChapter).orEmpty(), page.end))
                                         with(density) { (textStyle.fontSize.value * settings.paragraphSpacing).sp.toDp() } else 0.dp),
                                 onTextLayout = { rememberLayout(sourceChapter, index, it) },
                                 onTextTap = { offset, anchor -> tapText(sourceChapter, offset, anchor) }, onEdit = if (editable) { selection -> openTxtEditor(selection) } else null,
                                 onRole = onRoleSelection?.let { callback -> { passage -> selectionReset++; callback(passage.quote) } },
-                                selectionMenuEnabled = selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() && panel == null,
+                                selectionMenuEnabled = selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() && tappedSourceFootnote == null && panel == null,
                                 paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter,
                                 sourceContext = document?.text?.getOrNull(sourceChapter),
                                 onSelectionActive = { textSelectionChanged(sourceChapter, index, it) })
@@ -1064,11 +1089,11 @@ internal fun ReaderScreen(
                     var drag by remember(chapterIndex, pageIndex) { mutableStateOf(0f) }
                     Box(Modifier.fillMaxSize().pointerInput(book.id, book.chapters, chapterIndex, pageIndex, textPages, pageCounts, settings.readingMode, speech) {
                         if (settings.readingMode == ReadingMode.VERTICAL_PAGED) detectVerticalDragGestures(
-                            onDragStart = { drag = 0f; manualDrag = true; pauseSpeechForNavigation() },
+                            onDragStart = { highlightQuery = ""; drag = 0f; manualDrag = true; pauseSpeechForNavigation() },
                             onVerticalDrag = { change, amount -> change.consume(); drag += amount },
                             onDragEnd = { if (abs(drag) > size.height * .1f) move(if (drag < 0) 1 else -1); manualDrag = false },
                             onDragCancel = { manualDrag = false })
-                        else detectHorizontalDragGestures(onDragStart = { drag = 0f; manualDrag = true; pauseSpeechForNavigation() },
+                        else detectHorizontalDragGestures(onDragStart = { highlightQuery = ""; drag = 0f; manualDrag = true; pauseSpeechForNavigation() },
                             onHorizontalDrag = { change, amount -> change.consume(); drag += amount },
                             onDragEnd = { if (abs(drag) > size.width * 0.14f) move(if (drag < 0) 1 else -1); manualDrag = false },
                             onDragCancel = { manualDrag = false })
@@ -1100,13 +1125,14 @@ internal fun ReaderScreen(
                                     modifier = Modifier.padding(horizontal = ReaderTextHorizontalPadding, vertical = ReaderTextVerticalPadding).then(imageTapObserver)
                                         .testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode)
                             } else ReaderSelectableText(readerAnnotatedPage(sourceText, page, book.id, sourceChapter, annotations, highlightQuery,
-                                colors.primaryContainer, settings.nightMode, document?.sourceStyles?.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter)), textStyle, sourceChapter, sourcePage, page.start, selectionReset,
+                                colors.primaryContainer, settings.nightMode, document?.sourceStyles?.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
+                                document?.chapters?.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty()), textStyle, sourceChapter, sourcePage, page.start, selectionReset,
                                 onAction = { selection, kind -> if (interactive) openSelection(selection, kind) }, modifier = Modifier.fillMaxSize().padding(horizontal = ReaderTextHorizontalPadding, vertical = ReaderTextVerticalPadding),
                                 onTextLayout = { rememberLayout(sourceChapter, sourcePage, it) },
                                 onTextTap = { offset, anchor -> if (interactive) tapText(sourceChapter, offset, anchor) },
                                 onEdit = if (editable && interactive) { selection -> openTxtEditor(selection) } else null,
                                 onRole = onRoleSelection?.let { callback -> { passage -> selectionReset++; callback(passage.quote) } },
-                                selectionMenuEnabled = interactive && selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() && panel == null,
+                                selectionMenuEnabled = interactive && selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() && tappedSourceFootnote == null && panel == null,
                                 paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter, sourceContext = sourceText,
                                 onSelectionActive = { textSelectionChanged(sourceChapter, sourcePage, it) })
                         }
@@ -1115,27 +1141,31 @@ internal fun ReaderScreen(
                 }
             }
         }
-        if (!chromeVisible) ReaderStatus(settings, chapterTitle, muted, currentBookmarks.isNotEmpty())
+        if (!chromeVisible && !showTextSave) ReaderStatus(settings, chapterTitle, muted, currentBookmarks.isNotEmpty())
         if (!chromeVisible) Text("${(progress * 100).toInt()}%  ·  " + if (directScroll) scrollPageProgress!!.label else if (!allPagesReady)
             "本章 $visiblePageEnd / $chapterPageCount 页 · 总页数统计中" else
             "${if (totalPages > 0) globalPage.coerceAtMost(totalPages) else 0} / $totalPages 页",
             modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 8.dp).testTag("reader_page_progress"), fontSize = 11.sp, color = muted)
-        if (chromeVisible) {
+        if (chromeVisible || showTextSave) {
             Surface(color = colors.surface.copy(alpha = 0.97f), contentColor = colors.onSurface,
                 modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
                 Row(Modifier.height(56.dp).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { stopSpeech(); onClose() }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回书架") }
+                    val actionSize = Modifier.size(if (showTextSave) 40.dp else 48.dp)
+                    IconButton(onClick = { stopSpeech(); onClose() }, modifier = actionSize) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回书架") }
                     Text(book.title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
-                    IconButton(onClick = ::toggleBookmark) { Icon(Icons.Outlined.BookmarkBorder, "快速添加书签", tint = if (currentBookmarks.isNotEmpty()) colors.primary else colors.onSurface) }
+                    IconButton(onClick = ::toggleBookmark, modifier = actionSize) { Icon(Icons.Outlined.BookmarkBorder, "快速添加书签", tint = if (currentBookmarks.isNotEmpty()) colors.primary else colors.onSurface) }
                     if (editable) IconButton(onClick = {
                         openTxtEditor(ReaderSelectedPassage(chapterIndex, pageIndex, 0, currentText.length, currentText))
-                    }, enabled = document != null && !reflowing && !restoring) { Icon(Icons.Outlined.Edit, "编辑当前章节") }
-                    IconButton(onClick = { onSettings(settings.copy(nightMode = !settings.nightMode)) }) {
+                    }, enabled = document != null && !reflowing && !restoring && !textEditBusy, modifier = actionSize) { Icon(Icons.Outlined.Edit, "编辑当前章节") }
+                    IconButton(onClick = { onSettings(settings.copy(nightMode = !settings.nightMode)) }, modifier = actionSize) {
                         Icon(if (settings.nightMode) Icons.Outlined.LightMode else Icons.Outlined.DarkMode, "切换夜间模式")
                     }
-                    IconButton(onClick = { openPanel(ReaderPanel.SEARCH) }) { Icon(Icons.Outlined.Search, "全文搜索与替换") }
+                    IconButton(onClick = { openPanel(ReaderPanel.SEARCH) }, modifier = actionSize) { Icon(Icons.Outlined.Search, "全文搜索与替换") }
+                    if (showTextSave) ReaderDraftSaveAction(saveProgress, textEditBusy, onSaveText)
                 }
             }
+        }
+        if (chromeVisible) {
             Surface(color = colors.surface.copy(alpha = 0.97f), contentColor = colors.onSurface,
                 modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter)
                 .onSizeChanged { toolbarHeight = it.height }) {
@@ -1155,7 +1185,7 @@ internal fun ReaderScreen(
                         Icon(Icons.Outlined.SkipPrevious, "上一章", Modifier.size(22.dp))
                     }
                     Slider(progressDraft ?: if (directScroll || !allPagesReady) progress else if (totalPages <= 1) 0f else (globalPage - 1).toFloat() / (totalPages - 1),
-                        onValueChange = { pauseSpeechForNavigation(); progressDraft = it }, onValueChangeFinished = {
+                        onValueChange = { highlightQuery = ""; pauseSpeechForNavigation(); progressDraft = it }, onValueChangeFinished = {
                             progressDraft?.let(::seekProgress)
                             progressDraft = null
                         }, enabled = (directScroll || totalPages > 1) && !reflowing && !restoring,
@@ -1279,12 +1309,13 @@ internal fun ReaderScreen(
         if (tappedNoteIds.isNotEmpty() && tappedNotes.isEmpty()) tappedNoteIds = emptyList()
     }
     if (tappedNotes.isNotEmpty()) ReaderAnnotationPreview(settings, tappedNotes, annotationAnchor, onDeleteAnnotation) { tappedNoteIds = emptyList() }
+    tappedSourceFootnote?.let { footnote -> ReaderSourceFootnotePreview(footnote, annotationAnchor) { tappedSourceFootnote = null } }
     txtSelection?.let { selected ->
         ReaderTxtEditor(settings, selected, onSave = { replacement ->
             txtSelection = null
             selectionReset++
             onEditTxt(selected.chapter, selected.start, selected.end, replacement)
-        }, onDismiss = { txtSelection = null; selectionReset++ }, overwriteSource = book.format in setOf(BookFormat.EPUB, BookFormat.MOBI))
+        }, onDismiss = { txtSelection = null; selectionReset++ })
     }
     when (panel) {
         ReaderPanel.FONTS -> ReaderFontSettings(settings, onSettings, { panel = ReaderPanel.INTERFACE; onImportFont() }, { panel = ReaderPanel.INTERFACE })
@@ -1297,7 +1328,8 @@ internal fun ReaderScreen(
             speechGenerationBusy = speechGenerationBusy,
             cachedSpeechChapters = speechStatus.chapters, speechBookComplete = speechStatus.complete,
             otherCachedSpeechChapters = speechStatus.otherChapters,
-            speechGeneration = speechGeneration, onCancelSpeech = onCancelSpeech) { targetChapter, targetPage ->
+            speechGeneration = speechGeneration, onCancelSpeech = onCancelSpeech,
+            onHierarchyChange = { onSettings(settings.copy(hierarchicalContents = it)) }) { targetChapter, targetPage ->
             jumpPage(targetChapter, targetPage); panel = null
             }
         }
@@ -1362,10 +1394,16 @@ internal fun readerPageText(text: String, page: ReaderTextPage): String = text.s
 
 private fun readerAnnotatedPage(text: String, page: ReaderTextPage, bookId: String, chapter: Int, annotations: List<Annotation>,
     query: String, searchColor: Color, night: Boolean, sourceStyles: ReaderSourceStyles?, baseStyle: TextStyle,
-    spoken: IntRange? = null): AnnotatedString {
+    spoken: IntRange? = null, sourceFootnotes: List<SourceFootnote> = emptyList()): AnnotatedString {
     val visible = readerPageText(text, page)
     val result = AnnotatedString.Builder(sourceStyles?.apply(text, page.start, page.end, baseStyle) ?: AnnotatedString(visible))
     readerSearchHighlight(visible, query, searchColor).spanStyles.forEach { result.addStyle(it.item, it.start, it.end) }
+    sourceFootnotes.filter { it.imagePath == null }.forEach { item ->
+        val start = (item.start - page.start).coerceIn(0, visible.length)
+        val end = (item.end - page.start).coerceIn(0, visible.length)
+        if (end > start) result.addStyle(SpanStyle(color = if (night) Color(0xFFA9C8F0) else Color(0xFF46638B),
+            textDecoration = TextDecoration.Underline), start, end)
+    }
     annotations.filter { it.bookId == bookId && it.chapterIndex == chapter && it.imagePath == null && it.kind != AnnotationKind.BOOKMARK }.forEach { item ->
         val range = readerAnnotationRange(text, item) ?: return@forEach
         val start = (range.first - page.start).coerceIn(0, visible.length)

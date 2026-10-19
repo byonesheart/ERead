@@ -94,6 +94,19 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         get() = organizing || editingBookIds.isNotEmpty()
         private set(value) { organizing = value }
     val textEditBusy: Boolean get() = organizing || activeBookId in editingBookIds
+    private data class BookDraft(val baseBook: Book, val previewBook: Book,
+        val annotations: List<Annotation>, val directories: List<File>)
+    private var bookDrafts by mutableStateOf<Map<String, BookDraft>>(emptyMap())
+    val unsavedBookIds: Set<String> get() = bookDrafts.keys
+    val activeReaderBook: Book? get() = activeBookId?.let { id ->
+        bookDrafts[id]?.previewBook ?: state.books.find { it.id == id }
+    }
+    var bookSaveProgress by mutableStateOf<Map<String, BookSaveProgress>>(emptyMap())
+        private set
+
+    fun hasBookDraft(bookId: String): Boolean = bookId in bookDrafts
+    fun readerAnnotations(bookId: String): List<Annotation> = bookDrafts[bookId]?.annotations
+        ?: state.annotations.filter { it.bookId == bookId }
     var rebuildingContents by mutableStateOf(false)
         private set
     var importProgress by mutableStateOf<ImportProgress?>(null)
@@ -224,6 +237,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         if (file.path !in retained && file.toPath().startsWith(owned)) file.delete()
                     }
                 }
+                withContext(Dispatchers.IO) { removeUnusedEditDirectories(upgraded) }
                 upgraded
             }
             if (loaded.isFailure) {
@@ -417,6 +431,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             }
             val keepIncoming = incoming.id in selected
             val discardedIds = candidates.filterNot { it.id in selected }.map { it.id }
+            require(discardedIds.none(::hasBookDraft)) { "同名书籍有未保存修改，请先保存或放弃后再重新导入" }
             if (!keepIncoming && discardedIds.isEmpty()) return state.books.firstOrNull { it.id in selected && !it.cloudOnly }
             if (keepIncoming) notices += prepareImportedBooks(listOf(incoming))
             for (id in discardedIds) {
@@ -493,6 +508,31 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun referencedBookPaths(book: Book): List<String> = listOfNotNull(book.sourcePath, book.coverPath) +
+        book.chapters.flatMap { chapter -> listOfNotNull(chapter.textPath, chapter.lazySourcePath) +
+            chapter.inlineImages.map { it.path } + chapter.sourceFootnotes.mapNotNull { it.imagePath } +
+            chapter.pages.flatMap { listOfNotNull(it.path, it.textPath) } }
+
+    private fun removeUnusedEditDirectories(snapshot: LibraryState) {
+        val retained = snapshot.books.flatMap(::referencedBookPaths).map { File(it).absoluteFile.toPath() }
+        File(getApplication<Application>().filesDir, "books").listFiles()?.filter { it.isDirectory }?.forEach { bookDirectory ->
+            bookDirectory.listFiles()?.filter { it.isDirectory && it.name.startsWith("edit-") }?.forEach { directory ->
+                val path = directory.absoluteFile.toPath()
+                if (retained.none { it.startsWith(path) }) directory.deleteRecursively()
+            }
+        }
+    }
+
+    override fun onCleared() {
+        val directories = bookDrafts.values.flatMap { it.directories }
+        viewModelScope.coroutineContext[Job]?.invokeOnCompletion {
+            val retained = state.books.flatMap(::referencedBookPaths).map { File(it).absoluteFile.toPath() }
+            directories.filter { directory -> retained.none { it.startsWith(directory.absoluteFile.toPath()) } }
+                .forEach { it.deleteRecursively() }
+        }
+        super.onCleared()
+    }
+
     private suspend fun persistNow() {
         if (!storageReady) return
         saveMutex.withLock {
@@ -564,10 +604,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                  imagePath: String? = null) {
         val id = bookId ?: return
         if (id != activeBookId) return
-        changed(state.copy(books = state.books.map {
-            if (it.id == id) it.copy(chapterIndex = chapter, pageIndex = page, characterOffset = offset,
-                progress = progress.coerceIn(0f, 1f), lastReadAt = System.currentTimeMillis(), positionImagePath = imagePath) else it
-        }))
+        fun positioned(book: Book) = book.copy(chapterIndex = chapter, pageIndex = page, characterOffset = offset,
+            progress = progress.coerceIn(0f, 1f), lastReadAt = System.currentTimeMillis(), positionImagePath = imagePath)
+        val draft = bookDrafts[id]
+        if (draft != null) bookDrafts = bookDrafts + (id to draft.copy(previewBook = positioned(draft.previewBook)))
+        else changed(state.copy(books = state.books.map { if (it.id == id) positioned(it) else it }))
     }
 
     fun settings(settings: ReaderSettings) = applySettings(settings, mode)
@@ -606,8 +647,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             comicSettings = state.comicSettings.copy(nightMode = settings.nightMode))
         changed(updated.copy(themeMode = theme).withResolvedTheme(systemDark))
     }
-    fun annotate(annotation: Annotation) = changed(state.copy(annotations = state.annotations + annotation))
-    fun deleteAnnotation(id: String) = changed(state.copy(annotations = state.annotations.filterNot { it.id == id }))
+    fun annotate(annotation: Annotation) {
+        val draft = bookDrafts[annotation.bookId]
+        if (draft != null) bookDrafts = bookDrafts + (annotation.bookId to draft.copy(annotations = draft.annotations + annotation))
+        else changed(state.copy(annotations = state.annotations + annotation))
+    }
+
+    fun deleteAnnotation(id: String) {
+        val draft = bookDrafts.values.find { pending -> pending.annotations.any { it.id == id } }
+        if (draft != null) bookDrafts = bookDrafts + (draft.baseBook.id to draft.copy(annotations = draft.annotations.filterNot { it.id == id }))
+        else changed(state.copy(annotations = state.annotations.filterNot { it.id == id }))
+    }
 
     fun createGroup(name: String) {
         val value = groupName(name, mode) ?: return
@@ -645,7 +695,23 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun deleteBook(book: Book) = removeBook(book, false)
 
+    fun removeBooks(books: List<Book>, removeCloud: Boolean) {
+        val ids = books.map { it.id }.toSet()
+        val selected = state.books.filter { it.id in ids }
+        if (selected.isEmpty()) return
+        if (selected.any { hasBookDraft(it.id) }) { message = "所选书籍有未保存修改，请先保存或放弃后再批量删除"; return }
+        if (loading || rebuildingContents || cleaningLibrary || cloudBusy ||
+            selected.any { it.id in editingBookIds || it.id in cloudTransfers }) {
+            message = "所选书籍仍在处理中，请完成或取消后再批量删除"; return
+        }
+        if (removeCloud && selected.any { it.cloudEnabled || it.cloudOnly } && !cloudConfigured) { message = "请先配置 WebDAV 网盘"; return }
+        selected.forEach { removeBook(it, removeCloud && (it.cloudEnabled || it.cloudOnly)) }
+    }
+
     fun removeBook(book: Book, removeCloud: Boolean) {
+        if (hasBookDraft(book.id)) { message = "请先保存或放弃这本书的修改"; return }
+        if (book.id in editingBookIds || book.id in cloudTransfers) { message = "请等待或取消这本书的当前操作后再移除"; return }
+        if (state.books.none { it.id == book.id }) return
         cloudMetadataEpoch++
         if (removeCloud) {
             val allowMetered = meteredNetwork
@@ -658,14 +724,23 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 service.identity()?.let { account -> withContext(Dispatchers.IO) { cloudHistory.forget(account, book.id) } }
                 removeLocalBook(book)
             }
-        } else viewModelScope.launch {
-            try {
-                stopAiSpeechConversion(book.id)
-                stopCloudUploadSubmission(book.id)
-                cloudOperationMutex.withBook(book.id) { removeLocalBook(book) }
+        } else {
+            cloudBookOperations = cloudBookOperations + (book.id to CloudTransferProgress("正在移除书籍"))
+            val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    stopAiSpeechConversion(book.id)
+                    stopCloudUploadSubmission(book.id)
+                    cloudOperationMutex.withBook(book.id) { removeLocalBook(book) }
+                }
+                catch (error: CancellationException) { throw error }
+                catch (error: Exception) { message = error.message ?: "移除书籍失败" }
+                finally {
+                    cloudBookJobs.remove(book.id)
+                    cloudBookOperations = cloudBookOperations - book.id
+                }
             }
-            catch (error: CancellationException) { throw error }
-            catch (error: Exception) { message = error.message ?: "移除书籍失败" }
+            cloudBookJobs[book.id] = job
+            job.start()
         }
     }
 
@@ -729,6 +804,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (!loading && !storageReady) { message = "书架未能加载，无法备份或还原，请先处理本地书架错误"; return }
         if (loading || rebuildingContents || importing && bookId == null && !allowImport) { message = "请等待当前文件整理完成"; return }
         if (bookId != null && state.books.none { it.id == bookId }) return
+        if (bookId != null && hasBookDraft(bookId)) { message = "请先保存或放弃这本书的修改，再进行云端操作"; return }
         if (bookId != null && (bookId in editingBookIds || organizing && activeImportId == null && activeBookId == bookId)) {
             message = "请等待这本书编辑完成"; return
         }
@@ -903,6 +979,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun generateAiSpeech(bookId: String, chapters: Set<Int>? = null) {
+        if (hasBookDraft(bookId)) { message = "请先保存这本书的修改，再生成 AI 语音"; return }
         if (aiSpeechSubmissionJobs[bookId]?.isActive == true || aiSpeechCancellationJobs[bookId]?.isActive == true ||
             aiSpeechGenerations[bookId]?.running == true) { message = "本书正在转化，请先完成或取消本书任务"; return }
         if (!storageReady || loading || importing || rebuildingContents || cleaningLibrary) { message = "请等待本地书架和文件整理完成"; return }
@@ -1033,6 +1110,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun cleanupLibrary(kind: LibraryCleanupKind, clearCloud: Boolean) {
+        if (bookDrafts.isNotEmpty()) { message = "请先保存或放弃未保存的正文修改，再清理记录"; return }
         if (cleaningLibrary || loading || importing || savingBookVoiceRoles || cloudBusy) return
         if (clearCloud && !cloudConfigured) { message = "请先配置 WebDAV 网盘"; return }
         val allowMetered = meteredNetwork
@@ -1078,12 +1156,25 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun uploadCloudBook(book: Book) = uploadCloudBooks(listOf(book))
 
+    fun transferCloudBooks(books: List<Book>) {
+        if (loading || rebuildingContents || !storageReady || cloudBusy) { message = "请等待书架或当前云端操作完成"; return }
+        if (!cloudConfigured) { message = "请先配置 WebDAV 网盘"; return }
+        val ids = books.map { it.id }.toSet()
+        val selected = state.books.filter { it.id in ids }
+        val available = selected.filter { it.id !in cloudTransfers && it.id !in editingBookIds && !hasBookDraft(it.id) }
+        if (available.size != selected.size) message = "已跳过处理中或有未保存修改的书籍，其余书籍继续传输"
+        uploadCloudBooks(available.filterNot { it.cloudOnly })
+        available.filter { it.cloudOnly }.forEach(::downloadCloudBook)
+    }
+
     fun uploadCloudBooks(books: List<Book>) {
+        if (books.any { hasBookDraft(it.id) }) message = "请先保存或放弃已编辑书籍的修改，再上传该书"
+        if (books.isNotEmpty() && books.all { hasBookDraft(it.id) }) return
         if (cloudBusy) return
         if (!storageReady || loading || rebuildingContents) { message = "请等待本地书架和文件整理完成"; return }
         if (!cloudConfigured) { message = "请先配置 WebDAV 网盘"; return }
         val selected = books.mapNotNull { target -> state.books.find { it.id == target.id && !it.cloudOnly && it.id !in cloudTransfers &&
-            it.id !in editingBookIds && !(organizing && activeImportId == null && it.id == activeBookId) } }.distinctBy { it.id }
+            it.id !in editingBookIds && !hasBookDraft(it.id) && !(organizing && activeImportId == null && it.id == activeBookId) } }.distinctBy { it.id }
         val account = cloudIdentity ?: return
         if (selected.isEmpty()) return
         selected.forEach { pendingCloudUploads = pendingCloudUploads + (it.id to CloudTransferProgress("检查同名云端书籍", cancellable = true)) }
@@ -1155,6 +1246,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val incoming = pendingCloudUpload ?: return
         val account = pendingUploadIdentity ?: return
         val conflicts = cloudUploadConflicts
+        if (conflicts.any { conflict -> conflict.locals.any { hasBookDraft(it.id) } }) {
+            message = "同名书籍有未保存修改，请先保存或放弃后再确认云端操作"; return
+        }
         val resolved = try { normalizedCloudRestoreSelections(conflicts, selections) }
             catch (error: IllegalArgumentException) { message = error.message; return }
         if (meteredNetwork && !allowMetered) { message = "当前为计费网络，请确认允许流量后更新云端"; return }
@@ -1316,6 +1410,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun resolveCloudRestoreSelections(selections: Map<String, CloudRestoreSelection>, allowMetered: Boolean) {
         val info = pendingCloudRestore ?: return
         val conflicts = cloudRestoreConflicts
+        if (conflicts.any { conflict -> conflict.locals.any { hasBookDraft(it.id) } }) {
+            message = "同名书籍有未保存修改，请先保存或放弃后再确认云端操作"; return
+        }
         val resolved = try { cloudRestoreSelectionsForState(state, info, selections, pendingRestoreMatches) }
             catch (error: IllegalArgumentException) { message = error.message; return }
         val updatesCloud = resolved.values.any { it.keepLocalIds.size + (if (it.keepRemote) 1 else 0) == 1 }
@@ -1506,6 +1603,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun applyChapterRule(settings: ReaderSettings) {
+        if (bookDrafts.isNotEmpty()) { message = "请先保存或放弃未保存的正文修改，再更新目录"; return }
         val rule = settings.chapterRule
         if (cloudBusy || cloudTransfers.isNotEmpty()) { message = "请等待云端上传或还原完成后再更新目录"; return }
         if (importing) return
@@ -1560,34 +1658,33 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private data class PendingSourceEdit(val bookId: String, val chapter: Int, val start: Int, val end: Int,
-        val replacement: String, val expectedText: String? = null, val findAll: String? = null)
-    private var pendingSourceEdit: PendingSourceEdit? = null
+    private data class PendingSourceSave(val bookId: String, val onSaved: () -> Unit)
+    private var pendingSourceSave: PendingSourceSave? = null
     var pendingSourceWriteUri by mutableStateOf<String?>(null)
         private set
 
-    fun cancelSourceWrite() { pendingSourceWriteUri = null; pendingSourceEdit = null }
+    fun cancelSourceWrite() { pendingSourceWriteUri = null; pendingSourceSave = null }
 
     fun resumeSourceWrite(uri: Uri) {
-        val pending = pendingSourceEdit ?: return
-        val original = state.books.find { it.id == pending.bookId } ?: return cancelSourceWrite()
-        pendingSourceWriteUri = null
-        pendingSourceEdit = null
-        if (organizing || original.id in editingBookIds || cloudBusy || original.id in cloudTransfers || activeBookId != original.id) { message = "请重新打开这本书后再编辑"; return }
-        editingBookIds = editingBookIds + original.id
+        val pending = pendingSourceSave ?: return
+        val draft = bookDrafts[pending.bookId] ?: return cancelSourceWrite()
+        cancelSourceWrite()
+        if (pending.bookId in editingBookIds || pending.bookId in cloudTransfers) {
+            message = "请等待这本书的当前操作完成后再保存"; return
+        }
+        editingBookIds = editingBookIds + pending.bookId
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    require(EbookSourceWriteback.sameDocument(getApplication(), EbookSourceWriteback.source(original), uri.toString())) {
+                    require(EbookSourceWriteback.sameDocument(getApplication(), EbookSourceWriteback.source(draft.baseBook), uri.toString())) {
                         "请选择刚才编辑的同一本原文件，修改尚未保存"
                     }
                     EbookSourceWriteback.requireWritable(getApplication(), uri.toString())
                 }
-                editingBookIds = editingBookIds - original.id
-                editBookText(pending.chapter, pending.start, pending.end, pending.replacement, uri.toString(),
-                    pending.expectedText, pending.findAll)
+                editingBookIds = editingBookIds - pending.bookId
+                saveBookDraft(pending.bookId, pending.onSaved, uri.toString())
             } catch (error: Exception) {
-                editingBookIds = editingBookIds - original.id
+                editingBookIds = editingBookIds - pending.bookId
                 if (error is CancellationException) throw error
                 message = error.message ?: "无法获得原文件写入权限，修改尚未保存"
             }
@@ -1606,55 +1703,52 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         editBookText(0, 0, 0, replacement, findAll = query.trim())
     }
 
-    private fun editBookText(chapter: Int, start: Int, end: Int, replacement: String, sourceOverride: String? = null,
+    private fun editBookText(chapter: Int, start: Int, end: Int, replacement: String,
         expectedText: String? = null, findAll: String? = null) {
-        val book = state.books.find { it.id == activeBookId && it.mode == LibraryMode.NOVEL &&
+        val book = activeReaderBook?.takeIf { it.mode == LibraryMode.NOVEL &&
             it.format in setOf(BookFormat.TXT, BookFormat.EPUB, BookFormat.MOBI) && !it.cloudOnly } ?: return
-        if (organizing || cloudBusy || book.id in editingBookIds || book.id in cloudTransfers) { message = "请等待当前整理或本书云端操作完成后再编辑"; return }
+        if (organizing || cloudBusy || book.id in editingBookIds || book.id in cloudTransfers) {
+            message = "请等待当前整理或本书云端操作完成后再编辑"; return
+        }
         editingBookIds = editingBookIds + book.id
         viewModelScope.launch {
-            var editedDirectory: File? = null
-            var sourceWrite: EbookSourceWriteback? = null
-            var saved = false
+            var directory: File? = null
+            var retained = false
             var replacementCount = 0
             try {
                 stopAiSpeechConversion(book.id)
                 cloudOperationMutex.withBook(book.id) {
-                  try {
-                val (updated, relocate) = withContext<Pair<Book, (Annotation) -> Annotation>>(Dispatchers.IO) {
-                    val editWork = kotlinx.coroutines.currentCoroutineContext()
-                    val folder = File(getApplication<Application>().filesDir, "books/${book.id}/edit-${java.util.UUID.randomUUID()}")
-                    check(folder.mkdirs()) { "无法保存修改后的正文" }
-                    editedDirectory = folder
-                    if (book.format == BookFormat.TXT) {
-                        val texts = book.chapters.map { File(requireNotNull(it.textPath)).readText() }
-                        if (expectedText != null) require(texts.getOrNull(chapter)?.let {
-                            start >= 0 && end <= it.length && it.substring(start, end) == expectedText
-                        } == true) { "搜索结果已变化，请重新搜索后替换" }
-                        val edit = if (findAll == null) TxtEdit(texts, chapter, start, end, replacement, state.settings.chapterRule)
-                        else {
-                            val replacements = texts.mapIndexed { index, text ->
-                                index to literalTextReplacements(text, findAll, replacement)
-                            }.filter { it.second.isNotEmpty() }.toMap()
-                            replacementCount = replacements.values.sumOf { it.size }
-                            require(replacementCount > 0) { "没有找到可替换的文字，请重新搜索" }
-                            TxtEdit(texts, replacements, state.settings.chapterRule)
-                        }
-                        val source = File(folder, "source.txt").apply { writeText(edit.source) }
-                        val chapters = edit.chapters.mapIndexed { index, parsed ->
-                            Chapter(title = parsed.title, textPath = File(folder, "chapter-$index.txt").apply { writeText(parsed.text) }.absolutePath)
-                        }
-                        val position = edit.position(book.chapterIndex, book.characterOffset)
-                        val progress = (edit.chapters.take(position.first).sumOf { it.text.length }.toFloat() + position.second) /
-                            edit.chapters.sumOf { it.text.length }.coerceAtLeast(1)
-                        book.copy(chapters = chapters, chapterIndex = position.first, characterOffset = position.second, pageIndex = 0,
-                            progress = progress.coerceIn(0f, 1f), sourcePath = source.absolutePath, sourceUri = null, sourceLinked = false,
-                            contentVersion = book.contentVersion + 1) to edit::annotation
-                    } else {
-                        val sourceBook = if (sourceOverride == null) book else book.copy(sourceUri = sourceOverride,
-                            sourcePath = documentFile(sourceOverride)?.absolutePath, sourceLinked = true)
-                        val (edited, annotationEdit) = if (findAll != null) {
-                            prepareEbookReplacement(sourceBook, folder, findAll, replacement).also { replacementCount = it.count }
+                    val (updated, relocate) = withContext<Pair<Book, (Annotation) -> Annotation>>(Dispatchers.IO) {
+                        val folder = File(getApplication<Application>().filesDir, "books/${book.id}/edit-${java.util.UUID.randomUUID()}")
+                        check(folder.mkdirs()) { "无法准备修改后的正文" }
+                        directory = folder
+                        if (book.format == BookFormat.TXT) {
+                            val texts = book.chapters.map { File(requireNotNull(it.textPath)).readText() }
+                            if (expectedText != null) require(texts.getOrNull(chapter)?.let {
+                                start >= 0 && end <= it.length && it.substring(start, end) == expectedText
+                            } == true) { "搜索结果已变化，请重新搜索后替换" }
+                            val edit = if (findAll == null) TxtEdit(texts, chapter, start, end, replacement, state.settings.chapterRule)
+                            else {
+                                val replacements = texts.mapIndexed { index, text ->
+                                    index to literalTextReplacements(text, findAll, replacement)
+                                }.filter { it.second.isNotEmpty() }.toMap()
+                                replacementCount = replacements.values.sumOf { it.size }
+                                require(replacementCount > 0) { "没有找到可替换的文字，请重新搜索" }
+                                TxtEdit(texts, replacements, state.settings.chapterRule)
+                            }
+                            val source = File(folder, "source.txt").apply { writeText(edit.source) }
+                            val chapters = edit.chapters.mapIndexed { index, parsed ->
+                                Chapter(title = parsed.title, textPath = File(folder, "chapter-$index.txt").apply { writeText(parsed.text) }.absolutePath,
+                                    characterCount = parsed.text.length)
+                            }
+                            val position = edit.position(book.chapterIndex, book.characterOffset)
+                            val progress = (edit.chapters.take(position.first).sumOf { it.text.length }.toFloat() + position.second) /
+                                edit.chapters.sumOf { it.text.length }.coerceAtLeast(1)
+                            book.copy(chapters = chapters, chapterIndex = position.first, characterOffset = position.second, pageIndex = 0,
+                                progress = progress.coerceIn(0f, 1f), sourcePath = source.absolutePath,
+                                contentVersion = book.contentVersion + 1, hasTextEdits = true) to edit::annotation
+                        } else if (findAll != null) {
+                            prepareEbookReplacement(book, folder, findAll, replacement).also { replacementCount = it.count }
                                 .let { it.book to it.annotation }
                         } else {
                             require(chapter in book.chapters.indices) { "编辑位置无效，请重新打开文本" }
@@ -1666,53 +1760,140 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                             val updatedChapter = edit.chapter(prepared.chapter, textFile.absolutePath)
                             val lengths = book.chapters.map { content -> content.characterCount.takeIf { it >= 0 }
                                 ?: File(requireNotNull(content.textPath)).readText().length }
-                            edit.book(sourceBook, updatedChapter, lengths) to edit::annotation
+                            edit.book(book, updatedChapter, lengths) to edit::annotation
                         }
-                        val updated = edited.let {
-                            if (it.sourceUri == null) it else it.copy(sourceLinked = true, sourcePath = documentFile(it.sourceUri)?.absolutePath)
-                        }
-                        sourceWrite = EbookSourceWriteback.prepare(getApplication(), sourceBook, updated, folder) { editWork.ensureActive() }
-                        withContext(NonCancellable) { sourceWrite!!.commit() }
-                        hydrateBookSourceIdentity(getApplication(), updated) to annotationEdit
                     }
-                }
-                saveJob?.cancel()
-                val previous = state
-                state = state.copy(books = state.books.map { if (it.id == book.id) updated else it },
-                    annotations = state.annotations.map { if (it.bookId == book.id) relocate(it) else it })
-                try { withContext(NonCancellable) { persistNow() } } catch (error: Exception) {
-                    state = state.copy(books = state.books.map { current ->
-                        if (current.id == book.id) previous.books.first { it.id == book.id } else current
-                    }, annotations = state.annotations.filterNot { it.bookId == book.id } + previous.annotations.filter { it.bookId == book.id })
-                    throw error
-                }
-                saved = true
-                withContext(NonCancellable + Dispatchers.IO) { sourceWrite?.finish() }
-                editedDirectory = null
-                withContext(Dispatchers.IO) { removeReaderPageCaches(getApplication(), book.id) }
-                message = if (findAll != null) "已替换 $replacementCount 处文字，阅读位置和标注已更新"
-                    else if (book.format == BookFormat.TXT) "TXT 修改已保存，目录和标注已更新" else "正文已覆盖保存至原文件，标注已更新"
-                  } finally {
-                    withContext(NonCancellable + Dispatchers.IO) {
-                        if (!saved) try { sourceWrite?.rollback() }
-                            catch (error: Exception) { message = error.message ?: "原文件恢复失败" }
-                        if (!saved && sourceWrite?.recoveryRequired != true) editedDirectory?.deleteRecursively()
-                    }
-                  }
+                    val previous = bookDrafts[book.id]
+                    val annotations = previous?.annotations ?: state.annotations.filter { it.bookId == book.id }
+                    bookDrafts = bookDrafts + (book.id to BookDraft(previous?.baseBook ?: book, updated,
+                        annotations.map(relocate), previous?.directories.orEmpty() + requireNotNull(directory)))
+                    retained = true
+                    if (findAll != null) message = "已预览替换 $replacementCount 处文字，请点击右上角保存"
                 }
             } catch (error: CancellationException) { throw error }
-              catch (error: SourceWritePermissionRequiredException) {
-                  pendingSourceEdit = PendingSourceEdit(book.id, chapter, start, end, replacement, expectedText, findAll)
-                  pendingSourceWriteUri = error.source
-                  message = error.message
-              }
-              catch (error: Exception) { message = error.message ?: "正文修改未保存" }
+              catch (error: Exception) { message = error.message ?: "正文预览修改失败" }
             finally {
-                editingBookIds = editingBookIds - book.id
+                try {
+                    if (!retained) withContext(NonCancellable + Dispatchers.IO) { directory?.deleteRecursively() }
+                } finally {
+                    editingBookIds = editingBookIds - book.id
+                }
             }
         }
     }
 
+    fun discardBookDraft(bookId: String) {
+        if (bookId in editingBookIds) return
+        val draft = bookDrafts[bookId] ?: return
+        bookDrafts = bookDrafts - bookId
+        if (pendingSourceSave?.bookId == bookId) cancelSourceWrite()
+        viewModelScope.launch(Dispatchers.IO) { draft.directories.forEach { it.deleteRecursively() } }
+    }
+
+    fun saveBookDraft(bookId: String, onSaved: () -> Unit = {}) = saveBookDraft(bookId, onSaved, null)
+
+    private fun saveBookDraft(bookId: String, onSaved: () -> Unit, sourceOverride: String?) {
+        val draft = bookDrafts[bookId] ?: return onSaved()
+        if (organizing || cloudBusy || bookId in editingBookIds || bookId in cloudTransfers) {
+            message = "请等待当前整理或本书操作完成后再保存"; return
+        }
+        editingBookIds = editingBookIds + bookId
+        bookSaveProgress = bookSaveProgress + (bookId to BookSaveProgress("准备保存", 0f))
+        viewModelScope.launch {
+            var transaction: EbookSourceWriteback? = null
+            var transactionDirectory: File? = null
+            var saved = false
+            val progress: (String, Float) -> Unit = { stage, fraction ->
+                viewModelScope.launch {
+                    if (bookId in bookSaveProgress) {
+                        val previous = bookSaveProgress.getValue(bookId).fraction ?: 0f
+                        bookSaveProgress = bookSaveProgress + (bookId to BookSaveProgress(stage, maxOf(previous, fraction.coerceIn(0f, 1f))))
+                    }
+                }
+            }
+            try {
+                stopAiSpeechConversion(bookId)
+                cloudOperationMutex.withBook(bookId) {
+                    try {
+                        val original = state.books.find { it.id == bookId } ?: error("书籍已移除，无法保存")
+                        require(original.contentVersion == draft.baseBook.contentVersion) { "书籍正文已变化，请放弃预览后重新编辑" }
+                        val sourceBook = if (sourceOverride == null) draft.baseBook else draft.baseBook.copy(
+                            sourceUri = sourceOverride, sourcePath = documentFile(sourceOverride)?.absolutePath, sourceLinked = true)
+                        withContext(Dispatchers.IO) {
+                            val editWork = kotlinx.coroutines.currentCoroutineContext()
+                            val directory = File(getApplication<Application>().filesDir, "books/$bookId/save-${java.util.UUID.randomUUID()}")
+                            check(directory.mkdirs()) { "无法准备原文件保存" }
+                            transactionDirectory = directory
+                            // Seeded examples have no external source; their generated TXT becomes the private source.
+                            if (sourceBook.sourceUri != null || sourceBook.sourcePath != null) {
+                                transaction = EbookSourceWriteback.prepare(getApplication(), sourceBook, draft.previewBook, directory,
+                                    onProgress = { stage, fraction -> progress(stage, fraction * 0.85f) }) { editWork.ensureActive() }
+                                withContext(NonCancellable) {
+                                    transaction!!.commit { stage, fraction -> progress(stage, 0.85f + fraction * 0.1f) }
+                                }
+                            } else require(sourceBook.format == BookFormat.TXT) { "原文件不存在，请重新选择" }
+                        }
+                        val latest = bookDrafts.getValue(bookId)
+                        val preview = latest.previewBook
+                        val committed = original.copy(chapters = preview.chapters, chapterIndex = preview.chapterIndex,
+                            pageIndex = preview.pageIndex, characterOffset = preview.characterOffset, progress = preview.progress,
+                            lastReadAt = preview.lastReadAt, positionImagePath = preview.positionImagePath,
+                            contentVersion = preview.contentVersion, hasTextEdits = true,
+                            sourcePath = if (sourceBook.sourceUri == null && sourceBook.sourcePath == null) preview.sourcePath else sourceBook.sourcePath,
+                            sourceUri = sourceBook.sourceUri, sourceLinked = sourceBook.sourceLinked)
+                        val updated = withContext(Dispatchers.IO) { hydrateBookSourceIdentity(getApplication(), committed) }
+                        progress("保存阅读记录", 0.97f)
+                        saveJob?.cancel()
+                        val previous = state
+                        state = state.copy(books = state.books.map { if (it.id == bookId) updated else it },
+                            annotations = state.annotations.filterNot { it.bookId == bookId } + latest.annotations)
+                        try { withContext(NonCancellable) { persistNow() } } catch (error: Exception) {
+                            state = state.copy(books = state.books.map { if (it.id == bookId) original else it },
+                                annotations = state.annotations.filterNot { it.bookId == bookId } + previous.annotations.filter { it.bookId == bookId })
+                            throw error
+                        }
+                        saved = true
+                        val completedDraft = bookDrafts.getValue(bookId)
+                        bookDrafts = bookDrafts - bookId
+                        if (completedDraft != latest) {
+                            val position = completedDraft.previewBook
+                            changed(state.copy(books = state.books.map { current -> if (current.id == bookId)
+                                current.copy(chapterIndex = position.chapterIndex, pageIndex = position.pageIndex,
+                                    characterOffset = position.characterOffset, progress = position.progress,
+                                    lastReadAt = position.lastReadAt, positionImagePath = position.positionImagePath) else current },
+                                annotations = state.annotations.filterNot { it.bookId == bookId } + completedDraft.annotations))
+                        }
+                        if (pendingSourceSave?.bookId == bookId) cancelSourceWrite()
+                        progress("保存完成", 1f)
+                        withContext(NonCancellable + Dispatchers.IO) {
+                            transaction?.finish()
+                            removeReaderPageCaches(getApplication(), bookId)
+                            val retained = referencedBookPaths(updated).map { File(it).absoluteFile.toPath() }
+                            latest.directories.filter { directory -> retained.none { it.startsWith(directory.absoluteFile.toPath()) } }
+                                .forEach { it.deleteRecursively() }
+                        }
+                    } finally {
+                        withContext(NonCancellable + Dispatchers.IO) {
+                            if (!saved) try { transaction?.rollback() }
+                                catch (error: Exception) { message = error.message ?: "原文件恢复失败" }
+                            if (transaction?.recoveryRequired != true) transactionDirectory?.deleteRecursively()
+                        }
+                    }
+                }
+            } catch (error: CancellationException) { throw error }
+              catch (error: SourceWritePermissionRequiredException) {
+                  pendingSourceSave = PendingSourceSave(bookId, onSaved)
+                  pendingSourceWriteUri = error.source
+                  message = error.message
+              }
+              catch (error: Exception) { message = error.message ?: "正文保存失败，预览修改仍保留" }
+            finally {
+                bookSaveProgress = bookSaveProgress - bookId
+                editingBookIds = editingBookIds - bookId
+            }
+            if (saved) onSaved()
+        }
+    }
     private data class PreparedBookReplacement(val book: Book, val count: Int, val annotation: (Annotation) -> Annotation)
 
     private suspend fun prepareEbookReplacement(book: Book, folder: File, query: String, replacement: String): PreparedBookReplacement {

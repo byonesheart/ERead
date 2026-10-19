@@ -29,7 +29,9 @@ data class Chapter(
     val sourceStyles: List<SourceTextStyle> = emptyList(),
     val subsections: List<ComicSection> = emptyList(),
     val characterCount: Int = -1,
-    val lazySourcePath: String? = null
+    val lazySourcePath: String? = null,
+    val tocParentTitle: String? = null,
+    val sourceFootnotes: List<SourceFootnote> = emptyList()
 )
 
 data class Book(
@@ -108,7 +110,8 @@ data class ReaderSettings(
     val chapterRules: List<ChapterRulePreset> = listOf(ChapterRulePreset("default", "默认规则", DEFAULT_CHAPTER_RULE)),
     val activeChapterRuleId: String = "default",
     val appearanceProfiles: List<ReaderThemeProfile> = emptyList(),
-    val activeAppearanceProfileId: String? = null
+    val activeAppearanceProfileId: String? = null,
+    val hierarchicalContents: Boolean = true
 )
 
 internal const val LEGACY_DEFAULT_CHAPTER_RULE = "^\\s*(第[零〇一二三四五六七八九十百千万两0-9]+[章节卷回部篇].*|[Cc][Hh][Aa][Pp][Tt][Ee][Rr]\\s+\\d+.*|序章.*|序言.*|前言.*|楔子.*|尾声.*|后记.*)\\s*$"

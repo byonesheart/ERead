@@ -8,6 +8,7 @@ import java.nio.charset.Charset
 
 /** Rewrites a DRM-free MOBI6 Palm database. Old byte-position indices are replaced, never reused. */
 internal object MobiSourceWriter {
+    private data class DirectoryEntry(val position: Int, val title: String, val parentTitle: String?)
     fun write(source: File, destination: File, originalHtml: String, edited: SourceHtmlEdit.Result,
               sections: List<MobiSection>) = RandomAccessFile(source, "r").use { input ->
         val database = ByteArray(78).also { input.readFully(it) }
@@ -95,8 +96,8 @@ internal object MobiSourceWriter {
         val sectionTargets = sections.map { result.offset(edited.offset(it.sourceStart)).coerceIn(0, result.html.length) }
         val sectionBytes = byteOffsets(result.html, sectionTargets, encoding)
         val boundaryPositions = sections.mapIndexed { index, section ->
-            sectionBytes.getValue(sectionTargets[index]) to section.title
-        }.distinctBy { it.first }.filter { it.first < text.size }
+            DirectoryEntry(sectionBytes.getValue(sectionTargets[index]), section.title, section.tocParentTitle)
+        }.distinctBy { it.position }.filter { it.position < text.size }
         val directory = directory(boundaryPositions, text.size)
         val ncxIndex = firstResource + resources.size
         put16(header, 0, 2)
@@ -141,20 +142,30 @@ internal object MobiSourceWriter {
         }
     }
 
-    private fun directory(entries: List<Pair<Int, String>>, textLength: Int): List<ByteArray> {
+    private fun directory(entries: List<DirectoryEntry>, textLength: Int): List<ByteArray> {
         val strings = mutableListOf(ByteArrayOutputStream())
-        val labels = entries.map { (_, title) ->
-            val text = title.toByteArray(Charsets.UTF_8).take(4096).toByteArray()
+        val labels = entries.map { entry ->
+            val text = entry.title.toByteArray(Charsets.UTF_8).take(4096).toByteArray()
             val value = vlq(text.size) + text
             if (strings.last().size() + value.size > 65535) strings += ByteArrayOutputStream()
             val offset = (strings.lastIndex shl 16) + strings.last().size()
             strings.last().write(value)
             offset
         }
-        val fields = entries.mapIndexed { index, (offset, _) ->
+        val roots = mutableMapOf<String, Int>()
+        val parents = entries.mapIndexed { index, entry ->
+            if (entry.parentTitle == null) { roots[entry.title] = index; null } else roots[entry.parentTitle]
+        }
+        val children = parents.indices.filter { parents[it] != null }.groupBy { parents[it]!! }
+        val fields = entries.mapIndexed { index, entry ->
+            val child = children[index]
+            val parent = parents[index]
+            val control = 15 or (if (parent != null) 16 else 0) or (if (child != null) 96 else 0)
             val key = index.toString(16).padStart(4, '0').toByteArray(Charsets.US_ASCII)
-            byteArrayOf(key.size.toByte()) + key + byteArrayOf(15) + vlq(offset) +
-                vlq((entries.getOrNull(index + 1)?.first ?: textLength) - offset) + vlq(labels[index]) + vlq(0)
+            byteArrayOf(key.size.toByte()) + key + byteArrayOf(control.toByte()) + vlq(entry.position) +
+                vlq((entries.getOrNull(index + 1)?.position ?: textLength) - entry.position) + vlq(labels[index]) + vlq(if (parent == null) 0 else 1) +
+                (parent?.let(::vlq) ?: byteArrayOf()) +
+                (child?.let { vlq(it.first()) + vlq(it.last()) } ?: byteArrayOf())
         }
         val batches = mutableListOf<MutableList<ByteArray>>()
         fields.forEach { field ->
@@ -166,17 +177,18 @@ internal object MobiSourceWriter {
             val key = last.copyOfRange(0, 1 + (last[0].toInt() and 255))
             key + ByteArray(2).also { put16(it, 0, batch.size) }
         }
-        val mainIdxt = aligned(192 + 32 + summaries.sumOf { it.size })
+        val mainIdxt = aligned(192 + 44 + summaries.sumOf { it.size })
         val main = ByteArray(aligned(mainIdxt + 4 + batches.size * 2))
         "INDX".toByteArray().copyInto(main)
         put32(main, 4, 192); put32(main, 16, 2); put32(main, 20, mainIdxt)
         put32(main, 24, batches.size); put32(main, 28, 65001); put32(main, 32, -1)
         put32(main, 36, entries.size); put32(main, 52, strings.size); put32(main, 180, 192)
         "TAGX".toByteArray().copyInto(main, 192)
-        put32(main, 196, 32); put32(main, 200, 1)
-        byteArrayOf(1, 1, 1, 0, 2, 1, 2, 0, 3, 1, 4, 0, 4, 1, 8, 0, 0, 0, 0, 1).copyInto(main, 204)
+        put32(main, 196, 44); put32(main, 200, 1)
+        byteArrayOf(1, 1, 1, 0, 2, 1, 2, 0, 3, 1, 4, 0, 4, 1, 8, 0,
+            21, 1, 16, 0, 22, 1, 32, 0, 23, 1, 64, 0, 0, 0, 0, 1).copyInto(main, 204)
         "IDXT".toByteArray().copyInto(main, mainIdxt)
-        var summaryOffset = 224
+        var summaryOffset = 236
         summaries.forEachIndexed { index, bytes ->
             put16(main, mainIdxt + 4 + index * 2, summaryOffset)
             bytes.copyInto(main, summaryOffset)

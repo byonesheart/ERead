@@ -10,6 +10,7 @@ import com.eyue.reader.data.Book
 import com.eyue.reader.data.BookFormat
 import com.eyue.reader.data.Chapter
 import com.eyue.reader.data.LibraryMode
+import com.eyue.reader.data.SourceTextStyle
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -33,11 +34,12 @@ class ReaderSearchReplaceRobolectricTest {
 
     @Test fun replacingASingleCaseInsensitiveMatchPreservesActualSourceTextAndLocation() {
         val replacements = mutableListOf<Triple<ReaderSearchResult, String, String>>()
+        var jumps = 0
         val query = mutableStateOf("moon")
         compose.setContent { MaterialTheme { Column {
             ReaderSearchPanel(book, document, false, query.value, { query.value = it },
                 onReplaceMatch = { result, expected, replacement -> replacements += Triple(result, expected, replacement) },
-                onReplaceAll = { _, _ -> }) { }
+                onReplaceAll = { _, _ -> }) { jumps++ }
         } } }
         awaitTag("reader_search_replace_0_0_0")
         compose.onNodeWithTag("reader_search_replacement").performTextInput("sun")
@@ -48,14 +50,16 @@ class ReaderSearchReplaceRobolectricTest {
             assertEquals(0, replacements.single().first.offset)
             assertEquals("MOON", replacements.single().second)
             assertEquals("sun", replacements.single().third)
+            assertEquals(0, jumps)
         }
     }
 
     @Test fun editingOneOccurrenceStartsWithItsOriginalCaseAndAllowsAnEmptyReplacement() {
         var saved: Triple<ReaderSearchResult, String, String>? = null
+        var jumps = 0
         compose.setContent { MaterialTheme { Column {
             ReaderSearchPanel(book, document, false, "moon", {},
-                onReplaceMatch = { result, expected, replacement -> saved = Triple(result, expected, replacement) }) { }
+                onReplaceMatch = { result, expected, replacement -> saved = Triple(result, expected, replacement) }) { jumps++ }
         } } }
         awaitTag("reader_search_edit_0_0_0")
         compose.onNodeWithTag("reader_search_edit_0_0_0").performScrollTo().performClick()
@@ -67,6 +71,7 @@ class ReaderSearchReplaceRobolectricTest {
             assertEquals("MOON", saved?.second)
             assertEquals("", saved?.third)
             assertEquals(0, saved?.first?.offset)
+            assertEquals(0, jumps)
         }
     }
 
@@ -139,7 +144,59 @@ class ReaderSearchReplaceRobolectricTest {
         awaitTag("reader_search_result_0_0_0")
         compose.onNodeWithText("找到 1 处结果").assertExists()
         compose.onNodeWithTag("reader_search_result_0_0_0").performClick()
+        compose.runOnIdle { assertEquals(0, jumps) }
+        compose.onNodeWithTag("reader_search_result_0_0_0").performTouchInput { doubleClick() }
         compose.runOnIdle { assertEquals(1, jumps) }
+    }
+
+    @Test fun singleTapKeepsSearchOpenAndDoubleTapJumpsToTheExactMatch() {
+        var jumped: ReaderSearchResult? = null
+        val one = document.copy(text = listOf("prefix moon suffix", "No match"))
+        compose.setContent { MaterialTheme { Column {
+            ReaderSearchPanel(book, one, false, "moon", {}) { jumped = it }
+        } } }
+        awaitTag("reader_search_result_0_0_7")
+        compose.onNodeWithText("搜索整本书，双击结果返回原文").assertExists()
+        compose.onNodeWithTag("reader_search_result_0_0_7").performTouchInput { click() }
+        compose.mainClock.advanceTimeBy(500)
+        compose.runOnIdle { assertNull(jumped) }
+        compose.onNodeWithTag("reader_search_result_0_0_7").performTouchInput { doubleClick() }
+        compose.runOnIdle { assertEquals(0, jumped?.chapter); assertEquals(7, jumped?.offset) }
+    }
+
+    @Test fun everyResultShowsItsChapterSectionAndSourceTitles() {
+        val nested = book.copy(chapters = listOf(
+            Chapter(id = "one", title = "第一章 启程", tocParentTitle = "第一卷 起点"),
+            Chapter(id = "two", title = "第二章 相遇", tocParentTitle = "第一卷 起点")))
+        val text = document.copy(text = listOf("No match", "moon"))
+        compose.setContent { MaterialTheme { Column { ReaderSearchPanel(nested, text, false, "moon", {}) {} } } }
+        awaitTag("reader_search_result_1_0_0")
+        val label = readerSearchLocationIndex(nested.chapters).label(1, 0)
+        compose.onNodeWithTag("reader_search_location_1_0_0", useUnmergedTree = true).assertTextEquals(label)
+        assertTrue(label.contains("第1章"))
+        assertTrue(label.contains("第2节"))
+        assertTrue(label.contains("第一卷 起点"))
+        assertTrue(label.contains("第二章 相遇"))
+    }
+
+    @Test fun preparingUnchangedChapterStylesKeepsTheExistingResultAvailableForDoubleTap() {
+        val current = mutableStateOf(book)
+        val texts = listOf("moon", "No match")
+        val source = ReaderDocument(listOf("", ""), emptyList(), emptyList(), readText = { texts[it] })
+        val prepared = mutableStateOf(source)
+        var jumped: ReaderSearchResult? = null
+        compose.setContent { MaterialTheme { Column {
+            ReaderSearchPanel(current.value, prepared.value, false, "moon", {}) { jumped = it }
+        } } }
+        awaitTag("reader_search_result_0_0_0")
+        compose.runOnIdle {
+            current.value = book.copy(chapters = book.chapters.mapIndexed { index, chapter ->
+                if (index == 0) chapter.copy(sourceStyles = listOf(SourceTextStyle(0, 4, fontScale = .8f))) else chapter
+            })
+            prepared.value = source.copy(text = listOf("moon", ""))
+        }
+        compose.onNodeWithTag("reader_search_result_0_0_0").assertExists().performTouchInput { doubleClick() }
+        compose.runOnIdle { assertEquals(0, jumped?.chapter); assertEquals(0, jumped?.offset) }
     }
 
     private fun awaitTag(tag: String) = awaitNode(hasTestTag(tag))

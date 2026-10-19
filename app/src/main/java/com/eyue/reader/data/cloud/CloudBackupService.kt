@@ -546,7 +546,8 @@ class CloudBackupService(
         val cover = path(book.coverPath)
         val chapters = book.chapters.map { chapter -> chapter.copy(textPath = path(chapter.textPath),
             pages = chapter.pages.map { it.copy(path = requireNotNull(path(it.path)), textPath = path(it.textPath)) },
-            inlineImages = chapter.inlineImages.map { it.copy(path = requireNotNull(path(it.path))) }) }
+            inlineImages = chapter.inlineImages.map { it.copy(path = requireNotNull(path(it.path))) },
+            sourceFootnotes = chapter.sourceFootnotes.map { it.copy(imagePath = path(it.imagePath)) }) }
         return book.copy(coverPath = cover, chapters = chapters, positionImagePath = path(book.positionImagePath))
     }
 

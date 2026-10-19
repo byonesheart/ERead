@@ -30,6 +30,8 @@ class CloudBookCoverRobolectricTest {
             assertEquals(Color.WHITE, source.getPixel(60, 90))
             assertTrue(Color.red(cover.getPixel(59, 90)) in 1..254)
             assertTrue(Color.red(cover.getPixel(60, 90)) in 1..254)
+            assertEquals(Color.BLACK, cover.getPixel(52, 90))
+            assertEquals(Color.WHITE, cover.getPixel(67, 90))
         } finally { cover.recycle(); source.recycle() }
     }
 

@@ -154,7 +154,8 @@ class LazyChapterContentRobolectricTest {
         ZipOutputStream(source.outputStream()).use { zip ->
             val entries = mapOf(
                 "META-INF/container.xml" to "<container><rootfile full-path='OPS/book.opf'/></container>",
-                "OPS/book.opf" to "<package><manifest><item id='one' href='one.xhtml' media-type='application/xhtml+xml'/><item id='two' href='two.xhtml' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='one'/><itemref idref='two'/></spine></package>",
+                "OPS/book.opf" to "<package><manifest><item id='one' href='one.xhtml' media-type='application/xhtml+xml'/><item id='two' href='two.xhtml' media-type='application/xhtml+xml'/><item id='nav' href='nav.xhtml' properties='nav'/></manifest><spine><itemref idref='one'/><itemref idref='two'/></spine></package>",
+                "OPS/nav.xhtml" to "<html><nav><ol><li><span>原生分卷</span><ol><li><a href='one.xhtml'>First</a></li><li><a href='two.xhtml'>Second</a></li></ol></li></ol></nav></html>",
                 "OPS/one.xhtml" to "<body><h1>First</h1><p>First body.</p></body>",
                 "OPS/two.xhtml" to "<body><h1>Second</h1><p>Second body.</p></body>")
             entries.forEach { (name, value) -> zip.putNextEntry(ZipEntry(name)); zip.write(value.toByteArray()); zip.closeEntry() }
@@ -168,10 +169,17 @@ class LazyChapterContentRobolectricTest {
         assertEquals(2, book.chapters.size)
         assertTrue(book.chapters.all { it.lazySourcePath != null && it.sourceStyles.isEmpty() })
         assertTrue(book.chapters.all { File(it.textPath!!).readText().length == it.characterCount })
+        assertEquals(listOf("原生分卷", "原生分卷"), book.chapters.map { it.tocParentTitle })
+        assertEquals(book, LibraryRepository(context).let { it.readBook(it.writeBook(book)) })
+        val upgraded = importer.upgradeInlineBooks(LibraryState(books = listOf(book.copy(
+            sourcePath = source.absolutePath, contentVersion = 0)))).books.single()
+        assertEquals(book.chapters.map { it.title }, upgraded.chapters.map { it.title })
+        assertEquals(book.chapters.map { it.tocParentTitle }, upgraded.chapters.map { it.tocParentTitle })
         assertTrue(source.delete())
         val prepared = loadChapterContent(context, book, 1)
         assertTrue(prepared.text.contains("Second body."))
         assertTrue(prepared.chapter.sourceStyles.isNotEmpty())
+        assertEquals("原生分卷", prepared.chapter.tocParentTitle)
         assertFalse(File("${book.chapters[0].lazySourcePath}.prepared.json").exists())
     }
 
@@ -181,6 +189,52 @@ class LazyChapterContentRobolectricTest {
         val start = source.indexOf("词")
         val styles = mapCanonicalStyles(source, text, listOf(SourceTextStyle(start, start + 3, bold = true)))
         assertEquals("词🙂", text.substring(styles.single().start, styles.single().end))
+    }
+
+    @Test fun crossFileFootnotesSurviveLazyPreparationAndRepeatedOpenWithoutTheManifest() = runBlocking {
+        val html = "<body><p>正文🙂<a epub:type='noteref' href='notes.xhtml#n1'><sup>[1]</sup></a>续文。</p></body>"
+        val targets = mapOf("notes.xhtml#n1" to "<p>跨文件注释<a href='#fnref1'>↩</a></p>")
+        val parsed = HtmlChapterParser.readPlainWithNotes("正文", html, noteTargets = targets) { null }
+        val chapter = saveLazyChapter(root, 0, parsed, html, "", emptyMap(), targets)
+        val book = Book(title = "注释", format = BookFormat.EPUB, mode = LibraryMode.NOVEL, chapters = listOf(chapter))
+        assertEquals(parsed.sourceFootnotes, chapter.sourceFootnotes)
+        assertEquals("<p>跨文件注释<a href='#fnref1'>↩</a></p>",
+            JSONObject(File(chapter.lazySourcePath!!).readText()).getJSONObject("noteTargets").getString("notes.xhtml#n1"))
+        val prepared = loadChapterContent(context, book, 0)
+        assertEquals(parsed.text, prepared.text)
+        assertEquals("[1]", prepared.chapter.sourceFootnotes.single().let { prepared.text.substring(it.start, it.end) })
+        assertEquals("跨文件注释", prepared.chapter.sourceFootnotes.single().content)
+        assertTrue(File(chapter.lazySourcePath!!).delete())
+        assertEquals(prepared, loadChapterContent(context, book, 0))
+    }
+
+    @Test fun oldPreparedMetadataIsUpgradedOnceForLocalSourceFootnotes() = runBlocking {
+        val html = "<body><p>正文<a role='doc-noteref' href='#n1'>[1]</a></p><aside id='n1' role='doc-footnote'>本章注释</aside></body>"
+        val parsed = HtmlChapterParser.readPlain("正文", html) { null }
+        val chapter = saveLazyChapter(root, 0, parsed, html, "", emptyMap()).copy(sourceFootnotes = emptyList())
+        val book = Book(title = "旧注释", format = BookFormat.EPUB, mode = LibraryMode.NOVEL, chapters = listOf(chapter))
+        val first = loadChapterContent(context, book, 0)
+        val metadata = File("${chapter.lazySourcePath}.prepared.json")
+        metadata.writeText(JSONObject(metadata.readText()).apply { remove("sourceFootnotesVersion"); remove("sourceFootnotes") }.toString())
+        val upgraded = loadChapterContent(context, book, 0)
+        assertEquals(first, upgraded)
+        assertEquals("本章注释", upgraded.chapter.sourceFootnotes.single().content)
+        assertEquals(1, JSONObject(metadata.readText()).getInt("sourceFootnotesVersion"))
+        assertTrue(File(chapter.lazySourcePath!!).delete())
+        assertEquals(upgraded, loadChapterContent(context, book, 0))
+    }
+
+    @Test fun footnoteProjectionKeepsTextAndZeroWidthImageReferencesAtCanonicalOffsets() {
+        val source = "标题 \n\n  词🙂[1]  \n正文"
+        val canonical = "标题\n\n词🙂[1]\n正文"
+        val start = source.indexOf("[1]")
+        val image = source.indexOf("正文")
+        val notes = mapCanonicalFootnotes(source, canonical, listOf(
+            SourceFootnote(start, start + 3, "[1]", "文字注释"), SourceFootnote(image, image, "图标", "图片注释", "marker.png")))
+        assertEquals(canonical.indexOf("[1]"), notes[0].start)
+        assertEquals("[1]", canonical.substring(notes[0].start, notes[0].end))
+        assertEquals(canonical.indexOf("正文"), notes[1].start)
+        assertEquals(notes[1].start, notes[1].end)
     }
 
     private fun fixtureBook(): Book {

@@ -9,6 +9,7 @@ import androidx.work.Configuration
 import androidx.work.WorkManager
 import com.eyue.reader.ReaderViewModel
 import com.eyue.reader.data.cloud.CloudBackupService
+import com.eyue.reader.data.cloud.CloudBookInfo
 import com.eyue.reader.data.cloud.CloudRestoredBook
 import kotlinx.coroutines.Job
 import org.junit.After
@@ -29,6 +30,7 @@ import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.Continuation
+import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE, instrumentedPackages = ["com.eyue.reader.data.cloud"],
@@ -63,6 +65,10 @@ class CloudDownloadFeedbackRobolectricTest {
     }
 
     @After fun cleanup() {
+        DownloadServiceShadow.pendingList?.also {
+            DownloadServiceShadow.pendingList = null
+            it.resumeWith(Result.failure(IOException("测试已结束")))
+        }
         if (::vm.isInitialized) {
             val job = requireNotNull(vm.viewModelScope.coroutineContext[Job])
             store.clear()
@@ -122,6 +128,36 @@ class CloudDownloadFeedbackRobolectricTest {
         assertNull("A stale download action must remain silent after the book is local", vm.message)
     }
 
+    @Test fun mixedBatchDownloadsRemoteBookWhileLocalUploadMetadataIsStillPending() {
+        val source = File(app.filesDir, "batch-local.txt").apply { writeText("第一章\n本地等待上传正文。") }
+        val local = Book(title = "批量上传", format = BookFormat.TXT, mode = LibraryMode.NOVEL,
+            sourcePath = source.absolutePath, chapters = listOf(Chapter(title = "第一章", textPath = source.absolutePath)))
+        val oldJob = requireNotNull(vm.viewModelScope.coroutineContext[Job])
+        store.clear()
+        await { oldJob.isCompleted }
+        LibraryRepository(app).save(LibraryState(books = listOf(local, remote)))
+        vm = ReaderViewModel(app)
+        store.put("reader", vm)
+        await { !vm.loading && vm.cloudConfigured }
+        val restoredSource = File(app.filesDir, "batch-remote.txt").apply { writeText("第一章\n云端下载完成正文。") }
+        DownloadServiceShadow.restored = CloudRestoredBook(remote.copy(cloudOnly = false, sourcePath = restoredSource.absolutePath,
+            chapters = listOf(Chapter(title = "第一章", textPath = restoredSource.absolutePath))), emptyList(), ReaderSettings(), null, 2345)
+
+        vm.transferCloudBooks(listOf(local, remote, local.copy(title = "来自旧列表的重复条目")))
+        await { DownloadServiceShadow.listCalls == 1 && DownloadServiceShadow.downloadCalls == 1 &&
+            vm.state.books.single { it.id == remote.id }.cloudOnly == false && vm.cloudTransfers.keys == setOf(local.id) }
+        assertNotNull(DownloadServiceShadow.pendingList)
+        assertFalse(LibraryRepository(app).load().books.single { it.id == remote.id }.cloudOnly)
+        assertTrue(vm.state.books.single { it.id == local.id }.sourcePath == source.absolutePath)
+        DownloadServiceShadow.pendingList!!.also {
+            DownloadServiceShadow.pendingList = null
+            it.resumeWith(Result.failure(IOException("测试上传入口已验证")))
+        }
+        await { vm.cloudTransfers.isEmpty() }
+        assertEquals(1, DownloadServiceShadow.downloadCalls)
+        assertEquals("测试上传入口已验证", vm.message)
+    }
+
     private fun await(condition: () -> Boolean) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
         while (System.nanoTime() < deadline) {
@@ -140,6 +176,13 @@ class CloudDownloadFeedbackRobolectricTest {
         @Implementation fun identity(): String = ACCOUNT
 
         @Suppress("UNUSED_PARAMETER")
+        @Implementation fun list(expectedIdentity: String?, continuation: Continuation<List<CloudBookInfo>>): Any {
+            listCalls++
+            pendingList = continuation
+            return COROUTINE_SUSPENDED
+        }
+
+        @Suppress("UNUSED_PARAMETER")
         @Implementation fun download(bookId: String, continuation: Continuation<CloudRestoredBook>): Any {
             downloadCalls++
             failure?.let { throw it }
@@ -151,7 +194,9 @@ class CloudDownloadFeedbackRobolectricTest {
             var restored: CloudRestoredBook? = null
             var failure: IOException? = null
             var downloadCalls = 0
-            fun reset() { restored = null; failure = null; downloadCalls = 0 }
+            var listCalls = 0
+            var pendingList: Continuation<List<CloudBookInfo>>? = null
+            fun reset() { restored = null; failure = null; downloadCalls = 0; listCalls = 0; pendingList = null }
         }
     }
 }
