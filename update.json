@@ -1,23 +1,24 @@
 {
-  "versionCode": 36,
-  "versionName": "1.9.7",
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.9.7",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.9.7/ERead-1.9.7-debug.apk",
+  "versionCode": 37,
+  "versionName": "1.9.8",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.9.8",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.9.8/ERead-1.9.8-debug.apk",
   "mirrors": [
     {
       "name": "百度网盘",
-      "url": "https://pan.baidu.com/s/1g5fIKjPqUZi9WyCvJOwLJw?pwd=READ",
+      "url": "https://pan.baidu.com/s/1Ra3NehKhPxP38xkFAlxkdA?pwd=READ",
       "extractionCode": "READ"
     },
     {
       "name": "夸克网盘",
-      "url": "https://pan.quark.cn/s/c95ce4e1dfcb",
-      "extractionCode": "djhn"
+      "url": "https://pan.quark.cn/s/ec7ea60343d1",
+      "extractionCode": "sQdT"
     }
   ],
   "changelog": [
-    "阅读模式切换保持原文位置，分页准备在后台进行，改善翻页流畅性。",
-    "修复原书 CSS 切换闪退，并改善分页缓存复用。",
+    "页码按当前章节显示，取消全书页数统计，复用章节分页缓存。",
+    "滑动达到阈值立即翻页，缩短翻页动画等待。",
+    "新增上、下、左、右边距设置，可随阅读主题保存。",
     "更多功能请自行体验。"
   ]
 }
