@@ -15,7 +15,7 @@ internal const val CLOUD_LEGACY_PART_BYTES = 128L * 1024 * 1024
 internal const val CLOUD_PART_LIMIT = 32768
 internal const val CLOUD_ENTRY_LIMIT = 200_000
 
-internal data class CloudAsset(val name: String, val open: () -> InputStream)
+internal data class CloudAsset(val name: String, val sourcePath: String? = null, val open: () -> InputStream)
 internal data class CloudAssetRecord(val name: String, val bytes: Long, val sha256: String)
 
 internal object CloudArchive {
@@ -80,16 +80,20 @@ internal object CloudArchive {
         }
     }
 
-    fun inspect(assets: List<CloudAsset>, checkActive: () -> Unit = {}): List<CloudAssetRecord> {
+    fun inspect(assets: List<CloudAsset>, checkActive: () -> Unit = {}, cache: CloudResourceHashCache? = null): List<CloudAssetRecord> {
         require(assets.size < CLOUD_ENTRY_LIMIT)
         var total = 0L
         val seen = HashSet<String>()
         return assets.map { asset ->
             require(safeName(asset.name).startsWith("assets/") && seen.add(asset.name))
-            val digest = MessageDigest.getInstance("SHA-256")
-            val bytes = asset.open().use { copy(it, discard, CLOUD_ARCHIVE_LIMIT - total, checkActive, digest) }
-            total += bytes
-            CloudAssetRecord(asset.name, bytes, hex(digest.digest()))
+            checkActive()
+            val record = cache?.inspect(asset, CLOUD_ARCHIVE_LIMIT - total, checkActive) ?: run {
+                val digest = MessageDigest.getInstance("SHA-256")
+                val bytes = asset.open().use { copy(it, discard, CLOUD_ARCHIVE_LIMIT - total, checkActive, digest) }
+                CloudAssetRecord(asset.name, bytes, hex(digest.digest()))
+            }
+            total += record.bytes
+            record
         }
     }
 

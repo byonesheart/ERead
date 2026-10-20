@@ -133,6 +133,7 @@ class BookVoiceRoleRobolectricTest {
         try {
             val key = AiSpeechCache.key(config, text, roleVoicePrompt(book.voiceRoles, text))
             cache.commit(book.id, key, "mp3", File(folder, "audio.mp3").apply { writeBytes(byteArrayOf(1)) }, cache.generation(book.id))
+            assertTrue(cache.recordChapterCompletion(book, config, 0))
             assertEquals(setOf(0), cache.completedChapters(book, config))
             assertEquals(emptySet<Int>(), cache.completedChapters(book.copy(voiceRoles = listOf(role.copy(voice = "不同声音"))), config))
             assertNotNull(cache.find(book.id, key, "mp3"))

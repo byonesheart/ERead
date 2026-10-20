@@ -392,11 +392,21 @@ abstract class CloudServiceContract {
         val (book, state) = novel()
         val info = service.upload(state, book)
         val previous = File(context.filesDir, "books/${book.id}/previous.txt").apply { parentFile!!.mkdirs(); writeText("keep") }
+        val bookDirectory = previous.parentFile!!
+        val before = bookDirectory.walkTopDown().drop(1).associate {
+            it.relativeTo(bookDirectory).invariantSeparatorsPath to if (it.isFile) it.readBytes() else null
+        }
         val key = "books/${book.id}/${info.parts[0].name}"
         transport.files[key] = transport.files[key]!!.copyOf().also { it[0] = (it[0].toInt() xor 1).toByte() }
         assertThrows(IllegalArgumentException::class.java) { runBlocking { service.download(info) } }
         assertEquals("keep", previous.readText())
-        assertEquals(listOf("previous.txt"), previous.parentFile!!.list()!!.toList())
+        assertEquals("A failed restore must not add or remove any existing book entry", before.keys,
+            bookDirectory.walkTopDown().drop(1).map { it.relativeTo(bookDirectory).invariantSeparatorsPath }.toSet())
+        before.forEach { (path, bytes) ->
+            val file = File(bookDirectory, path)
+            if (bytes == null) assertTrue("The existing directory must be preserved: $path", file.isDirectory)
+            else assertArrayEquals("The existing book file must remain unchanged: $path", bytes, file.readBytes())
+        }
         assertFalse(context.cacheDir.listFiles()!!.any { it.name.startsWith("cloud-download-") })
     }
 

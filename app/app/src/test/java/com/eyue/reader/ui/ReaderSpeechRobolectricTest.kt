@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
@@ -128,6 +129,35 @@ class ReaderSpeechRobolectricTest {
         assertTrue(speech.playing.value)
     }
 
+    @Test fun lazySystemSpeechLoadsOnlyTheFollowingChapterAndCanPauseWhileItIsLoading() {
+        val loaded = java.util.concurrent.CopyOnWriteArrayList<Int>()
+        val chapterReady = CompletableDeferred<Unit>()
+        speech.start(ReaderSpeechSource(98, 1_000, listOf(ReaderSpeechSegment(98, 0, 400, "当前章末。"))) { chapter ->
+            loaded += chapter
+            chapterReady.await()
+            listOf(ReaderSpeechSegment(chapter, 0, 0, "下一章。"))
+        }, 1f) { segment, offset -> positions += segment.chapter to offset }
+        assertTrue(loaded.isEmpty())
+        assertEquals(listOf("当前章末。"), engine.spoken)
+        val previousId = requireNotNull(engine.currentId)
+        engine.utteranceProgressListener.onDone(previousId)
+        await { loaded.isNotEmpty() }
+        assertEquals(listOf(99), loaded)
+        assertTrue(speech.pause())
+        chapterReady.complete(Unit)
+        await { chapterReady.isCompleted && !speech.playing.value }
+        idle()
+        assertEquals(1, engine.spoken.size)
+        assertTrue(speech.resume())
+        await { engine.spoken.size == 2 }
+        assertEquals(99 to 0, positions.last())
+        val count = positions.size
+        engine.utteranceProgressListener.onDone(previousId)
+        idle()
+        assertEquals(count, positions.size)
+        assertEquals(listOf(99), loaded)
+    }
+
     @Test fun stoppingRejectsAlreadyQueuedRangeEventsAndRestartUsesTheNewReadingAnchor() {
         speech.start(listOf(ReaderSpeechSegment(0, 0, 0, "A".repeat(600))), 1f) { segment, offset -> positions += segment.chapter to offset }
         val previousId = requireNotNull(engine.currentId)
@@ -240,6 +270,15 @@ class ReaderSpeechRobolectricTest {
     }
 
     private fun idle() { Shadows.shadowOf(Looper.getMainLooper()).idle() }
+    private fun await(condition: () -> Boolean) {
+        val deadline = System.nanoTime() + 5_000_000_000L
+        while (System.nanoTime() < deadline) {
+            idle()
+            if (condition()) return
+            Thread.sleep(5)
+        }
+        assertTrue("Speech did not reach the expected state", condition())
+    }
 
     /** No automatic completion: tests supply the actual engine callbacks in a controlled order. */
     @Implements(TextToSpeech::class)

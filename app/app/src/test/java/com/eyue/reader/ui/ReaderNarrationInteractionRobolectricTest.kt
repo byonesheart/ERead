@@ -30,6 +30,7 @@ import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.ReadingMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -115,8 +116,10 @@ class ReaderNarrationInteractionRobolectricTest {
         voice.chapterSegments = true
         showReader(ReadingMode.PAGED, follow = true)
         startListening()
-        assertEquals(2, voice.source.size)
-        assertEquals(chapters.take(2), voice.source.map { it.text })
+        assertEquals(1, voice.source.size)
+        assertEquals(listOf(chapters[0]), voice.source.map { it.text })
+        val nextChapter = runBlocking { requireNotNull(voice.chapterSource).loadChapter(1) }.single()
+        assertEquals(chapters[1], nextChapter.text)
         val nextOffset = paragraphOffset(0, 8) + 12
         emit(0, nextOffset)
         await { position.get()?.let { it.chapter == 0 && it.page > 0 && it.offset == nextOffset } == true }
@@ -507,7 +510,8 @@ class ReaderNarrationInteractionRobolectricTest {
         showReader(ReadingMode.SCROLL, follow = true, startChapter = 3, chapterCount = 6)
         startListening()
         assertEquals(3, voice.source.first().chapter)
-        assertEquals(listOf(3, 4, 5), voice.source.map { it.chapter }.distinct())
+        assertEquals(listOf(3), voice.source.map { it.chapter }.distinct())
+        assertEquals(6, requireNotNull(voice.chapterSource).chapterCount)
         assertEquals(3, position.get()?.chapter)
         emit(3, paragraphOffset(3, 17) + 12)
         await { position.get()?.let { it.chapter == 3 && it.offset == paragraphOffset(3, 17) + 12 } == true }
@@ -558,6 +562,7 @@ class ReaderNarrationInteractionRobolectricTest {
         assertHighlight(0, paragraphOffset(0, 5) + 10)
         assertEquals("Viewport reflow must not replay an old paragraph", 1, voice.starts)
 
+        runBlocking { voice.ensureChapter(1) }
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         compose.runOnUiThread { voice.emit(1, paragraphOffset(1, 3) + 10) }
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
@@ -618,6 +623,7 @@ class ReaderNarrationInteractionRobolectricTest {
     }
 
     private fun emit(chapter: Int, offset: Int) {
+        runBlocking { voice.ensureChapter(chapter) }
         compose.runOnUiThread { voice.emit(chapter, offset) }
         drain()
     }
@@ -705,14 +711,26 @@ class ReaderNarrationInteractionRobolectricTest {
         private var lastLocation: Pair<ReaderSpeechSegment, Int>? = null
         var source = emptyList<ReaderSpeechSegment>()
             private set
+        var chapterSource: ReaderSpeechSource? = null
+            private set
         private var callback: ((ReaderSpeechSegment, Int) -> Unit)? = null
+        override fun start(source: ReaderSpeechSource, speed: Float, onLocation: (ReaderSpeechSegment, Int) -> Unit) {
+            start(source.initial, speed, onLocation)
+            chapterSource = source
+        }
         override fun start(source: List<ReaderSpeechSegment>, speed: Float, onLocation: (ReaderSpeechSegment, Int) -> Unit) {
             check(!released) { "Released speech engine must never restart" }
             this.source = source
+            chapterSource = null
             callback = onLocation
             starts++
             playing.value = true
             source.firstOrNull()?.let { lastLocation = it to it.offset; onLocation(it, it.offset) }
+        }
+        suspend fun ensureChapter(chapter: Int) {
+            if (source.none { it.chapter == chapter }) {
+                source = source + requireNotNull(chapterSource).loadChapter(chapter)
+            }
         }
         fun emit(chapter: Int, offset: Int) {
             val segment = source.lastOrNull { it.chapter == chapter && it.offset <= offset }

@@ -14,17 +14,17 @@ import com.eyue.reader.data.LibraryRepository
 import com.eyue.reader.data.AiSpeechRolePlanner
 import com.eyue.reader.data.PlannedAiSpeechChunk
 import com.eyue.reader.data.Book
-import com.eyue.reader.data.aiSpeechChapterSegments
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Semaphore
 import okhttp3.OkHttpClient
 import java.io.File
 import java.io.IOException
 import java.util.UUID
-import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 
 internal data class AiSpeechChunk(val segment: ReaderSpeechSegment, val start: Int, val end: Int, val text: String)
@@ -97,10 +97,17 @@ internal class AiReaderSpeech(private val context: Context, private val bookId: 
         }
     }
 
-    override fun start(source: List<ReaderSpeechSegment>, speed: Float, onLocation: (ReaderSpeechSegment, Int) -> Unit) {
+    override fun start(source: List<ReaderSpeechSegment>, speed: Float, onLocation: (ReaderSpeechSegment, Int) -> Unit) =
+        start(ReaderSpeechSource.fromSegments(source), speed, onLocation)
+
+    override fun start(source: ReaderSpeechSource, speed: Float, onLocation: (ReaderSpeechSegment, Int) -> Unit) {
         stop()
         this.speed = speed.coerceIn(.5f, 2f)
         val token = generation
+        val firstChapter = source.firstChapter
+        val chapterCount = source.chapterCount
+        val loadChapter = source.loadChapter
+        var initialChapter: List<ReaderSpeechSegment>? = source.initial
         playingState.value = true
         errorState.value = null
         job = scope.launch {
@@ -110,7 +117,6 @@ internal class AiReaderSpeech(private val context: Context, private val bookId: 
                 val config = if (configProvider != null || synthesize == null) withContext(Dispatchers.IO) {
                     requireNotNull(configProvider?.invoke() ?: AiSpeechConfigStore(context).read()) { "请先在设置中配置 AI 语音接口" }
                 } else null
-                require(source.any { it.text.isNotBlank() }) { "当前位置没有可朗读的文字" }
                 val liveBook = bookProvider?.invoke() ?: if (bookId != null) withContext(Dispatchers.IO) {
                     LibraryRepository(context).load().books.find { it.id == bookId }
                 } else null
@@ -120,16 +126,22 @@ internal class AiReaderSpeech(private val context: Context, private val bookId: 
                 } else emptyList()
                 val useRoles = config?.rolePromptEnabled == true
                 val planningContext = currentCoroutineContext()
-                val plans = if (useRoles) withContext(Dispatchers.IO) {
-                    val planner = AiSpeechRolePlanner(bookId.orEmpty(), roles, commonRoles) { planningContext.ensureActive() }
-                    var seed: String? = null
-                    liveBook?.let { book ->
-                        for (chapter in 0 until source.first().chapter.coerceAtMost(book.chapters.size)) {
-                            seed = planner.seedRoleId(aiSpeechChapterSegments(book, chapter).toList(), seed)
-                        }
+                val cacheGeneration = bookId?.let(cache::generation)
+                val seed = if (useRoles && liveBook != null) withContext(Dispatchers.IO) {
+                    cache.chapterRoleSeed(liveBook, firstChapter, commonRoles)
+                } else null
+                val plans = AiSpeechChapterCursor(ReaderSpeechSource(firstChapter, chapterCount,
+                    initialChapter.orEmpty().also { initialChapter = null }, loadChapter),
+                    if (useRoles) AiSpeechRolePlanner(bookId.orEmpty(), roles, commonRoles) { planningContext.ensureActive() } else null,
+                    seed) { chapter, initialRole, tailRole, emptyChapter ->
+                    if (useRoles && liveBook != null && cacheGeneration != null) {
+                        cache.recordChapterRoleSeed(liveBook, chapter, commonRoles, initialRole, tailRole, cacheGeneration)
                     }
-                    planner.plan(source, seed).iterator()
-                } else aiSpeechChunks(source).map { PlannedAiSpeechChunk(it, "", null) }.iterator()
+                    if (emptyChapter && liveBook != null && config != null && cacheGeneration != null &&
+                        cache.recordPlannedChapterCompletion(liveBook, config, chapter, commonRoles, initialRole, emptyList(), cacheGeneration)) {
+                        scope.launch { if (token == generation) onCacheChanged() }
+                    }
+                }
                 val preparedKeys = ConcurrentHashMap<AiSpeechChunk, String>()
                 val extension = if (config?.protocol == SpeechApiProtocol.MIMO) "wav" else "mp3"
                 suspend fun prepareChunk(planned: PlannedAiSpeechChunk): File {
@@ -138,7 +150,6 @@ internal class AiReaderSpeech(private val context: Context, private val bookId: 
                         val roleHint = planned.roleInstructions
                         val cacheKey = config?.let { AiSpeechCache.key(it, chunk.text, roleHint) }
                         if (cacheKey != null) preparedKeys[chunk] = cacheKey
-                        val cacheGeneration = bookId?.let(cache::generation)
                         val existing = if (bookId != null && cacheKey != null) withContext(Dispatchers.IO) { cache.find(bookId, cacheKey, extension) } else null
                         if (existing != null) return existing
                         val download = File(context.cacheDir, "speech-${UUID.randomUUID()}.$extension")
@@ -158,23 +169,38 @@ internal class AiReaderSpeech(private val context: Context, private val bookId: 
                         }
                 }
                 supervisorScope {
-                    val upcoming = ArrayDeque<Pair<PlannedAiSpeechChunk, Deferred<File>>>()
+                    val preparationScope = this
+                    val upcoming = Channel<Pair<AiSpeechChapterChunk, Deferred<File>>>(2)
+                    // Reserve before loading, so a blocked producer cannot retain a third future chapter.
+                    val slots = Semaphore(2)
                     val pendingByKey = mutableMapOf<String, Deferred<File>>()
-                    suspend fun fill() {
-                        pendingByKey.entries.removeAll { it.value.isCompleted }
-                        while (upcoming.size < 2) {
-                            val planned = if (useRoles) withContext(Dispatchers.IO) { if (plans.hasNext()) plans.next() else null }
-                                else if (plans.hasNext()) plans.next() else null
-                            if (planned == null) break
-                            val key = if (bookId != null) config?.let { AiSpeechCache.key(it, planned.chunk.text, planned.roleInstructions) } else null
-                            val pending = if (key == null) async(start = CoroutineStart.LAZY) { prepareChunk(planned) }
-                                else pendingByKey.getOrPut(key) { async(start = CoroutineStart.LAZY) { prepareChunk(planned) } }
-                            upcoming.addLast(planned to pending)
+                    val producer = async {
+                        var failure: Throwable? = null
+                        try {
+                            while (true) {
+                                slots.acquire()
+                                val chapterChunk = withContext(Dispatchers.IO) { plans.next() }
+                                if (chapterChunk == null) { slots.release(); break }
+                                val planned = chapterChunk.planned
+                                pendingByKey.entries.removeAll { it.value.isCompleted }
+                                val key = if (bookId != null) config?.let { AiSpeechCache.key(it, planned.chunk.text, planned.roleInstructions) } else null
+                                val pending = if (key == null) preparationScope.async(start = CoroutineStart.LAZY) { prepareChunk(planned) }
+                                    else pendingByKey.getOrPut(key) { preparationScope.async(start = CoroutineStart.LAZY) { prepareChunk(planned) } }
+                                upcoming.send(chapterChunk to pending)
+                                pending.start()
+                            }
+                        } catch (error: Throwable) {
+                            failure = error
+                            throw error
+                        } finally {
+                            upcoming.close(failure)
                         }
                     }
-                    fill()
-                    while (upcoming.isNotEmpty()) {
-                        val (planned, pending) = upcoming.removeFirst()
+                    var hasText = false
+                    for ((chapterChunk, pending) in upcoming) {
+                        slots.release()
+                        hasText = true
+                        val planned = chapterChunk.planned
                         val chunk = planned.chunk
                         var failure: Exception? = null
                         val playbackFile = try { pending.await() }
@@ -185,8 +211,6 @@ internal class AiReaderSpeech(private val context: Context, private val bookId: 
                                 null
                             }
                         val cacheKey = preparedKeys.remove(chunk) ?: config?.let { AiSpeechCache.key(it, chunk.text, planned.roleInstructions) }
-                        fill()
-                        upcoming.forEach { it.second.start() }
                         ensureActive()
                         val segment = chunk.segment
                         val text = chunk.text
@@ -246,8 +270,9 @@ internal class AiReaderSpeech(private val context: Context, private val bookId: 
                             continuation.invokeOnCancellation { /* stop() releases the player on the main thread. */ }
                             current.prepareAsync()
                         } } catch (error: Exception) {
-                            if (error !is CancellationException && bookId != null && cacheKey != null) withContext(Dispatchers.IO) {
-                                cache.remove(bookId, cacheKey, extension)
+                            if (error !is CancellationException && bookId != null && cacheKey != null) {
+                                withContext(Dispatchers.IO) { cache.remove(bookId, cacheKey, extension) }
+                                if (token == generation) onCacheChanged()
                             }
                             throw error
                         }
@@ -256,10 +281,13 @@ internal class AiReaderSpeech(private val context: Context, private val bookId: 
                         temporary?.let { it.delete(); downloads -= it }; audio = null
                         temporary = null
                         onLocation(segment, segment.offset + end)
-                        if (liveBook != null && config != null && upcoming.firstOrNull()?.first?.chunk?.segment?.chapter != segment.chapter) {
-                            if (withContext(Dispatchers.IO) { cache.recordChapterCompletion(liveBook, config, segment.chapter, commonRoles) }) onCacheChanged()
+                        if (liveBook != null && config != null && chapterChunk.chapterEnd) {
+                            if (withContext(Dispatchers.IO) { cache.recordChapterCompletion(liveBook, config, segment.chapter, commonRoles,
+                                chapterChunk.seedRoleId) }) onCacheChanged()
                         }
                     }
+                    producer.await()
+                    require(hasText) { "当前位置没有可朗读的文字" }
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
               catch (error: Exception) { if (token == generation) errorState.value = error.message ?: "AI 朗读失败" }

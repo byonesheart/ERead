@@ -17,6 +17,8 @@ import java.util.UUID
 
 class LibraryRepository(private val context: Context) {
     private val stateFile = AtomicFile(File(context.filesDir, "library.json"))
+    private val positionsFile = AtomicFile(File(context.filesDir, "reading_positions.json"))
+    private var positionRevision: String? = null
     private companion object {
         // AtomicFile needs a shared lock across the UI and background repository instances.
         val stateLock = Any()
@@ -29,7 +31,7 @@ class LibraryRepository(private val context: Context) {
             val settings = readSettings(json.optJSONObject("settings") ?: JSONObject())
             val comic = json.optJSONObject("comicSettings")?.let { readSettings(it, ReaderSettings().withDefaultComicMargins()) }
                 ?: settings.withDefaultComicMargins()
-            return LibraryState(
+            val state = LibraryState(
                 books = json.array("books").objects().map(::readBook),
                 annotations = json.array("annotations").objects().map(::readAnnotation),
                 settings = settings,
@@ -49,13 +51,17 @@ class LibraryRepository(private val context: Context) {
                 commonVoiceRoles = if (json.has("commonVoiceRoles")) json.array("commonVoiceRoles").objects().map(BookVoiceRole::fromJson)
                     else defaultCommonVoiceRoles()
             )
+            positionRevision = json.optString("positionRevision", "legacy")
+            return readPositions(state)
         } catch (error: Exception) {
             throw IllegalStateException("书架数据无法读取，原文件已保留：${error.message}", error)
         }
     }
 
     fun save(state: LibraryState): Unit = synchronized(stateLock) {
+        val revision = UUID.randomUUID().toString()
         val json = JSONObject().put("version", 13)
+            .put("positionRevision", revision)
             .put("books", JSONArray(state.books.map(::writeBook)))
             .put("annotations", JSONArray(state.annotations.map(::writeAnnotation)))
             .put("settings", writeSettings(state.settings))
@@ -73,10 +79,55 @@ class LibraryRepository(private val context: Context) {
         try {
             output.write(json.toString().toByteArray(Charsets.UTF_8))
             stateFile.finishWrite(output)
+            positionRevision = revision
+            // A new revision makes a surviving old sidecar harmless even after an interrupted save.
+            positionsFile.delete()
         } catch (error: Exception) {
             stateFile.failWrite(output)
             throw error
         }
+    }
+
+    fun savePositions(state: LibraryState): Unit = synchronized(stateLock) {
+        if (positionRevision == null) {
+            if (!stateFile.baseFile.exists() && !File(stateFile.baseFile.path + ".bak").exists()) {
+                save(state)
+                return
+            }
+            load()
+        }
+        val json = JSONObject().put("positionRevision", positionRevision).put("readingSeconds", state.readingSeconds)
+            .put("books", JSONArray(state.books.map { book ->
+                JSONObject().put("id", book.id).put("contentVersion", book.contentVersion)
+                    .put("chapterIndex", book.chapterIndex).put("pageIndex", book.pageIndex)
+                    .put("characterOffset", book.characterOffset).put("progress", book.progress.toDouble())
+                    .put("lastReadAt", book.lastReadAt).put("positionImagePath", book.positionImagePath)
+            }))
+        val output = positionsFile.startWrite()
+        try {
+            output.write(json.toString().toByteArray(Charsets.UTF_8))
+            positionsFile.finishWrite(output)
+        } catch (error: Exception) {
+            positionsFile.failWrite(output)
+            throw error
+        }
+    }
+
+    private fun readPositions(state: LibraryState): LibraryState {
+        if (!positionsFile.baseFile.exists() && !File(positionsFile.baseFile.path + ".bak").exists()) return state
+        val json = JSONObject(positionsFile.readFully().toString(Charsets.UTF_8))
+        if (json.optString("positionRevision") != positionRevision) return state
+        val positions = json.array("books").objects().associateBy { it.optString("id") }
+        return state.copy(readingSeconds = json.optLong("readingSeconds", state.readingSeconds), books = state.books.map { book ->
+            val position = positions[book.id]?.takeIf { it.optInt("contentVersion", -1) == book.contentVersion }
+                ?: return@map book
+            book.copy(chapterIndex = position.optInt("chapterIndex", book.chapterIndex),
+                pageIndex = position.optInt("pageIndex", book.pageIndex),
+                characterOffset = position.optInt("characterOffset", book.characterOffset),
+                progress = position.optDouble("progress", book.progress.toDouble()).toFloat(),
+                lastReadAt = position.optLong("lastReadAt", book.lastReadAt),
+                positionImagePath = position.nullableString("positionImagePath"))
+        })
     }
 
     @Synchronized

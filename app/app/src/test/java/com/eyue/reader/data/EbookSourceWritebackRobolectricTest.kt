@@ -49,7 +49,12 @@ class EbookSourceWritebackRobolectricTest {
     }
     @After fun tearDown() {
         check(root.canonicalFile.parentFile == File("build").canonicalFile)
-        check(root.deleteRecursively())
+        // Windows can briefly retain a handle to the now-empty test directory.
+        repeat(5) {
+            if (root.deleteRecursively()) return
+            Thread.sleep(50)
+        }
+        check(!root.exists())
     }
 
     @Test fun sourceTextEditKeepsUntouchedTagsCssEntitiesImagesAndParagraphs() {

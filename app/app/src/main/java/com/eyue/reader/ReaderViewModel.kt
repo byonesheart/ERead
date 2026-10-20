@@ -70,10 +70,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private var cloudMetadataJob: Job? = null
     private var cloudMetadataEpoch = 0
     private val cloudHistory = CloudBackupHistory(application)
+    private val cloudDirtyIndex = CloudDirtyBookIndex(repository)
+    private var cloudDirtyFilesRevision by mutableStateOf(0)
     private var openJob: Job? = null
     private var sessionStarted = 0L
     private var foreground = false
     private val saveMutex = Mutex()
+    private var persistedStructure: LibraryState? = null
     private data class ImportRequest(val id: String, val uris: List<Uri>, val mode: LibraryMode,
         val folder: Boolean = false, val external: Boolean = false, val mimeType: String? = null, val requestId: String? = null)
     private val importRequests = Channel<ImportRequest>(Channel.UNLIMITED)
@@ -170,14 +173,16 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         viewModelScope.launch {
-            combine(snapshotFlow { state to cloudIdentity.takeIf { cloudConfigured } }, cloudHistory.changes()) { snapshot, _ -> snapshot }
-                .collectLatest { (snapshot, account) ->
+            var checkedFilesRevision = -1
+            combine(snapshotFlow { Triple(state, cloudIdentity.takeIf { cloudConfigured }, cloudDirtyFilesRevision) }, cloudHistory.changes()) { snapshot, _ -> snapshot }
+                .collectLatest { (snapshot, account, filesRevision) ->
                     delay(120)
                     val dirty = if (account == null) emptySet() else withContext(Dispatchers.IO) {
                         val job = kotlinx.coroutines.currentCoroutineContext()
-                        cloudDirtyBookIds(repository, snapshot, account, cloudHistory) { job.ensureActive() }
+                        cloudDirtyIndex.dirtyBookIds(snapshot, account, cloudHistory, filesRevision != checkedFilesRevision) { job.ensureActive() }
                     }
-                    if (state == snapshot && cloudIdentity.takeIf { cloudConfigured } == account) cloudDirtyBookIds = dirty
+                    checkedFilesRevision = filesRevision
+                    if (state === snapshot && cloudIdentity.takeIf { cloudConfigured } == account) cloudDirtyBookIds = dirty
                 }
         }
         viewModelScope.launch {
@@ -246,6 +251,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 return@launch
             }
             val originalState = loaded.getOrThrow().withResolvedTheme(systemDark)
+            persistedStructure = loaded.getOrThrow().withoutReadingPositions()
             state = originalState.copy(settings = originalState.settings.ensureActiveAppearanceProfile(),
                 comicSettings = originalState.comicSettings.ensureActiveAppearanceProfile())
             message = (importer.lastImportErrors + importer.lastImportWarnings).takeIf { it.isNotEmpty() }?.joinToString("\n")
@@ -537,7 +543,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (!storageReady) return
         saveMutex.withLock {
             val snapshot = state
-            withContext(Dispatchers.IO) { repository.save(snapshot) }
+            val structure = snapshot.withoutReadingPositions()
+            withContext(NonCancellable + Dispatchers.IO) {
+                if (structure != persistedStructure) repository.save(snapshot) else repository.savePositions(snapshot)
+            }
+            persistedStructure = structure
             CloudBackupAutomation.changed(getApplication(), snapshot, cloudConfigured)
         }
     }
@@ -773,6 +783,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             cloudServerUrl = server ?: com.eyue.reader.data.cloud.DEFAULT_WEBDAV_SERVER
             cloudIdentity = identity
             cloudConfigured = account != null
+            cloudDirtyFilesRevision++
             if (identity != null) {
                 val before = state
                 if (state.cloudIdentity != null && state.cloudIdentity != identity) {

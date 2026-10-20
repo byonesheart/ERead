@@ -19,7 +19,6 @@ import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.ShelfGroup
 import com.eyue.reader.data.documentFile
 import com.eyue.reader.data.openDocumentStream
-import com.eyue.reader.data.materializeCloudBook
 import com.eyue.reader.data.withLocalDocument
 import com.eyue.reader.data.cloudOperationMutex
 import com.eyue.reader.data.withDefaultComicMargins
@@ -122,14 +121,15 @@ class CloudBackupService(
                     val extension = source.substringBefore('?').substringAfterLast('.', "bin")
                         .lowercase().takeIf { it.matches(Regex("[a-z0-9]{1,8}")) } ?: "bin"
                     val name = "assets/${assets.size.toString().padStart(6, '0')}.$extension"
-                    assets[name] = CloudAsset(name) { openDocumentStream(context, source) }
+                    assets[name] = CloudAsset(name, source) { openDocumentStream(context, source) }
                     name
                 }
             }
             val backupAt = System.currentTimeMillis()
             val source = if (book.format == BookFormat.IMAGES) null else
                 (if (book.sourceLinked) book.sourceUri ?: book.sourcePath else book.sourcePath ?: book.sourceUri)
-            val materialized = materializeCloudBook(context, hydrateBookSourceIdentity(context, book))
+            val resourceHashes = CloudResourceHashCache(context, book.id)
+            val materialized = materializeCloudBookCached(context, hydrateBookSourceIdentity(context, book), resourceHashes, check)
             check()
             val portable = remapBook(materialized, ::path).copy(sourcePath = path(source), sourceUri = null,
                 sourceLinked = false, cloudEnabled = true, cloudOnly = false, cloudBackupAt = backupAt)
@@ -138,8 +138,9 @@ class CloudBackupService(
             val group = state.groups.firstOrNull { it.id == book.groupId && it.mode == book.mode }
             val directory = "books/${book.id}/"
             val assetList = assets.values.toList()
-            val inspected = CloudArchive.inspect(assetList, check)
-            val contentIdentity = cloudBookContentIdentity(context, book, check)
+            val inspected = CloudArchive.inspect(assetList, check, resourceHashes)
+            val contentIdentity = cloudBookContentIdentity(context, book, check, resourceHashes)
+            resourceHashes.save()
             val sourceHash = inspected.firstOrNull { it.name == portable.sourcePath }?.sha256
             val previous = transport.metadata(directory + "manifest.json")?.let { readManifest(it, book.id) }
             if (previous != null && previous.assets == inspected && contentBook(previous.info.book) == contentBook(portable)) {

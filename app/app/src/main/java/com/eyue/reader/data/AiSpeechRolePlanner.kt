@@ -9,6 +9,8 @@ internal data class PlannedAiSpeechChunk(val chunk: AiSpeechChunk, val roleInstr
 /** One iterator owns dialogue continuity. Audio preloads consume its immutable decisions, never mutate them. */
 internal class AiSpeechRolePlanner(private val bookId: String, bookRoles: List<BookVoiceRole>,
     commonRoles: List<BookVoiceRole> = emptyList(), private val checkActive: () -> Unit = {}) {
+    var lastDialogueRoleId: String? = null
+        private set
     private data class Candidate(val role: BookVoiceRole, val pattern: Regex, val priority: Int)
     private val roles = (bookRoles.map { it to if (it.kind == VoiceRoleKind.CHARACTER) 0 else 1 } +
         commonRoles.map { it to if (it.kind == VoiceRoleKind.CHARACTER) 2 else 3 })
@@ -67,6 +69,7 @@ internal class AiSpeechRolePlanner(private val bookId: String, bookRoles: List<B
     }
 
     fun plan(source: List<ReaderSpeechSegment>, seedRoleId: String? = null): Sequence<PlannedAiSpeechChunk> = sequence {
+        lastDialogueRoleId = seedRoleId
         if (roles.isEmpty()) {
             aiSpeechChunks(source).forEach { yield(PlannedAiSpeechChunk(it, "", null)) }
             return@sequence
@@ -102,7 +105,10 @@ internal class AiSpeechRolePlanner(private val bookId: String, bookRoles: List<B
                         matches.size == 1 -> matches.single().role
                         else -> narrator(segment, if (segment.roleContext == null) segment.offset + paragraphStart else paragraphStart)
                     }
-                    if (hasDialogue && selected != null) previousDialogue = selected
+                    if (hasDialogue && selected != null) {
+                        previousDialogue = selected
+                        lastDialogueRoleId = selected.id
+                    }
                     val absoluteStart = paragraphStart + range.first
                     val absoluteEnd = paragraphStart + range.last + 1
                     var cursor = maxOf(absoluteStart, origin)
@@ -125,7 +131,7 @@ internal class AiSpeechRolePlanner(private val bookId: String, bookRoles: List<B
         }
     }
 
-    /** Scan preceding chapters in order before parallel chapter work, then pass this immutable seed to plan. */
+    /** Extract a chapter's last dialogue voice while preserving the caller's continuity seed. */
     fun seedRoleId(source: List<ReaderSpeechSegment>, initialRoleId: String? = null): String? {
         var result = initialRoleId
         // A seed is the last dialogue voice, rather than a narrator chosen for non-dialogue text.

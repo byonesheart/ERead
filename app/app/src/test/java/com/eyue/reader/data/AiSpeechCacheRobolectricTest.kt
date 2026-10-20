@@ -178,4 +178,160 @@ class AiSpeechCacheRobolectricTest {
             assertEquals(0L, cache.bytes(book.id))
         } finally { cache.clear(book.id); source.delete() }
     }
+
+    @Test fun badgeRefreshUsesRecordedChaptersWithoutReadingUntouchedTextOrDiscoveringLooseAudio() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val folder = File(context.cacheDir, "completion-index-${UUID.randomUUID()}").apply { mkdirs() }
+        val source = File(folder, "ready.txt").apply { writeText("Ready") }
+        val book = Book(title = "Indexed", format = BookFormat.EPUB, mode = LibraryMode.NOVEL,
+            chapters = listOf(Chapter(title = "Ready", textPath = source.absolutePath),
+                Chapter(title = "Untouched", textPath = File(folder, "not-loaded.txt").absolutePath)))
+        val config = AiSpeechConfig("https://example.org/v1", "key", "tts", "voice", rolePromptEnabled = true)
+        val other = AiSpeechConfig.fromJson(config.toJson().put("voice", "other"))
+        val cache = AiSpeechCache(context)
+        try {
+            val temporary = File(folder, "audio.mp3").apply { writeBytes(byteArrayOf(1)) }
+            cache.commit(book.id, AiSpeechCache.key(config, "Ready"), "mp3", temporary, cache.generation(book.id))
+            assertEquals(AiSpeechChapterCacheStatus(), cache.chapterCacheStatus(book, config, emptyList()))
+            assertTrue(cache.recordChapterCompletion(book, config, 0, emptyList()))
+            repeat(3) {
+                assertEquals(setOf(0), AiSpeechCache(context).chapterCacheStatus(book, config, emptyList()).currentChapters)
+                assertEquals(setOf(0), cache.chapterCacheStatus(book, other, emptyList()).otherChapters)
+            }
+            assertFalse(File(requireNotNull(book.chapters[1].textPath)).exists())
+        } finally { cache.clear(book.id); folder.deleteRecursively() }
+        Unit
+    }
+
+    @Test fun sourceMetadataInvalidatesOnlyAffectedChaptersAndInheritedRoleSeeds() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val folder = File(context.cacheDir, "completion-sources-${UUID.randomUUID()}").apply { mkdirs() }
+        val first = File(folder, "first.txt").apply { writeText("First") }
+        val second = File(folder, "second.txt").apply { writeText("Second") }
+        val book = Book(title = "Sources", format = BookFormat.TXT, mode = LibraryMode.NOVEL,
+            chapters = listOf(Chapter(title = "First", textPath = first.absolutePath), Chapter(title = "Second", textPath = second.absolutePath)))
+        val disabled = AiSpeechConfig("https://example.org/v1", "key", "tts", "voice")
+        val enabled = AiSpeechConfig.fromJson(disabled.toJson().put("rolePromptEnabled", true))
+        val cache = AiSpeechCache(context)
+        try {
+            for ((index, text) in listOf("First", "Second").withIndex()) {
+                val temporary = File(folder, "audio-$index.mp3").apply { writeBytes(byteArrayOf(1)) }
+                cache.commit(book.id, AiSpeechCache.key(disabled, text), "mp3", temporary, cache.generation(book.id))
+                assertTrue(cache.recordChapterCompletion(book, disabled, index, emptyList()))
+                assertTrue(cache.recordChapterCompletion(book, enabled, index, emptyList()))
+            }
+            val previousModified = first.lastModified()
+            first.writeText("Other")
+            assertTrue(first.setLastModified(previousModified + 2_000))
+            assertEquals(setOf(1), cache.chapterCacheStatus(book, disabled, emptyList()).currentChapters)
+            assertEquals(emptySet<Int>(), cache.chapterCacheStatus(book, enabled, emptyList()).currentChapters)
+            assertEquals(setOf(1), cache.chapterCacheStatus(book, enabled, emptyList()).otherChapters)
+            assertEquals(emptySet<Int>(), cache.chapterCacheStatus(book.copy(chapters = listOf(book.chapters[0])), disabled, emptyList()).currentChapters)
+            second.delete()
+            assertEquals(AiSpeechChapterCacheStatus(), cache.chapterCacheStatus(book, disabled, emptyList()))
+        } finally { cache.clear(book.id); folder.deleteRecursively() }
+        Unit
+    }
+
+    @Test fun dialogueCheckpointsInvalidateColdCompletionsAndRejectChangedSourcesRolesVersionsAndOldGenerations() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val folder = File(context.cacheDir, "completion-seed-${UUID.randomUUID()}").apply { mkdirs() }
+        val source = File(folder, "first.txt").apply { writeText("First") }
+        val second = File(folder, "second.txt").apply { writeText("Second") }
+        val role = BookVoiceRole("张三", "张三", "男声", id = "zhang")
+        val book = Book(title = "Checkpoints", format = BookFormat.TXT, mode = LibraryMode.NOVEL,
+            chapters = listOf(Chapter(title = "First", textPath = source.absolutePath), Chapter(title = "Second", textPath = second.absolutePath)),
+            voiceRoles = listOf(role))
+        val config = AiSpeechConfig("https://example.org/v1", "key", "tts", "voice", rolePromptEnabled = true)
+        val cache = AiSpeechCache(context)
+        try {
+            val generation = cache.generation(book.id)
+            val key = AiSpeechCache.key(config, "Second")
+            val temporary = File(folder, "audio.mp3").apply { writeBytes(byteArrayOf(1)) }
+            cache.commit(book.id, key, "mp3", temporary, generation)
+            assertTrue(cache.recordPlannedChapterCompletion(book, config, 1, emptyList(), null, listOf(key), generation))
+            assertEquals(setOf(1), cache.chapterCacheStatus(book, config, emptyList()).currentChapters)
+            assertNull(cache.chapterRoleSeed(book, 0, emptyList()))
+            assertNull(cache.chapterRoleSeed(book, 1, emptyList()))
+            cache.recordChapterRoleSeed(book, 0, emptyList(), null, role.id, generation)
+            assertEquals(role.id, AiSpeechCache(context).chapterRoleSeed(book, 1, emptyList()))
+            assertEquals(emptySet<Int>(), cache.chapterCacheStatus(book, config, emptyList()).currentChapters)
+            assertTrue(cache.recordPlannedChapterCompletion(book, config, 1, emptyList(), role.id, listOf(key), generation))
+            assertEquals(setOf(1), cache.chapterCacheStatus(book, config, emptyList()).currentChapters)
+            assertNull(cache.chapterRoleSeed(book.copy(contentVersion = book.contentVersion + 1), 1, emptyList()))
+            assertNull(cache.chapterRoleSeed(book.copy(voiceRoles = listOf(role.copy(voice = "新音色"))), 1, emptyList()))
+            assertNull(cache.chapterRoleSeed(book, 1, listOf(role.copy(id = "common"))))
+            val previousModified = source.lastModified()
+            source.writeText("Other")
+            assertTrue(source.setLastModified(previousModified + 2_000))
+            assertNull(cache.chapterRoleSeed(book, 1, emptyList()))
+            cache.clear(book.id)
+            cache.recordChapterRoleSeed(book, 0, emptyList(), null, role.id, generation)
+            assertEquals(0L, cache.bytes(book.id))
+            assertNull(cache.chapterRoleSeed(book, 1, emptyList()))
+        } finally { cache.clear(book.id); folder.deleteRecursively() }
+        Unit
+    }
+
+    @Test fun aNewEarlierCheckpointInvalidatesDependentColdCheckpointTailsAndBadges() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val folder = File(context.cacheDir, "completion-seed-chain-${UUID.randomUUID()}").apply { mkdirs() }
+        val texts = listOf("First", "Second", "Third")
+        val firstRole = BookVoiceRole("张三", "张三", "男声", id = "zhang")
+        val secondRole = BookVoiceRole("李四", "李四", "女声", id = "li")
+        val book = Book(title = "Checkpoint chain", format = BookFormat.TXT, mode = LibraryMode.NOVEL,
+            chapters = texts.mapIndexed { index, text -> Chapter(title = text,
+                textPath = File(folder, "$index.txt").apply { writeText(text) }.absolutePath) },
+            voiceRoles = listOf(firstRole, secondRole))
+        val config = AiSpeechConfig("https://example.org/v1", "key", "tts", "voice", rolePromptEnabled = true)
+        val cache = AiSpeechCache(context)
+        try {
+            val generation = cache.generation(book.id)
+            cache.recordChapterRoleSeed(book, 1, emptyList(), null, secondRole.id, generation)
+            for (index in 1..2) {
+                val key = AiSpeechCache.key(config, texts[index])
+                val temporary = File(folder, "audio-$index.mp3").apply { writeBytes(byteArrayOf(1)) }
+                cache.commit(book.id, key, "mp3", temporary, generation)
+                assertTrue(cache.recordPlannedChapterCompletion(book, config, index, emptyList(),
+                    if (index == 1) null else secondRole.id, listOf(key), generation))
+            }
+            assertEquals(secondRole.id, cache.chapterRoleSeed(book, 2, emptyList()))
+            assertEquals(setOf(1, 2), cache.chapterCacheStatus(book, config, emptyList()).currentChapters)
+            cache.recordChapterRoleSeed(book, 0, emptyList(), null, firstRole.id, generation)
+            assertEquals(firstRole.id, cache.chapterRoleSeed(book, 1, emptyList()))
+            assertNull(cache.chapterRoleSeed(book, 2, emptyList()))
+            assertEquals(emptySet<Int>(), cache.chapterCacheStatus(book, config, emptyList()).currentChapters)
+            cache.recordChapterRoleSeed(book, 1, emptyList(), firstRole.id, secondRole.id, generation)
+            assertEquals(secondRole.id, cache.chapterRoleSeed(book, 2, emptyList()))
+            assertEquals(setOf(2), cache.chapterCacheStatus(book, config, emptyList()).currentChapters)
+        } finally { cache.clear(book.id); folder.deleteRecursively() }
+        Unit
+    }
+
+    @Test fun emptyChapterRecordsNeedNoAudioOrRoleContextButStillValidateSourcesVersionsAndClears() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val folder = File(context.cacheDir, "completion-empty-${UUID.randomUUID()}").apply { mkdirs() }
+        val source = File(folder, "empty.txt").apply { writeText(" \n") }
+        val book = Book(title = "Empty", format = BookFormat.TXT, mode = LibraryMode.NOVEL,
+            chapters = listOf(Chapter(title = "Untouched", textPath = File(folder, "missing.txt").absolutePath),
+                Chapter(title = "Empty", textPath = source.absolutePath)))
+        val config = AiSpeechConfig("https://example.org/v1", "key", "tts", "voice", rolePromptEnabled = true)
+        val cache = AiSpeechCache(context)
+        try {
+            val generation = cache.generation(book.id)
+            assertTrue(cache.recordPlannedChapterCompletion(book, config, 1, emptyList(), null, emptyList(), generation))
+            val changedRoles = book.copy(voiceRoles = listOf(BookVoiceRole("张三", "张三", "男声")))
+            val result = cache.chapterCacheStatus(changedRoles, null, emptyList())
+            assertEquals(emptySet<Int>(), result.currentChapters)
+            assertEquals(emptySet<Int>(), result.otherChapters)
+            assertEquals(setOf(1), result.emptyChapters)
+            assertEquals(emptySet<Int>(), cache.chapterCacheStatus(book.copy(contentVersion = book.contentVersion + 1), config, emptyList()).emptyChapters)
+            source.writeText("Now readable")
+            assertEquals(emptySet<Int>(), cache.chapterCacheStatus(book, config, emptyList()).emptyChapters)
+            cache.clear(book.id)
+            assertFalse(cache.recordPlannedChapterCompletion(book, config, 1, emptyList(), null, emptyList(), generation))
+            assertEquals(0L, cache.bytes(book.id))
+        } finally { cache.clear(book.id); folder.deleteRecursively() }
+        Unit
+    }
 }

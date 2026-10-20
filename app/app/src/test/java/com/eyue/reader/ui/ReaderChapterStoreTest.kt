@@ -106,6 +106,60 @@ class ReaderChapterStoreTest {
         assertEquals(2, reads)
     }
 
+    @Test fun crossingManyChaptersReleasesDocumentDataButKeepsLightweightScrollSlots() = runBlocking {
+        val book = book()
+        val requested = mutableListOf<Int>()
+        val store = ReaderChapterStore(context, book) { index ->
+            requested += index
+            PreparedChapter(book.chapters[index], ("第${index + 1}章正文\n".repeat(80)))
+        }
+        var document = ReaderDocument(List(book.chapters.size) { "" }, emptyList(), emptyList(),
+            List(book.chapters.size) { null }, List(book.chapters.size) { emptyList() }, chapters = book.chapters,
+            scrollItemCounts = List(book.chapters.size) { 1 })
+        for (center in book.chapters.indices) {
+            store.retainWindow(center)
+            for (index in (center - 1).coerceAtLeast(0)..(center + 1).coerceAtMost(book.chapters.lastIndex)) {
+                val loaded = store.load(index)
+                document = readerRetainChapterWindow(document.copy(
+                    text = document.text.toMutableList().apply { this[index] = loaded.text },
+                    sourceStyles = document.sourceStyles.toMutableList().apply { this[index] = loaded.styles },
+                    scrollBlocks = document.scrollBlocks.toMutableList().apply { this[index] = loaded.blocks },
+                    readyChapters = document.readyChapters + index,
+                    scrollItemCounts = document.scrollItemCounts.toMutableList().apply { this[index] = loaded.blocks.size }), center, book.chapters)
+            }
+            assertTrue(document.text.count { it.isNotEmpty() } <= 3)
+            assertTrue(document.sourceStyles.count { it != null } <= 3)
+            assertTrue(document.scrollBlocks.count { it.isNotEmpty() } <= 3)
+            assertTrue(document.readyChapters.all { it in (center - 1)..(center + 1) })
+        }
+        assertTrue(document.scrollItemCounts.all { it > 0 })
+        assertEquals(readerScrollBlocks("第1章正文\n".repeat(80), emptyList()).size, document.scrollItemCounts.first())
+        assertEquals("", document.text.first())
+        store.retainWindow(0)
+        store.load(0)
+        assertEquals(2, requested.count { it == 0 })
+    }
+
+    @Test fun lateLoadOutsideTheNewWindowCannotRepopulateTheStore() = runBlocking {
+        val book = book()
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val reads = AtomicInteger()
+        val store = ReaderChapterStore(context, book) { index ->
+            if (reads.incrementAndGet() == 1) { started.complete(Unit); release.await() }
+            PreparedChapter(book.chapters[index], "章节正文")
+        }
+        store.retainWindow(0)
+        val old = async { store.load(0) }
+        started.await()
+        store.retainWindow(10)
+        release.complete(Unit)
+        old.await()
+        store.retainWindow(0)
+        store.load(0)
+        assertEquals(2, reads.get())
+    }
+
     @Test fun legacyLengthCatalogCountsUtf16AndInvalidatesChangedSourceMetadata() = runBlocking {
         // The surrogate pair crosses the streaming reader's 8,192-character boundary.
         val longText = "甲".repeat(8_191) + "😀末尾"

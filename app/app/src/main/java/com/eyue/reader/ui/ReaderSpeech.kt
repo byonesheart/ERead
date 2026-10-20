@@ -6,6 +6,7 @@ import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.compose.runtime.staticCompositionLocalOf
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,12 +20,30 @@ internal data class ReaderSpeechSegment(
     val roleContext: String? = null
 )
 
+/** The current chapter is ready; subsequent chapters are loaded only as playback reaches them. */
+internal class ReaderSpeechSource(
+    val firstChapter: Int,
+    val chapterCount: Int,
+    val initial: List<ReaderSpeechSegment>,
+    val loadChapter: suspend (Int) -> List<ReaderSpeechSegment>
+) {
+    companion object {
+        fun fromSegments(segments: List<ReaderSpeechSegment>): ReaderSpeechSource {
+            val first = segments.firstOrNull()?.chapter ?: 0
+            return ReaderSpeechSource(first, (segments.maxOfOrNull { it.chapter } ?: first) + 1,
+                segments.filter { it.chapter == first }) { chapter -> segments.filter { it.chapter == chapter } }
+        }
+    }
+}
+
 internal interface ReaderSpeechController {
     val playing: StateFlow<Boolean>
     val error: StateFlow<String?>
     // AI cache chunks must stay independent of font-dependent page boundaries.
     val usesChapterSegments: Boolean get() = false
     fun start(source: List<ReaderSpeechSegment>, speed: Float, onLocation: (ReaderSpeechSegment, Int) -> Unit)
+    fun start(source: ReaderSpeechSource, speed: Float, onLocation: (ReaderSpeechSegment, Int) -> Unit) =
+        start(source.initial, speed, onLocation)
     fun setSpeed(speed: Float)
     fun clearError()
     fun pause(): Boolean = false
@@ -37,6 +56,11 @@ internal val LocalReaderSpeechFactory = staticCompositionLocalOf<(Context) -> Re
 
 /** Keeps one utterance in the engine at a time so long books do not fill its queue. */
 internal class ReaderSpeech(context: Context) : ReaderSpeechController {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var loadChapter: (suspend (Int) -> List<ReaderSpeechSegment>)? = null
+    private var chapterCount = 0
+    private var nextChapter = 0
+    private var chapterLoad: Job? = null
     private val handler = Handler(Looper.getMainLooper())
     private val playingState = MutableStateFlow(false)
     private val errorState = MutableStateFlow<String?>(null)
@@ -123,18 +147,27 @@ internal class ReaderSpeech(context: Context) : ReaderSpeechController {
         source: List<ReaderSpeechSegment>,
         speed: Float,
         onLocation: (ReaderSpeechSegment, Int) -> Unit
-    ) {
+    ) = begin(source, null, speed, onLocation)
+
+    override fun start(source: ReaderSpeechSource, speed: Float, onLocation: (ReaderSpeechSegment, Int) -> Unit) =
+        begin(source.initial, source, speed, onLocation)
+
+    private fun begin(source: List<ReaderSpeechSegment>, chapters: ReaderSpeechSource?, speed: Float,
+        onLocation: (ReaderSpeechSegment, Int) -> Unit) {
         stop()
         if (!ready) {
             if (initializationError != null) { errorState.value = initializationError; return }
             setSpeed(speed)
             errorState.value = null
-            pendingStart = { start(source, this.speed, onLocation) }
+            pendingStart = { begin(source, chapters, this.speed, onLocation) }
             playingState.value = true
             return
         }
         segments = source.filter { it.text.isNotBlank() }
-        if (segments.isEmpty()) {
+        loadChapter = chapters?.loadChapter
+        chapterCount = chapters?.chapterCount ?: 0
+        nextChapter = (chapters?.firstChapter ?: 0) + 1
+        if (segments.isEmpty() && (chapters == null || nextChapter >= chapters.chapterCount)) {
             errorState.value = "这一页没有可朗读的文字。漫画导入时不提取文字；图片和扫描 PDF 需先识别文字。"
             return
         }
@@ -153,6 +186,30 @@ internal class ReaderSpeech(context: Context) : ReaderSpeechController {
             segmentOffset = 0
         }
         if (segmentIndex >= segments.size) {
+            val load = loadChapter
+            if (load != null && nextChapter < chapterCount) {
+                if (chapterLoad?.isActive == true) return
+                chapterLoad = scope.launch {
+                    try {
+                        do {
+                            val chapter = nextChapter++
+                            segments = withContext(Dispatchers.IO) { load(chapter) }
+                                .filter { it.text.isNotBlank() }
+                        } while (segments.isEmpty() && nextChapter < chapterCount)
+                        generation++
+                        segmentIndex = 0; segmentOffset = 0; spokenOffset = 0
+                        chapterLoad = null
+                        if (!paused) speakNext()
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                      catch (error: Exception) {
+                        errorState.value = error.message ?: "无法读取下一章正文"
+                        playingState.value = false
+                    }
+                }
+                return
+            }
+            loadChapter = null
+            segments = emptyList()
             playingState.value = false
             return
         }
@@ -236,6 +293,7 @@ internal class ReaderSpeech(context: Context) : ReaderSpeechController {
         pendingStart = null
         playingState.value = false
         engine?.stop()
+        chapterLoad?.cancel(); chapterLoad = null; loadChapter = null
         segments = emptyList()
         location = null
     }
@@ -245,5 +303,6 @@ internal class ReaderSpeech(context: Context) : ReaderSpeechController {
         stop()
         engine?.shutdown()
         engine = null
+        scope.cancel()
     }
 }

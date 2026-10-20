@@ -268,6 +268,41 @@ class ReaderScreenBookPageIndexRobolectricTest {
         }
     }
 
+    @Test fun returningToAnEvictedScrollBlockRestoresItsSourceAnchorInsteadOfTheChapterStart() {
+        settings = settings.copy(readingMode = ReadingMode.SCROLL)
+        val texts = (0 until 6).map { chapter -> (0 until 80).joinToString("\n") { paragraph ->
+            val marker = "RETURN_${chapter}_P${paragraph.toString().padStart(3, '0')}"
+            "$marker quiet harbor and boats beside the bridge. $marker old stone steps and evening light."
+        } }
+        val chapters = texts.mapIndexed { index, text ->
+            Chapter(title = "第${index + 1}章", textPath = File(root, "return-$index.txt").apply { writeText(text) }.absolutePath,
+                characterCount = text.length)
+        }
+        val book = Book(title = "滚动窗口返回锚点", format = BookFormat.EPUB, mode = LibraryMode.NOVEL, chapters = chapters)
+        val blockIndex = 3
+        val blocks = readerScrollBlocks(texts.first(), emptyList())
+        assertTrue("The fixture must contain a noninitial block", blocks.size > blockIndex)
+        val block = blocks[blockIndex]
+        val fragment = texts.first().substring(block.start, minOf(block.start + 45, block.end))
+        show(book)
+        await { ready() && position.get()?.first == 0 }
+        compose.onNodeWithTag("reader_scroll").performScrollToIndex(blockIndex)
+        await { ready() && position.get()?.let { it.first == 0 && it.second in block.start until block.end } == true }
+        val originalOffset = requireNotNull(position.get()).second
+        assertTrue(visibleTextContains(fragment))
+
+        // Moving beyond the adjacent chapter window leaves only chapter zero's stable block count/keys.
+        compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(width / 2f, height * .1f)) }
+        compose.onNodeWithContentDescription("目录").performClick()
+        compose.onNodeWithTag("reader_contents_entry_${chapters[4].id}").performScrollTo().performClick()
+        await { ready() && position.get()?.first == 4 }
+        compose.onNodeWithTag("reader_scroll").performScrollToIndex(blockIndex)
+        await { ready() && position.get()?.let { it.first == 0 && it.second in block.start until block.end } == true }
+        assertEquals("Reloading a placeholder must retain the selected block's UTF-16 anchor", originalOffset,
+            requireNotNull(position.get()).second)
+        assertTrue("The previously selected block must remain visible after its chapter reloads", visibleTextContains(fragment))
+    }
+
     @Test fun pagedAndVerticalModesMarkTheLastPageReadWithoutChangingItsSourceOffset() {
         verifyLastChapterCompletion()
     }

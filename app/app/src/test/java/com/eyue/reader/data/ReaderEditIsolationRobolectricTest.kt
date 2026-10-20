@@ -343,6 +343,42 @@ class ReaderEditIsolationRobolectricTest {
         assertEquals("第一章\n原正文。", File(original.sourcePath!!).readText())
     }
 
+    @Test fun progressOpenAndFlushOnlyWritePositionsAfterTheInitialCatalogHasSettled() {
+        val original = textBook("独立阅读位置", "第一章\n正文。")
+        openLibrary(original)
+        vm.flush()
+        await { File(app.filesDir, "reading_positions.json").exists() }
+        val metadata = File(app.filesDir, "library.json").readBytes()
+        vm.open(book(original.id))
+        vm.progress(0, 2, 6, .65f, imagePath = "当前图片.png")
+        vm.flush()
+        await { LibraryRepository(app).load().books.single().characterOffset == 6 }
+        assertArrayEquals(metadata, File(app.filesDir, "library.json").readBytes())
+        val stored = LibraryRepository(app).load().books.single()
+        assertEquals(2, stored.pageIndex)
+        assertEquals(.65f, stored.progress)
+        assertEquals("当前图片.png", stored.positionImagePath)
+        assertTrue(stored.lastReadAt > 0)
+    }
+
+    @Test fun cancellingAPendingCatalogWriteForNewProgressKeepsBothChanges() {
+        val original = textBook("取消待写任务", "第一章\n正文。")
+        openLibrary(original)
+        vm.open(book(original.id))
+        val release = holdPersistence()
+        vm.settings(vm.readerSettings.copy(fontSize = 27f))
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(400))
+        vm.progress(0, 3, 7, .75f)
+        vm.flush()
+        release.complete(Unit)
+        await { LibraryRepository(app).load().let { it.settings.fontSize == 27f && it.books.single().characterOffset == 7 } }
+        val metadata = File(app.filesDir, "library.json").readBytes()
+        vm.progress(0, 4, 8, .85f)
+        vm.flush()
+        await { LibraryRepository(app).load().books.single().characterOffset == 8 }
+        assertArrayEquals(metadata, File(app.filesDir, "library.json").readBytes())
+    }
+
     private fun textBook(title: String, text: String): Book {
         val source = File(root, "$title.txt").apply { writeText(text) }
         return Book(title = title, format = BookFormat.TXT, mode = LibraryMode.NOVEL,

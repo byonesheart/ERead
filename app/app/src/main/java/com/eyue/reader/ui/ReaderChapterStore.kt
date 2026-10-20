@@ -29,6 +29,13 @@ internal class ReaderChapterStore(private val context: Context, private val book
     private val cache = java.util.Collections.synchronizedMap(object : LinkedHashMap<Int, ReaderLoadedChapter>(8, .75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, ReaderLoadedChapter>?): Boolean = size > 6
     })
+    private var window: IntRange? = null
+
+    /** The reader and this store retain the same current/adjacent chapter window. */
+    fun retainWindow(center: Int) = synchronized(cache) {
+        window = (center - 1).coerceAtLeast(0)..(center + 1).coerceAtMost(book.chapters.lastIndex)
+        cache.keys.retainAll(requireNotNull(window).toSet())
+    }
 
     suspend fun load(index: Int): ReaderLoadedChapter = locks[index].withLock {
         cache[index]?.let { return@withLock it }
@@ -40,7 +47,7 @@ internal class ReaderChapterStore(private val context: Context, private val book
                 readerScrollBlocks(prepared.text, prepared.chapter.inlineImages) { work.ensureActive() })
         }
         currentCoroutineContext().ensureActive()
-        cache[index] = result
+        synchronized(cache) { if (window?.contains(index) != false) cache[index] = result }
         result
     }
 }

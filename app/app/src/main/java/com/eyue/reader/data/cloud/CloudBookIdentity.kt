@@ -9,7 +9,19 @@ import kotlinx.coroutines.CancellationException
 import java.security.MessageDigest
 
 /** Independent of filenames, chapter splitting, font/style, bookmarks and ZIP packaging. */
-internal fun cloudBookContentIdentity(context: Context, book: Book, check: () -> Unit = {}): String? {
+internal fun cloudBookContentIdentity(context: Context, book: Book, check: () -> Unit = {}, cache: CloudResourceHashCache? = null): String? {
+    val paths = if (book.mode == LibraryMode.NOVEL) {
+        if (book.format == BookFormat.PDF) book.chapters.flatMap { it.pages.map { page -> page.textPath } }
+        else book.chapters.map { it.textPath }
+    } else book.chapters.flatMap { it.pages.map { page -> page.path } }
+    if (paths.isEmpty() || paths.any { it == null }) return null
+    val key = if (book.mode == LibraryMode.NOVEL) "text-v1" else
+        "pages-v1:" + book.chapters.flatMap { it.pages.map { page -> page.pdfPage } }.joinToString(",")
+    return if (cache == null) computeCloudBookContentIdentity(context, book, check, null)
+        else cache.identity(key, paths.filterNotNull(), check) { computeCloudBookContentIdentity(context, book, check, cache) }
+}
+
+private fun computeCloudBookContentIdentity(context: Context, book: Book, check: () -> Unit, cache: CloudResourceHashCache?): String? {
     return try {
         val digest = MessageDigest.getInstance("SHA-256")
         if (book.mode == LibraryMode.NOVEL) {
@@ -40,7 +52,7 @@ internal fun cloudBookContentIdentity(context: Context, book: Book, check: () ->
             val hashes = HashMap<String, String>()
             for (page in pages) {
                 check()
-                val hash = hashes.getOrPut(page.path) { cloudSourceHash(context, page.path, check) }
+                val hash = hashes.getOrPut(page.path) { cloudSourceHash(context, page.path, check, cache) }
                 digest.update("$hash:${page.pdfPage}\n".toByteArray(Charsets.UTF_8))
             }
             "pages-v1:${CloudArchive.hex(digest.digest())}"
@@ -49,7 +61,9 @@ internal fun cloudBookContentIdentity(context: Context, book: Book, check: () ->
       catch (_: Exception) { null }
 }
 
-internal fun cloudSourceHash(context: Context, path: String, check: () -> Unit = {}): String {
+internal fun cloudSourceHash(context: Context, path: String, check: () -> Unit = {}, cache: CloudResourceHashCache? = null): String {
+    if (cache != null) return cache.inspect(CloudAsset("assets/source", path) { openDocumentStream(context, path) },
+        CLOUD_ARCHIVE_LIMIT, check).sha256
     val digest = MessageDigest.getInstance("SHA-256")
     openDocumentStream(context, path).use { input ->
         val bytes = ByteArray(64 * 1024)

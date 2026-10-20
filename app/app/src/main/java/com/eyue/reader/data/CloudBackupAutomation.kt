@@ -99,13 +99,15 @@ internal class CloudBackupHistory(context: Context) {
 }
 
 internal fun cloudBackupFingerprint(repository: LibraryRepository, state: LibraryState, book: Book): String {
-    val digest = MessageDigest.getInstance("SHA-256")
-    fun add(value: String) { digest.update(value.toByteArray()); digest.update(0) }
-    add(repository.writeBook(book.copy(cloudBackupAt = 0, cloudEnabled = true, cloudOnly = false, lastReadAt = 0)).toString())
-    state.annotations.filter { it.bookId == book.id }.sortedBy { it.id }.forEach { add(repository.writeAnnotation(it).toString()) }
+    return CloudBookFingerprint(repository, state, book).fingerprint(book)
+}
+
+internal fun cloudBackupFingerprintTail(repository: LibraryRepository, state: LibraryState, book: Book): List<String> {
+    val parts = mutableListOf<String>()
+    state.annotations.filter { it.bookId == book.id }.sortedBy { it.id }.forEach { parts += repository.writeAnnotation(it).toString() }
     val settings = if (book.mode == LibraryMode.COMIC) state.comicSettings else state.settings
-    add(repository.writeSettings(settings).toString())
-    state.groups.find { it.id == book.groupId }?.let { add("${it.id}\n${it.name}\n${it.mode}") }
+    parts += repository.writeSettings(settings).toString()
+    state.groups.find { it.id == book.groupId }?.let { parts += "${it.id}\n${it.name}\n${it.mode}" }
     val files = listOfNotNull(book.sourcePath, book.coverPath) + book.chapters.flatMap { chapter ->
         listOfNotNull(chapter.textPath) + chapter.inlineImages.map { it.path } +
             chapter.pages.flatMap { listOfNotNull(it.path, it.textPath) }
@@ -113,9 +115,9 @@ internal fun cloudBackupFingerprint(repository: LibraryRepository, state: Librar
         settings.appearanceProfiles.flatMap { listOfNotNull(it.appearance.fontPath, it.appearance.backgroundImagePath) }
     files.distinct().forEach { path ->
         val file = File(path)
-        if (!path.startsWith("content:")) add("$path\n${file.length()}\n${file.lastModified()}")
+        if (!path.startsWith("content:")) parts += "$path\n${file.length()}\n${file.lastModified()}"
     }
-    return "records-v2:" + digest.digest().joinToString("") { "%02x".format(it) }
+    return parts
 }
 
 internal fun cloudDirtyBookIds(repository: LibraryRepository, state: LibraryState, account: String,

@@ -59,7 +59,7 @@ class AiReaderSpeechRobolectricTest {
         assertTrue(positions.isEmpty())
         assertTrue(HeldPlayerShadow.instances.isEmpty())
         downloaded.complete(Unit)
-        idle()
+        await { HeldPlayerShadow.instances.size == 1 }
         val player = HeldPlayerShadow.instances.single()
         assertTrue(positions.isEmpty())
         player.onPrepared.onPrepared(player.real)
@@ -90,6 +90,81 @@ class AiReaderSpeechRobolectricTest {
         first.onComplete.onCompletion(first.real)
         await { requested.size == 4 && HeldPlayerShadow.instances.size == 2 }
         assertEquals("Four", requested.last())
+    }
+
+    @Test fun aSlowNextChapterDoesNotDelayTheCurrentChapterAndNeverLoadsEarlierOrDistantChapters() {
+        val requestedChapters = java.util.concurrent.CopyOnWriteArrayList<Int>()
+        val nextChapter = CompletableDeferred<Unit>()
+        val cancelled = CompletableDeferred<Unit>()
+        speech = AiReaderSpeech(RuntimeEnvironment.getApplication()) { _, target -> target.writeBytes(byteArrayOf(1)) }
+        speech.start(ReaderSpeechSource(98, 1_000, listOf(ReaderSpeechSegment(98, 0, 4_000, "Current tail"))) { chapter ->
+            requestedChapters += chapter
+            try { nextChapter.await() } finally { cancelled.complete(Unit) }
+            listOf(ReaderSpeechSegment(chapter, 0, 0, "Next"))
+        }, 1f) { segment, offset -> positions += offset; assertEquals(98, segment.chapter) }
+        await { HeldPlayerShadow.instances.size == 1 && requestedChapters.isNotEmpty() }
+        val current = HeldPlayerShadow.instances.single()
+        current.onPrepared.onPrepared(current.real)
+        assertEquals(listOf(4_000), positions)
+        assertEquals(listOf(99), requestedChapters)
+        assertTrue(current.started)
+        speech.stop()
+        await { cancelled.isCompleted }
+        assertFalse(speech.playing.value)
+        assertEquals(1, HeldPlayerShadow.instances.size)
+    }
+
+    @Test fun chapterPrefetchStaysWithinTwoUpcomingChunks() {
+        val requestedChapters = java.util.concurrent.CopyOnWriteArrayList<Int>()
+        speech = AiReaderSpeech(RuntimeEnvironment.getApplication()) { _, target -> target.writeBytes(byteArrayOf(1)) }
+        speech.start(ReaderSpeechSource(100, 1_000, listOf(ReaderSpeechSegment(100, 0, 0,
+            "First\nSecond\nThird\nFourth"))) { chapter ->
+            requestedChapters += chapter
+            listOf(ReaderSpeechSegment(chapter, 0, 0, "Later"))
+        }, 1f) { _, _ -> }
+        await { HeldPlayerShadow.instances.size == 1 }
+        idle()
+        assertTrue(requestedChapters.isEmpty())
+        val current = HeldPlayerShadow.instances.single()
+        current.onPrepared.onPrepared(current.real)
+        current.onComplete.onCompletion(current.real)
+        await { HeldPlayerShadow.instances.size == 2 }
+        assertTrue(requestedChapters.isEmpty())
+    }
+
+    @Test fun readyCurrentChapterChunksKeepPlayingWhileTheFollowingChapterIsLoading() {
+        val requested = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val loadingNext = CompletableDeferred<Unit>()
+        speech = AiReaderSpeech(RuntimeEnvironment.getApplication()) { text, target ->
+            requested += text; target.writeBytes(byteArrayOf(1))
+        }
+        speech.start(ReaderSpeechSource(98, 100, listOf(ReaderSpeechSegment(98, 0, 0, "One\nTwo"))) {
+            loadingNext.complete(Unit)
+            awaitCancellation()
+        }, 1f) { _, _ -> }
+        await { HeldPlayerShadow.instances.size == 1 && loadingNext.isCompleted && requested.size == 2 }
+        HeldPlayerShadow.instances.single().let { it.onPrepared.onPrepared(it.real); it.onComplete.onCompletion(it.real) }
+        await { HeldPlayerShadow.instances.size == 2 }
+        HeldPlayerShadow.instances.last().onPrepared.onPrepared(HeldPlayerShadow.instances.last().real)
+        assertEquals(listOf("One", "Two"), requested)
+        assertTrue(HeldPlayerShadow.instances.last().started)
+        assertNull(speech.error.value)
+    }
+
+    @Test fun multiChapterPlaybackAdvancesABoundedTwoChapterPrefetchWindow() {
+        val loaded = java.util.concurrent.CopyOnWriteArrayList<Int>()
+        speech = AiReaderSpeech(RuntimeEnvironment.getApplication()) { _, target -> target.writeBytes(byteArrayOf(1)) }
+        speech.start(ReaderSpeechSource(100, 1_000, listOf(ReaderSpeechSegment(100, 0, 0, "Chapter 100"))) { chapter ->
+            loaded += chapter
+            listOf(ReaderSpeechSegment(chapter, 0, 0, "Chapter $chapter"))
+        }, 1f) { _, _ -> }
+        await { HeldPlayerShadow.instances.size == 1 && loaded.size == 2 }
+        assertEquals(listOf(101, 102), loaded)
+        repeat(3) { index ->
+            HeldPlayerShadow.instances[index].let { it.onPrepared.onPrepared(it.real); it.onComplete.onCompletion(it.real) }
+            await { HeldPlayerShadow.instances.size == index + 2 && loaded.size == index + 3 }
+            assertEquals((101..index + 103).toList(), loaded)
+        }
     }
 
     @Test fun stoppingCancelsPendingPrefetchAndDeletesItsTemporaryAudio() {
@@ -204,9 +279,9 @@ class AiReaderSpeechRobolectricTest {
             requests++; error("服务错误")
         }
         speech.start(source, 1f) { _, offset -> positions += offset }
-        idle()
+        await { requests == 1 }
         assertTrue(speech.pause())
-        repeat(5) { Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(220)) }
+        await { requests == 4 }
         assertEquals(4, requests)
         assertEquals(0, fallback.starts)
         assertTrue(positions.isEmpty())
@@ -276,7 +351,7 @@ class AiReaderSpeechRobolectricTest {
     @Test fun pausingWhilePreparingDoesNotStartOrAdvanceUntilResumed() {
         createSpeech()
         speech.start(source, 1f) { _, offset -> positions += offset }
-        idle()
+        await { HeldPlayerShadow.instances.size == 1 }
         val player = HeldPlayerShadow.instances.single()
         assertTrue(speech.pause())
         player.onPrepared.onPrepared(player.real)
@@ -304,7 +379,7 @@ class AiReaderSpeechRobolectricTest {
     @Test fun stoppingAndStartingAnotherBookRejectsOldPlayerCallbacks() {
         createSpeech()
         speech.start(source, 1f) { _, offset -> positions += offset }
-        idle()
+        await { HeldPlayerShadow.instances.size == 1 }
         val old = HeldPlayerShadow.instances.single()
         speech.stop()
         old.onPrepared.onPrepared(old.real)
@@ -313,7 +388,7 @@ class AiReaderSpeechRobolectricTest {
         assertTrue(positions.isEmpty())
         assertFalse(speech.resume())
         speech.start(listOf(ReaderSpeechSegment(3, 0, 500, "New audio")), 1f) { _, offset -> positions += offset }
-        idle()
+        await { HeldPlayerShadow.instances.size == 2 }
         val current = HeldPlayerShadow.instances.last()
         current.onPrepared.onPrepared(current.real)
         assertEquals(listOf(500), positions)
@@ -474,6 +549,67 @@ class AiReaderSpeechRobolectricTest {
             assertEquals(setOf(0), status.currentChapters)
             val other = AiSpeechConfig.fromJson(config.toJson().put("voice", "another"))
             assertEquals(setOf(0), kotlinx.coroutines.runBlocking { cache.chapterCacheStatus(book, other, emptyList()) }.otherChapters)
+        } finally { speech.stop(); cache.clear(book.id); file.delete() }
+    }
+
+    @Test fun aCompletedChapterGetsItsBadgeWhileTheFollowingChapterIsStillLoading() {
+        val context = RuntimeEnvironment.getApplication()
+        val file = java.io.File.createTempFile("live-complete-waiting", ".txt", context.cacheDir).apply { writeText("Current") }
+        val book = com.eyue.reader.data.Book(title = "Completion before prefetch", format = com.eyue.reader.data.BookFormat.TXT,
+            mode = com.eyue.reader.data.LibraryMode.NOVEL, chapters = listOf(
+                com.eyue.reader.data.Chapter(title = "Current", textPath = file.absolutePath),
+                com.eyue.reader.data.Chapter(title = "Following", textPath = "not-yet-read.txt")))
+        val config = AiSpeechConfig("https://voice.example.org/v1", "test-secret", "tts", "voice")
+        val changes = AtomicInteger()
+        val cache = AiSpeechCache(context)
+        speech = AiReaderSpeech(context, book.id, configProvider = { config }, bookProvider = { book },
+            onCacheChanged = { changes.incrementAndGet() }) { _, target -> target.writeBytes(byteArrayOf(1)) }
+        try {
+            speech.start(ReaderSpeechSource(0, 2, listOf(ReaderSpeechSegment(0, 0, 0, "Current"))) {
+                awaitCancellation()
+            }, 1f) { _, _ -> }
+            await { HeldPlayerShadow.instances.size == 1 }
+            HeldPlayerShadow.instances.single().let { it.onPrepared.onPrepared(it.real); it.onComplete.onCompletion(it.real) }
+            await { changes.get() == 1 }
+            assertEquals(setOf(0), kotlinx.coroutines.runBlocking { cache.completedChapters(book, config) })
+            assertTrue(speech.playing.value)
+        } finally { speech.stop(); cache.clear(book.id); file.delete() }
+    }
+
+    @Test fun invalidCachedAudioRefreshesTheRevisionAndRemovesItsCompletedChapterBadge() {
+        val context = RuntimeEnvironment.getApplication()
+        val text = "Cached chapter"
+        val file = java.io.File.createTempFile("invalid-cached-speech", ".txt", context.cacheDir).apply { writeText(text) }
+        val book = com.eyue.reader.data.Book(title = "Invalid cached audio", format = com.eyue.reader.data.BookFormat.TXT,
+            mode = com.eyue.reader.data.LibraryMode.NOVEL, chapters = listOf(
+                com.eyue.reader.data.Chapter(title = "Chapter", textPath = file.absolutePath)))
+        val config = AiSpeechConfig("https://voice.example.org/v1", "test-secret", "tts", "voice")
+        val revision = AtomicInteger()
+        val requests = AtomicInteger()
+        val cache = AiSpeechCache(context)
+        speech = AiReaderSpeech(context, book.id, configProvider = { config }, bookProvider = { book },
+            onCacheChanged = { revision.incrementAndGet() }) { _, target ->
+            requests.incrementAndGet(); target.writeBytes(byteArrayOf(1))
+        }
+        fun status() = readerSpeechCacheStatus(book, kotlinx.coroutines.runBlocking { cache.chapterCacheStatus(book, config, emptyList()) })
+        try {
+            speech.start(listOf(ReaderSpeechSegment(0, 0, 0, text)), 1f) { _, _ -> }
+            await { HeldPlayerShadow.instances.size == 1 }
+            HeldPlayerShadow.instances.single().let { it.onPrepared.onPrepared(it.real); it.onComplete.onCompletion(it.real) }
+            await { revision.get() == 1 && !speech.playing.value }
+            val completed = status()
+            assertEquals(setOf(0), completed.chapters)
+            assertTrue(completed.complete)
+
+            speech.start(listOf(ReaderSpeechSegment(0, 0, 0, text)), 1f) { _, _ -> }
+            await { HeldPlayerShadow.instances.size == 2 }
+            assertEquals(1, requests.get())
+            HeldPlayerShadow.instances.last().let { it.onPrepared.onPrepared(it.real); it.onError.onError(it.real, 1, 1) }
+            await { revision.get() == 2 && speech.error.value != null && !speech.playing.value }
+            val refreshed = status()
+            assertTrue(refreshed.chapters.isEmpty())
+            assertFalse(refreshed.complete)
+            assertNull(cache.find(book.id, AiSpeechCache.key(config, text), "mp3"))
         } finally { speech.stop(); cache.clear(book.id); file.delete() }
     }
     private fun idle() { Shadows.shadowOf(Looper.getMainLooper()).idle() }

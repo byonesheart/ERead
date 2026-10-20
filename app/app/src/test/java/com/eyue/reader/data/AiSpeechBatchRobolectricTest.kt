@@ -62,6 +62,10 @@ class AiSpeechBatchRobolectricTest {
         assertEquals(setOf(1, 2), final.completedChapters)
         assertEquals(2, final.total)
         assertTrue(updates.none { 0 in it.selectedChapters || 0 in it.completedChapters })
+        val cached = AiSpeechCache(context).chapterCacheStatus(book, config, emptyList())
+        assertEquals(setOf(0), cached.emptyChapters)
+        assertEquals(setOf(1, 2), cached.currentChapters)
+        assertTrue(com.eyue.reader.ui.readerSpeechCacheStatus(book, cached).complete)
     }
 
     @Test fun partialChapterRegeneratesEveryChunkAndAnAlreadyCompleteChapterMakesNoRequests() = runBlocking {
@@ -211,18 +215,19 @@ class AiSpeechBatchRobolectricTest {
         assertEquals(0, requests)
     }
 
-    @Test fun selectedChaptersInheritDialogueVoiceThroughUnselectedChaptersAndShareTheCacheVerificationPlan() = runBlocking {
+    @Test fun selectedChaptersRestoreKnownDialogueSeedAndShareTheCacheVerificationPlan() = runBlocking {
         val original = book("张三说：“先说一句。”", "“后续没有提到名字。”", "“第三章继续说。”")
         val role = BookVoiceRole("张三", "张三", "青年男声", id = "zhang")
         val book = original.copy(voiceRoles = listOf(role))
         val enabled = AiSpeechConfig.fromJson(config.toJson().put("rolePromptEnabled", true))
+        val cache = AiSpeechCache(context)
+        cache.recordChapterRoleSeed(book, 0, emptyList(), null, role.id, cache.generation(book.id))
         val requests = Collections.synchronizedList(mutableListOf<String>())
         val result = AiSpeechBatch(context, commonRoles = emptyList()) { _, text, target ->
             requests += text; target.writeBytes(byteArrayOf(1))
         }.generate(book, enabled, setOf(1, 2)) {}
         assertEquals(setOf(1, 2), result.completedChapters)
         assertEquals(2, requests.size)
-        val cache = AiSpeechCache(context)
         for (index in 1..2) {
             val expected = AiSpeechRolePlanner(book.id, book.voiceRoles).plan(aiSpeechChapterSegments(book, index).toList(), role.id).single()
             assertEquals(role.id, expected.roleId)
@@ -231,6 +236,19 @@ class AiSpeechBatchRobolectricTest {
         assertEquals(setOf(1, 2), cache.chapterCacheStatus(book, enabled, emptyList()).currentChapters)
         assertEquals(setOf(1, 2), cache.chapterCacheStatus(book,
             AiSpeechConfig.fromJson(enabled.toJson().put("voice", "changed")), emptyList()).otherChapters)
+    }
+
+    @Test fun aColdSelectedChapterSeedNeverReadsAnUnselectedEarlierChapter() = runBlocking {
+        val original = book("unused", "张三说：“从这里开始。”", "“后面仍然是我。”")
+        val role = BookVoiceRole("张三", "张三", "青年男声", id = "zhang")
+        val book = original.copy(voiceRoles = listOf(role), chapters = original.chapters.mapIndexed { index, chapter ->
+            if (index == 0) chapter.copy(textPath = File(folder, "unread-previous-chapter.txt").absolutePath) else chapter
+        })
+        val enabled = AiSpeechConfig.fromJson(config.toJson().put("rolePromptEnabled", true))
+        val seeds = aiSpeechChapterSeeds(book, enabled, setOf(1, 2), emptyList())
+        assertEquals(setOf(1, 2), seeds.keys)
+        assertNull(seeds[1])
+        assertEquals(role.id, seeds[2])
     }
 
     private fun book(vararg texts: String): Book = Book(title = "Batch book", format = BookFormat.EPUB,

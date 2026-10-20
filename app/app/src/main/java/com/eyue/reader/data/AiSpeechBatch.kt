@@ -62,22 +62,28 @@ internal fun aiSpeechChapterSegments(book: Book, chapterIndex: Int): Sequence<Re
 
 /** Only speaker inference is sequential; the resulting chapter seeds are immutable during parallel work. */
 internal suspend fun aiSpeechChapterSeeds(book: Book, config: AiSpeechConfig, chapters: Set<Int>,
-    commonRoles: List<BookVoiceRole>): Map<Int, String?> {
+    commonRoles: List<BookVoiceRole>, cache: AiSpeechCache? = null): Map<Int, String?> {
     if (!config.rolePromptEnabled || chapters.isEmpty()) return emptyMap()
-    return aiSpeechRoleChapterSeeds(book, chapters, commonRoles)
+    return aiSpeechRoleChapterSeeds(book, chapters, commonRoles, cache)
 }
 
 internal suspend fun aiSpeechRoleChapterSeeds(book: Book, chapters: Set<Int>,
-    commonRoles: List<BookVoiceRole>): Map<Int, String?> {
+    commonRoles: List<BookVoiceRole>, cache: AiSpeechCache? = null): Map<Int, String?> {
     if (chapters.isEmpty()) return emptyMap()
     val active = currentCoroutineContext()
     val planner = AiSpeechRolePlanner(book.id, book.voiceRoles, commonRoles) { active.ensureActive() }
     val seeds = mutableMapOf<Int, String?>()
     var previous: String? = null
-    for (index in 0..chapters.max()) {
+    var previousChapter = -2
+    val generation = cache?.generation(book.id)
+    for (index in chapters.sorted()) {
         active.ensureActive()
-        if (index in chapters) seeds[index] = previous
+        if (index != previousChapter + 1) previous = cache?.chapterRoleSeed(book, index, commonRoles)
+        seeds[index] = previous
+        val seed = previous
         previous = planner.seedRoleId(aiSpeechChapterSegments(book, index).toList(), previous)
+        if (generation != null) cache?.recordChapterRoleSeed(book, index, commonRoles, seed, previous, generation)
+        previousChapter = index
     }
     return seeds
 }
@@ -108,12 +114,18 @@ internal class AiSpeechBatch(
         val extension = if (config.protocol == SpeechApiProtocol.MIMO) "wav" else "mp3"
         var progress = AiSpeechBatchProgress(book.id, book.title)
         onProgress(progress)
-        val seeds = aiSpeechChapterSeeds(book, config, selected.toSet(), commonRoles)
+        val seeds = aiSpeechChapterSeeds(book, config, selected.toSet(), commonRoles, cache)
         val active = currentCoroutineContext()
-        val counts = selected.associateWith { index ->
+        val plannedCounts = selected.associateWith { index ->
             currentCoroutineContext().ensureActive()
             aiSpeechPlannedChapter(book, config, index, commonRoles, seeds[index]) { active.ensureActive() }.count()
-        }.filterValues { it > 0 }
+        }
+        for ((index, count) in plannedCounts) if (count == 0) {
+            check(cache.recordPlannedChapterCompletion(book, config, index, commonRoles, seeds[index], emptyList(), generation)) {
+                "AI 语音缓存已清理，转化已停止"
+            }
+        }
+        val counts = plannedCounts.filterValues { it > 0 }
         require(counts.isNotEmpty()) { "所选章节没有可转化的正文" }
         progress = progress.copy(total = counts.size, selectedChapters = counts.keys.toSet())
         onProgress(progress)
