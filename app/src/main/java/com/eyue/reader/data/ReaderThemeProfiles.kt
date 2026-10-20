@@ -18,7 +18,11 @@ data class ReaderAppearance(
     val brightness: Float = -1f,
     val showTime: Boolean = true,
     val showBattery: Boolean = true,
-    val showChapter: Boolean = true
+    val showChapter: Boolean = true,
+    val marginLeft: Float = 24f,
+    val marginRight: Float = 24f,
+    val marginTop: Float = 18f,
+    val marginBottom: Float = 18f
 ) {
     fun mapPaths(path: (String?) -> String?): ReaderAppearance = copy(fontPath = path(fontPath),
         backgroundImagePath = path(backgroundImagePath))
@@ -30,10 +34,11 @@ data class ReaderAppearance(
         .put("background", background.name).put("backgroundImagePath", backgroundImagePath)
         .put("brightness", brightness.toDouble()).put("showTime", showTime)
         .put("showBattery", showBattery).put("showChapter", showChapter)
+        .put("marginLeft", marginLeft.toDouble()).put("marginRight", marginRight.toDouble())
+        .put("marginTop", marginTop.toDouble()).put("marginBottom", marginBottom.toDouble())
 
     companion object {
-        internal fun fromJson(json: JSONObject): ReaderAppearance {
-            val defaults = ReaderAppearance()
+        internal fun fromJson(json: JSONObject, defaults: ReaderAppearance = ReaderAppearance()): ReaderAppearance {
             fun number(key: String, fallback: Float, range: ClosedFloatingPointRange<Float>): Float =
                 json.optDouble(key, fallback.toDouble()).toFloat().let { if (it.isFinite()) it.coerceIn(range) else fallback }
             fun path(key: String): String? = if (json.isNull(key)) null else json.optString(key).takeIf { it.isNotBlank() }
@@ -49,7 +54,11 @@ data class ReaderAppearance(
                 brightness = number("brightness", defaults.brightness, -1f..1f),
                 showTime = json.optBoolean("showTime", defaults.showTime),
                 showBattery = json.optBoolean("showBattery", defaults.showBattery),
-                showChapter = json.optBoolean("showChapter", defaults.showChapter))
+                showChapter = json.optBoolean("showChapter", defaults.showChapter),
+                marginLeft = number("marginLeft", defaults.marginLeft, 0f..64f),
+                marginRight = number("marginRight", defaults.marginRight, 0f..64f),
+                marginTop = number("marginTop", defaults.marginTop, 0f..64f),
+                marginBottom = number("marginBottom", defaults.marginBottom, 0f..64f))
         }
     }
 }
@@ -59,23 +68,25 @@ data class ReaderThemeProfile(val id: String = UUID.randomUUID().toString(), val
     internal fun toJson(): JSONObject = JSONObject().put("id", id).put("name", name).put("appearance", appearance.toJson())
 }
 
-internal fun readReaderThemeProfiles(array: JSONArray?): List<ReaderThemeProfile> =
+internal fun readReaderThemeProfiles(array: JSONArray?, defaults: ReaderAppearance = ReaderAppearance()): List<ReaderThemeProfile> =
     (0 until (array?.length() ?: 0)).mapNotNull { index ->
         val json = array?.optJSONObject(index) ?: return@mapNotNull null
         val id = json.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
         val name = json.optString("name").takeIf { it.isNotBlank() } ?: return@mapNotNull null
         val appearance = json.optJSONObject("appearance") ?: return@mapNotNull null
-        ReaderThemeProfile(id, name, ReaderAppearance.fromJson(appearance))
+        ReaderThemeProfile(id, name, ReaderAppearance.fromJson(appearance, defaults))
     }.distinctBy { it.id }
 
 fun ReaderSettings.appearanceSnapshot(): ReaderAppearance = ReaderAppearance(fontSize, lineHeight, paragraphSpacing,
-    letterSpacing, fontName, fontPath, bold, background, backgroundImagePath, brightness, showTime, showBattery, showChapter)
+    letterSpacing, fontName, fontPath, bold, background, backgroundImagePath, brightness, showTime, showBattery, showChapter,
+    marginLeft, marginRight, marginTop, marginBottom)
 
 fun ReaderSettings.applyAppearanceProfile(profile: ReaderThemeProfile): ReaderSettings = with(profile.appearance) {
     this@applyAppearanceProfile.copy(fontSize = fontSize, lineHeight = lineHeight, paragraphSpacing = paragraphSpacing,
         letterSpacing = letterSpacing, fontName = fontName, fontPath = fontPath, bold = bold, background = background,
         backgroundImagePath = backgroundImagePath, brightness = brightness, showTime = showTime,
-        showBattery = showBattery, showChapter = showChapter, activeAppearanceProfileId = profile.id)
+        showBattery = showBattery, showChapter = showChapter, activeAppearanceProfileId = profile.id,
+        marginLeft = marginLeft, marginRight = marginRight, marginTop = marginTop, marginBottom = marginBottom)
 }
 
 fun ReaderSettings.saveAppearanceProfile(profileId: String? = null): ReaderSettings {

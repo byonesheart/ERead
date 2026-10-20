@@ -158,7 +158,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent() {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 阅读模式切换保持原文位置，分页准备在后台进行，改善翻页流畅性。\n• 修复原书 CSS 切换闪退，并改善分页缓存复用。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 页码按当前章节显示，取消全书页数统计，复用章节分页缓存。\n• 滑动达到阈值立即翻页，缩短翻页动画等待。\n• 新增上、下、左、右边距设置，可随阅读主题保存。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

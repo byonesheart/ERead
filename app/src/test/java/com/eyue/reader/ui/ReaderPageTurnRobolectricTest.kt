@@ -118,9 +118,9 @@ class ReaderPageTurnRobolectricTest {
                 if (style == PageTurnStyle.SLIDE) assertTrue("Sliding must move the incoming sheet too", enteringLeft > 1f)
                 else assertEquals("Covering must uncover a stationary incoming sheet", 0f, enteringLeft, .5f)
             }
-            compose.mainClock.advanceTimeBy(500)
+            compose.mainClock.advanceTimeBy(if (style == PageTurnStyle.CURL) 144 else 116)
             val complete = captureDrawnPage(view.get(), style).asImageBitmap().toPixelMap()
-            assertTrue("The fold must end with exactly the selected page", sameColor(complete[5, complete.height / 2], pageColor(target)))
+            assertTrue("The turn must finish within ${if (style == PageTurnStyle.CURL) 336 else 212} ms", sameColor(complete[5, complete.height / 2], pageColor(target)))
             previous = target
         }
     }

@@ -44,6 +44,9 @@ import kotlin.math.PI
 import kotlin.math.min
 import kotlin.math.sin
 
+private const val PAGE_TURN_MILLIS = 180
+private const val PAGE_CURL_MILLIS = 300
+
 internal data class ReaderPageLocation(val chapter: Int, val page: Int) : Comparable<ReaderPageLocation> {
     override fun compareTo(other: ReaderPageLocation): Int =
         compareValuesBy(this, other, ReaderPageLocation::chapter, ReaderPageLocation::page)
@@ -136,23 +139,23 @@ internal fun ReaderPageTurnFrame(
             val sign = if (paperOrder.forward) 1 else -1
             when (style) {
                 PageTurnStyle.SLIDE -> if (vertical)
-                    slideInVertically(tween(240)) { sign * it } togetherWith slideOutVertically(tween(240)) { -sign * it }
-                else slideInHorizontally(tween(240)) { sign * it } togetherWith slideOutHorizontally(tween(240)) { -sign * it }
+                    slideInVertically(tween(PAGE_TURN_MILLIS)) { sign * it } togetherWith slideOutVertically(tween(PAGE_TURN_MILLIS)) { -sign * it }
+                else slideInHorizontally(tween(PAGE_TURN_MILLIS)) { sign * it } togetherWith slideOutHorizontally(tween(PAGE_TURN_MILLIS)) { -sign * it }
                 PageTurnStyle.COVER -> if (sign > 0) {
-                    (fadeIn(tween(240), initialAlpha = 1f) togetherWith
-                        if (vertical) slideOutVertically(tween(240)) { -it } else slideOutHorizontally(tween(240)) { -it })
+                    (fadeIn(tween(PAGE_TURN_MILLIS), initialAlpha = 1f) togetherWith
+                        if (vertical) slideOutVertically(tween(PAGE_TURN_MILLIS)) { -it } else slideOutHorizontally(tween(PAGE_TURN_MILLIS)) { -it })
                         .apply { targetContentZIndex = paperOrder.targetZ }
                 } else {
-                    ((if (vertical) slideInVertically(tween(240)) { -it } else slideInHorizontally(tween(240)) { -it })
-                        togetherWith fadeOut(tween(240), targetAlpha = 1f)).apply { targetContentZIndex = paperOrder.targetZ }
+                    ((if (vertical) slideInVertically(tween(PAGE_TURN_MILLIS)) { -it } else slideInHorizontally(tween(PAGE_TURN_MILLIS)) { -it })
+                        togetherWith fadeOut(tween(PAGE_TURN_MILLIS), targetAlpha = 1f)).apply { targetContentZIndex = paperOrder.targetZ }
                 }
                 // Keep both live pages during the fold; the custom drawing clips the front,
                 // mirrors its printing on the curved back and shades the crease instead of fading it.
-                PageTurnStyle.CURL -> (fadeIn(tween(420), initialAlpha = 1f) togetherWith
-                    fadeOut(tween(420), targetAlpha = 1f)).apply { targetContentZIndex = paperOrder.targetZ }
+                PageTurnStyle.CURL -> (fadeIn(tween(PAGE_CURL_MILLIS), initialAlpha = 1f) togetherWith
+                    fadeOut(tween(PAGE_CURL_MILLIS), targetAlpha = 1f)).apply { targetContentZIndex = paperOrder.targetZ }
             }
         }) { location ->
-        val visibility = transition.animateFloat(transitionSpec = { tween(if (style == PageTurnStyle.CURL) 420 else 240) },
+        val visibility = transition.animateFloat(transitionSpec = { tween(if (style == PageTurnStyle.CURL) PAGE_CURL_MILLIS else PAGE_TURN_MILLIS) },
             label = "paper visibility") { state -> if (state == EnterExitState.Visible) 1f else 0f }
         val turningPaper = if (forward) location != anchor else location == anchor
         Box(Modifier.fillMaxSize().then(if (style == PageTurnStyle.CURL && turningPaper)

@@ -1,6 +1,7 @@
 package com.eyue.reader.ui
 
 import android.content.Context
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -29,6 +30,13 @@ internal val ReaderBodyBottomPadding = 32.dp
 internal val ReaderTextHorizontalPadding = 24.dp
 internal val ReaderTextVerticalPadding = 18.dp
 
+/** Physical page margins stay the same when the text direction changes. */
+internal fun readerContentPadding(settings: ReaderSettings): PaddingValues {
+    fun margin(value: Float, fallback: Float) = (if (value.isFinite()) value.coerceIn(0f, 64f) else fallback).dp
+    return PaddingValues.Absolute(left = margin(settings.marginLeft, 24f), right = margin(settings.marginRight, 24f),
+        top = margin(settings.marginTop, 18f), bottom = margin(settings.marginBottom, 18f))
+}
+
 /** Input is the measured safe-drawing area, before the reader's permanent status/progress gutters. */
 internal fun readerBodyViewport(density: Density, safeDrawingViewport: IntSize): IntSize = with(density) {
     IntSize(safeDrawingViewport.width.coerceAtLeast(0),
@@ -54,13 +62,18 @@ internal fun readerLayoutSpec(settings: ReaderSettings, density: Density, direct
             else -> FontFamily.Default
         }
     val workerDensity = Density(density.density, density.fontScale)
+    val padding = readerContentPadding(settings)
     return ReaderLayoutSpec(
         textStyle = TextStyle(fontFamily = family, fontSize = settings.fontSize.sp,
             lineHeight = (settings.fontSize * settings.lineHeight).sp, letterSpacing = settings.letterSpacing.sp,
             lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Proportional, LineHeightStyle.Trim.None),
             fontWeight = if (settings.bold) FontWeight.Bold else FontWeight.Normal),
-        textWidth = (bodyViewport.width - with(workerDensity) { ReaderTextHorizontalPadding.roundToPx() * 2 }).coerceAtLeast(1),
-        textHeight = (bodyViewport.height - with(workerDensity) { ReaderTextVerticalPadding.roundToPx() * 2 }).coerceAtLeast(1),
+        textWidth = (bodyViewport.width - with(workerDensity) {
+            padding.calculateLeftPadding(direction).roundToPx() + padding.calculateRightPadding(direction).roundToPx()
+        }).coerceAtLeast(1),
+        textHeight = (bodyViewport.height - with(workerDensity) {
+            padding.calculateTopPadding().roundToPx() + padding.calculateBottomPadding().roundToPx()
+        }).coerceAtLeast(1),
         density = workerDensity, layoutDirection = direction)
 }
 
@@ -71,16 +84,13 @@ internal suspend fun prepaginateBook(context: Context, book: Book, settings: Rea
     if (book.chapters.isEmpty()) return
     onProgress(0f)
     val chapterIndex = book.chapterIndex.coerceIn(book.chapters.indices)
-    val pageIndex = readerBookPageIndex(context, book, settings, spec.density, spec.layoutDirection,
-        spec.textWidth, spec.textHeight)
-    if (chapterIndex in pageIndex.pages) { onProgress(1f); return }
     val prepared = loadChapterContent(context, book, chapterIndex)
     val chineseConverter = ChineseTextConverter.load(context, settings.chineseConversion)
     withContext(Dispatchers.Default) {
         val worker = currentCoroutineContext()
         val style = ReaderSourceStyles(prepared.text, prepared.chapter.readerSourceStyles(settings.useSourceCss)) { worker.ensureActive() }
         readerCachedChapterPages(context, book, chapterIndex, settings, spec.density, spec.layoutDirection,
-            spec.textWidth, spec.textHeight, prepared.text, prepared.chapter, pageIndex) {
+            spec.textWidth, spec.textHeight, prepared.text, prepared.chapter) {
             readerPaginate(context, listOf(prepared.text), spec.textStyle, spec.density, spec.layoutDirection,
                 spec.textWidth, spec.textHeight, inlineImages = listOf(prepared.chapter.inlineImages),
                 sourceStyles = listOf(style), paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter, onProgress = onProgress).single()

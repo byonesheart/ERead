@@ -35,9 +35,9 @@ class ReaderSettingsDefaultsTest {
             chapters = emptyList(), characterOffset = 100, progress = .4f)
         val state = LibraryState(settings = novel, comicSettings = comic, books = listOf(book), readingSeconds = 300)
         val result = state.resetReaderPreferences(LibraryMode.COMIC)
-        assertEquals(ReaderSettings(), result.comicSettings.copy(appearanceProfiles = emptyList(), activeAppearanceProfileId = null))
+        assertEquals(ReaderSettings().withDefaultComicMargins(), result.comicSettings.copy(appearanceProfiles = emptyList(), activeAppearanceProfileId = null))
         val selected = result.comicSettings.appearanceProfiles.single { it.id == result.comicSettings.activeAppearanceProfileId }
-        assertEquals(ReaderSettings().appearanceSnapshot(), selected.appearance)
+        assertEquals(ReaderSettings().withDefaultComicMargins().appearanceSnapshot(), selected.appearance)
         assertSame(novel, result.settings)
         assertSame(state.books, result.books)
         assertEquals(300L, result.readingSeconds)

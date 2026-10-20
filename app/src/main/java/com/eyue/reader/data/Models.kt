@@ -113,7 +113,11 @@ data class ReaderSettings(
     val appearanceProfiles: List<ReaderThemeProfile> = emptyList(),
     val activeAppearanceProfileId: String? = null,
     val hierarchicalContents: Boolean = true,
-    val useSourceCss: Boolean = false
+    val useSourceCss: Boolean = false,
+    val marginLeft: Float = 24f,
+    val marginRight: Float = 24f,
+    val marginTop: Float = 18f,
+    val marginBottom: Float = 18f
 )
 
 internal const val LEGACY_DEFAULT_CHAPTER_RULE = "^\\s*(第[零〇一二三四五六七八九十百千万两0-9]+[章节卷回部篇].*|[Cc][Hh][Aa][Pp][Tt][Ee][Rr]\\s+\\d+.*|序章.*|序言.*|前言.*|楔子.*|尾声.*|后记.*)\\s*$"
@@ -128,7 +132,7 @@ data class LibraryState(
     val annotations: List<Annotation> = emptyList(),
     val settings: ReaderSettings = ReaderSettings(),
     val readingSeconds: Long = 0,
-    val comicSettings: ReaderSettings = settings.copy(),
+    val comicSettings: ReaderSettings = settings.withDefaultComicMargins(),
     val groups: List<ShelfGroup> = emptyList(),
     val cloudAutoBackup: Boolean = false,
     val cloudAutoBackupMetered: Boolean = false,

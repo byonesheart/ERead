@@ -142,6 +142,7 @@ class ReaderSearchReplaceRobolectricTest {
         compose.onNodeWithTag("reader_search_replace_all").assertIsNotEnabled()
         compose.onNodeWithTag("reader_search_query").performTextReplacement("[moon]")
         awaitTag("reader_search_result_0_0_0")
+        awaitNode(hasText("找到 1 处结果"))
         compose.onNodeWithText("找到 1 处结果").assertExists()
         compose.onNodeWithTag("reader_search_result_0_0_0").performClick()
         compose.runOnIdle { assertEquals(0, jumps) }

@@ -117,6 +117,14 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
             }
         }
     } else Text("保持原页排版，双指可缩放", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    ReaderAdjustableSlider("左距", "阅读左边距", settings.marginLeft, 0f..64f, 1f,
+        { onSettings(settings.copy(marginLeft = it)) }, { "${it.roundToInt()}dp" })
+    ReaderAdjustableSlider("右距", "阅读右边距", settings.marginRight, 0f..64f, 1f,
+        { onSettings(settings.copy(marginRight = it)) }, { "${it.roundToInt()}dp" })
+    ReaderAdjustableSlider("上距", "阅读上边距", settings.marginTop, 0f..64f, 1f,
+        { onSettings(settings.copy(marginTop = it)) }, { "${it.roundToInt()}dp" })
+    ReaderAdjustableSlider("下距", "阅读下边距", settings.marginBottom, 0f..64f, 1f,
+        { onSettings(settings.copy(marginBottom = it)) }, { "${it.roundToInt()}dp" })
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text("模式", Modifier.width(34.dp), fontSize = 12.sp)
         FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {

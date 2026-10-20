@@ -66,6 +66,16 @@ class ReaderPageCacheKeyTest {
         assertNotEquals(changed, key(target))
     }
 
+    @Test fun allFourPhysicalMarginsInvalidateEvenWhenContentDimensionsStayEqual() {
+        val expected = key()
+        listOf(settings.copy(marginLeft = 25f), settings.copy(marginRight = 25f),
+            settings.copy(marginTop = 19f), settings.copy(marginBottom = 19f),
+            settings.copy(marginLeft = 10f, marginRight = 38f),
+            settings.copy(marginTop = 8f, marginBottom = 28f)).forEach {
+            assertNotEquals(expected, key(settings = it))
+        }
+    }
+
     @Test fun importedFontFileMetadataInvalidatesWithoutChangingLabel() {
         val font = files.newFile("font.ttf").apply { writeBytes(byteArrayOf(1, 2, 3)) }
         val custom = settings.copy(fontName = "自定义字体", fontPath = font.absolutePath)

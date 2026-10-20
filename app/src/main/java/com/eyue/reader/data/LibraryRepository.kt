@@ -27,7 +27,8 @@ class LibraryRepository(private val context: Context) {
         try {
             val json = JSONObject(stateFile.readFully().toString(Charsets.UTF_8))
             val settings = readSettings(json.optJSONObject("settings") ?: JSONObject())
-            val comic = json.optJSONObject("comicSettings")?.let(::readSettings) ?: settings.copy()
+            val comic = json.optJSONObject("comicSettings")?.let { readSettings(it, ReaderSettings().withDefaultComicMargins()) }
+                ?: settings.withDefaultComicMargins()
             return LibraryState(
                 books = json.array("books").objects().map(::readBook),
                 annotations = json.array("annotations").objects().map(::readAnnotation),
@@ -205,8 +206,9 @@ class LibraryRepository(private val context: Context) {
         .put("kind", annotation.kind.name).put("endOffset", annotation.endOffset).put("color", annotation.color)
         .put("imagePath", annotation.imagePath).put("underlineStyle", annotation.underlineStyle.name)
 
-    internal fun readSettings(json: JSONObject): ReaderSettings {
-        val defaults = ReaderSettings()
+    internal fun readSettings(json: JSONObject, defaults: ReaderSettings = ReaderSettings()): ReaderSettings {
+        fun margin(key: String, fallback: Float): Float = json.optDouble(key, fallback.toDouble()).toFloat()
+            .let { if (it.isFinite()) it.coerceIn(0f, 64f) else fallback }
         val background = enumValue(json.optString("background"), defaults.background)
         val legacyNight = !json.has("nightMode") && background == ReaderBackground.DARK
         val legacyRule = json.optString("chapterRule", defaults.chapterRule).let {
@@ -249,10 +251,12 @@ class LibraryRepository(private val context: Context) {
             chapterRule = selected.pattern,
             fonts = json.array("fonts").objects().map { ImportedFont(it.getString("name"), it.getString("path")) },
             chapterRules = presets, activeChapterRuleId = selected.id,
-            appearanceProfiles = readReaderThemeProfiles(json.optJSONArray("appearanceProfiles")),
+            appearanceProfiles = readReaderThemeProfiles(json.optJSONArray("appearanceProfiles"), defaults.appearanceSnapshot()),
             activeAppearanceProfileId = json.nullableString("activeAppearanceProfileId"),
             hierarchicalContents = json.optBoolean("hierarchicalContents", defaults.hierarchicalContents),
-            useSourceCss = json.optBoolean("useSourceCss", defaults.useSourceCss)
+            useSourceCss = json.optBoolean("useSourceCss", defaults.useSourceCss),
+            marginLeft = margin("marginLeft", defaults.marginLeft), marginRight = margin("marginRight", defaults.marginRight),
+            marginTop = margin("marginTop", defaults.marginTop), marginBottom = margin("marginBottom", defaults.marginBottom)
         )
     }
 
@@ -281,6 +285,8 @@ class LibraryRepository(private val context: Context) {
         .put("activeAppearanceProfileId", settings.activeAppearanceProfileId)
         .put("hierarchicalContents", settings.hierarchicalContents)
         .put("useSourceCss", settings.useSourceCss)
+        .put("marginLeft", settings.marginLeft.toDouble()).put("marginRight", settings.marginRight.toDouble())
+        .put("marginTop", settings.marginTop.toDouble()).put("marginBottom", settings.marginBottom.toDouble())
         .put("chapterRules", JSONArray(presets.map {
             JSONObject().put("id", it.id).put("name", it.name).put("pattern", it.pattern)
         })).put("activeChapterRuleId", selected.id)

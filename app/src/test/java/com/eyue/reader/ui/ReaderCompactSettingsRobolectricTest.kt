@@ -73,6 +73,8 @@ class ReaderCompactSettingsRobolectricTest {
         compose.onNodeWithTag("reader_delete_theme_${settings.appearanceProfiles.single().id}").assertIsDisplayed()
         capture("reader-interface-edit-light")
         compose.onNodeWithTag("reader_conversion_traditional").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("阅读下边距 增大").performScrollTo().assertIsDisplayed()
+        capture("reader-interface-margins")
         compose.onNodeWithTag("reader_mode_vertical_paged").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
         compose.onNodeWithTag("reader_finish_theme_edit").assertDoesNotExist()
@@ -118,6 +120,26 @@ class ReaderCompactSettingsRobolectricTest {
         compose.onNodeWithTag("reader_turn_cover").assertDoesNotExist()
         compose.onNodeWithTag("reader_mode_scroll").performClick()
         compose.runOnIdle { assertEquals(ReadingMode.SCROLL, settings.readingMode) }
+    }
+
+    @Test fun pageMarginsHaveIndependentFineAdjustmentAndAutosaveTheSelectedTheme() {
+        var settings by mutableStateOf(ReaderSettings().saveAppearanceProfile())
+        compose.setContent { MaterialTheme { ReaderCompactSettings(settings, false, { settings = it }, {}, {}) } }
+        compose.onNodeWithContentDescription("阅读左边距 增大").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("阅读右边距 减小").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("阅读上边距 增大").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("阅读下边距 减小").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(25f, settings.marginLeft)
+            assertEquals(23f, settings.marginRight)
+            assertEquals(19f, settings.marginTop)
+            assertEquals(17f, settings.marginBottom)
+            val appearance = settings.appearanceProfiles.single().appearance
+            assertEquals(settings.marginLeft, appearance.marginLeft)
+            assertEquals(settings.marginRight, appearance.marginRight)
+            assertEquals(settings.marginTop, appearance.marginTop)
+            assertEquals(settings.marginBottom, appearance.marginBottom)
+        }
     }
 
     @Test fun additionalFontDialogListsImportedFontsAndOwnsTheImportAction() {

@@ -131,9 +131,6 @@ class ReaderScreenStartupRobolectricTest {
     @Test fun draggingProgressOffersReturnButClosingToolbarClearsIt() {
         showReader(navigationBook(), ReadingMode.PAGED, { SilentSpeech() })
         awaitText("TOOLBAR_CHAPTER_0")
-        compose.waitUntil(15_000) {
-            compose.onAllNodesWithText("总页数统计中", substring = true).fetchSemanticsNodes().isEmpty()
-        }
         revealToolbar()
         compose.onNodeWithTag("reader_progress").performTouchInput {
             down(Offset(width * .05f, height / 2f))

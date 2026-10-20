@@ -22,6 +22,7 @@ import com.eyue.reader.data.openDocumentStream
 import com.eyue.reader.data.materializeCloudBook
 import com.eyue.reader.data.withLocalDocument
 import com.eyue.reader.data.cloudOperationMutex
+import com.eyue.reader.data.withDefaultComicMargins
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -590,7 +591,8 @@ class CloudBackupService(
             ShelfGroup(it.getString("name"), LibraryMode.valueOf(it.getString("mode")), it.getString("id"))
         }
         require(group == null || group.mode == book.mode) { "云端分组记录损坏" }
-        val settings = repository.readSettings(json.getJSONObject("settings"))
+        val defaults = if (book.mode == LibraryMode.COMIC) ReaderSettings().withDefaultComicMargins() else ReaderSettings()
+        val settings = repository.readSettings(json.getJSONObject("settings"), defaults)
         val backupAt = json.getLong("backupAt")
         require(backupAt > 0)
         val readingSeconds = json.optLong("readingSeconds", 0)

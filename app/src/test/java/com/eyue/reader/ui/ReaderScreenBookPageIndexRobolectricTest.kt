@@ -118,9 +118,11 @@ class ReaderScreenBookPageIndexRobolectricTest {
     private var mounted by mutableStateOf(true)
     private var session by mutableIntStateOf(0)
     private var readerHeight by mutableStateOf<Dp?>(null)
+    private var tabletDualPage = false
     private var settings by mutableStateOf(ReaderSettings(readingMode = ReadingMode.PAGED, showTime = false, showBattery = false))
     private val ids = mutableListOf<String>()
     private val position = AtomicReference<Pair<Int, Int>>()
+    private val readingProgress = AtomicReference<Float>()
     private val readerView = AtomicReference<android.view.View>()
     private val context get() = RuntimeEnvironment.getApplication()
 
@@ -135,18 +137,18 @@ class ReaderScreenBookPageIndexRobolectricTest {
         check(root.deleteRecursively())
     }
 
-    @Test fun coldPagedOpeningPersistsBoundariesAndAllWarmModesSkipFarPreparationAndRepeatedBookScans() {
+    @Test fun coldAndWarmModesPrepareOnlyTheCurrentChapterAndItsImmediateNeighbor() {
         val book = lazyBook()
         show(book)
         awaitComplete(book)
+        await { ReaderScreenPreparedReadShadow.count(book.chapters[1]) > 0 }
         val expectedPages = pageLabel()
-        assertTrue(ReaderScreenPreparedReadShadow.count(book.chapters.last()) > 0)
-        val index = indexFiles(book).single()
-        val snapshot = index.readBytes()
+        assertTrue("The footer must report only this chapter", footer().contains("本章"))
+        assertEquals(0, ReaderScreenPreparedReadShadow.count(book.chapters.last()))
+        assertTrue("Opening a book must not build its whole-book page index", indexFiles(book).isEmpty())
         val chapterFiles = chapterCacheFiles(book)
-        assertEquals(book.chapters.size, chapterFiles.size)
-        val fixed = 1_500_000_000_000L
-        chapterFiles.forEach { check(it.setLastModified(fixed)) }
+        assertTrue("Only the current chapter and nearby chapters may be paginated", chapterFiles.size in 1..3)
+        val snapshots = chapterFiles.associate { it.name to it.readBytes() }
 
         listOf(ReadingMode.PAGED, ReadingMode.VERTICAL_PAGED, ReadingMode.SCROLL).forEach { mode ->
             compose.runOnIdle { mounted = false }
@@ -155,7 +157,7 @@ class ReaderScreenBookPageIndexRobolectricTest {
             position.set(null)
             compose.runOnIdle { settings = settings.copy(readingMode = mode); session++; mounted = true }
             awaitComplete(book)
-            await { ReaderScreenPreparedReadShadow.count(book.chapters[2]) > 0 }
+            await { ReaderScreenPreparedReadShadow.count(book.chapters[1]) > 0 }
             compose.waitForIdle()
             assertEquals(expectedPages, pageLabel())
             if (mode == ReadingMode.SCROLL) {
@@ -169,8 +171,8 @@ class ReaderScreenBookPageIndexRobolectricTest {
                     text.substring(book.characterOffset, minOf(book.characterOffset + 40, paragraphEnd))))
             } else assertEquals(0 to book.characterOffset, position.get())
             assertEquals("Warm opening must not prepare an unrelated chapter", 0, ReaderScreenPreparedReadShadow.count(book.chapters.last()))
-            assertTrue("Restored boundaries must bypass every per-chapter cache read", chapterFiles.all { it.lastModified() == fixed })
-            assertArrayEquals(snapshot, index.readBytes())
+            snapshots.forEach { (name, bytes) -> assertArrayEquals(bytes, chapterFiles.first { it.name == name }.readBytes()) }
+            assertTrue(indexFiles(book).isEmpty())
             val distant = book.chapters.last()
             val distantText = requireNotNull(distant.textPath)
             val distantManifest = requireNotNull(distant.lazySourcePath)
@@ -185,13 +187,14 @@ class ReaderScreenBookPageIndexRobolectricTest {
                     ReadingMode.VERTICAL_PAGED -> compose.onNodeWithTag("reader_body").performTouchInput { swipeUp() }
                 }
                 await { ready() && position.get() != previous && !footer().contains("统计") }
-                if (mode == ReadingMode.SCROLL) assertTrue("Slow nearby scrolling must remain within the first two chapters",
-                    requireNotNull(position.get()).first <= 1)
+                assertEquals("Nearby navigation must remain in the current chapter", 0, requireNotNull(position.get()).first)
                 assertEquals(expectedPages.substringAfter('/').trim(), pageLabel().substringAfter('/').trim())
             }
             assertEquals("Turning pages must not scan metadata for the entire book again", distantStats,
                 ReaderScreenIndexLinuxShadow.count(distantText) + ReaderScreenIndexLinuxShadow.count(distantManifest))
             assertEquals("Turning nearby pages must not prepare the distant chapter", 0, ReaderScreenPreparedReadShadow.count(distant))
+            assertTrue("No whole-book pagination may be scheduled after navigation", indexFiles(book).isEmpty())
+            assertTrue(chapterCacheFiles(book).size in 1..3)
         }
     }
 
@@ -208,7 +211,7 @@ class ReaderScreenBookPageIndexRobolectricTest {
         val book = Book(title = "首次模式准备", format = BookFormat.EPUB, mode = LibraryMode.NOVEL,
             chapters = chapters, chapterIndex = 1)
         show(book)
-        await { ready() && position.get() != null && !footer().contains("统计") }
+        awaitComplete(book)
         runBlocking { removeReaderPageCaches(context, book.id) }
         val gate = ReaderScreenPreparedReadShadow.pauseNextChapterRead(prefix(book))
         try {
@@ -231,11 +234,93 @@ class ReaderScreenBookPageIndexRobolectricTest {
             val fragment = text.substring(moved.second, minOf(moved.second + 40, paragraphEnd)).trim()
             assertTrue(visibleTextContains(fragment))
             gate.release()
-            awaitComplete(book)
+            await { ready() && chapterPageNumbers() != null && position.get() == moved &&
+                compose.onAllNodesWithTag("reader_scroll").fetchSemanticsNodes().isEmpty() }
             compose.onNodeWithTag("reader_scroll").assertDoesNotExist()
             assertEquals("The new mode must use the scroll position reached while it was preparing", moved, position.get())
             assertTrue("The new paged viewport must contain that same source position", visibleTextContains(fragment))
+            assertTrue("Changing mode must not build a whole-book page index", indexFiles(book).isEmpty())
+            assertTrue(chapterCacheFiles(book).size in 1..3)
         } finally { gate.release() }
+    }
+
+    @Test fun directoryJumpUsesDestinationChapterPagesInPagedAndScrollModes() {
+        val book = lazyBook()
+        show(book)
+        listOf(ReadingMode.PAGED, ReadingMode.SCROLL).forEach { mode ->
+            if (mode != ReadingMode.PAGED) {
+                compose.runOnIdle { mounted = false }
+                compose.waitForIdle()
+                position.set(null)
+                compose.runOnIdle { settings = settings.copy(readingMode = mode); session++; mounted = true }
+            }
+            awaitComplete(book)
+            val firstChapterTotal = pageLabel().substringAfter('/').trim()
+            compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(width / 2f, height * .1f)) }
+            compose.onNodeWithContentDescription("目录").performClick()
+            compose.onNodeWithTag("reader_contents_entry_${book.chapters[3].id}").performScrollTo().performClick()
+            await { ready() && position.get()?.first == 3 && chapterPageNumbers() != null }
+            assertTrue("The first page reached through the contents is chapter page one", pageLabel().startsWith("本章 1 /"))
+            assertEquals("Earlier chapter pages must not be added to this chapter's total", firstChapterTotal,
+                pageLabel().substringAfter('/').trim())
+            assertEquals("The unvisited last chapter must stay on disk", 0, ReaderScreenPreparedReadShadow.count(book.chapters.last()))
+            assertTrue(indexFiles(book).isEmpty())
+        }
+    }
+
+    @Test fun pagedAndVerticalModesMarkTheLastPageReadWithoutChangingItsSourceOffset() {
+        verifyLastChapterCompletion()
+    }
+
+    @Test @Config(qualifiers = "w960dp-h640dp-land-mdpi")
+    fun pagedAndVerticalTabletModesMarkTheLastSpreadReadWithoutChangingItsSourceOffset() {
+        tabletDualPage = true
+        verifyLastChapterCompletion()
+    }
+
+    private fun verifyLastChapterCompletion() {
+        val texts = listOf("The opening chapter.", (0 until 30).joinToString("\n") { paragraph ->
+            "END_$paragraph quiet harbor and boats beside the bridge. END_$paragraph old stone steps and evening light."
+        })
+        val chapters = texts.mapIndexed { index, text ->
+            Chapter(title = "第${index + 1}章", textPath = File(root, "end-$index.txt").apply { writeText(text) }.absolutePath,
+                characterCount = text.length)
+        }
+        val book = Book(title = "末章读完", format = BookFormat.MOBI, mode = LibraryMode.NOVEL,
+            chapters = chapters, chapterIndex = chapters.lastIndex)
+        val canonicalProgress = ReaderScrollIndex(texts, chapters.map { emptyList() })
+        show(book)
+        listOf(ReadingMode.PAGED, ReadingMode.VERTICAL_PAGED).forEach { mode ->
+            if (mode != ReadingMode.PAGED) {
+                compose.runOnIdle { mounted = false }
+                compose.waitForIdle()
+                position.set(null); readingProgress.set(null)
+                compose.runOnIdle { settings = settings.copy(readingMode = mode); session++; mounted = true }
+            }
+            awaitComplete(book)
+            var numbers = requireNotNull(chapterPageNumbers())
+            assertTrue("The fixture must contain several pages", numbers.second > if (tabletDualPage) 2 else 1)
+            if (tabletDualPage) assertEquals("The tablet must show a real two-page spread", 2,
+                compose.onAllNodesWithContentDescription("阅读正文").fetchSemanticsNodes().size)
+            while (numbers.first < numbers.second) {
+                val source = requireNotNull(position.get())
+                assertEquals(chapters.lastIndex, source.first)
+                assertEquals("Other pages must retain canonical text progress",
+                    canonicalProgress.progress(source.first, source.second, null), requireNotNull(readingProgress.get()), .00001f)
+                val before = numbers.first
+                compose.onNodeWithTag("reader_body").performTouchInput {
+                    if (mode == ReadingMode.PAGED) swipeLeft() else swipeUp()
+                }
+                await { ready() && (chapterPageNumbers()?.first ?: 0) > before }
+                numbers = requireNotNull(chapterPageNumbers())
+            }
+            await { readingProgress.get() == 1f }
+            assertEquals(1f, requireNotNull(readingProgress.get()), 0f)
+            val finalSource = requireNotNull(position.get())
+            assertEquals(chapters.lastIndex, finalSource.first)
+            assertTrue("Completion must preserve the last page's canonical start rather than forcing EOF",
+                finalSource.second in 1 until texts.last().length)
+        }
     }
 
     @Test fun scrollSourceCssSwitchesAndViewportRecompositionKeepTheLazyDocumentAndReadingPosition() {
@@ -316,7 +401,7 @@ class ReaderScreenBookPageIndexRobolectricTest {
         }
     }
 
-    @Test fun sourceCssSwitchReflowsBodyButKeepsLegacySpecialFormattingAndRestoresItsPreviousIndex() {
+    @Test fun sourceCssSwitchReflowsBodyButKeepsLegacySpecialFormattingAndRestoresItsChapterCache() {
         val text = "HEADING\nBODY_MARKER " + "A paragraph that wraps across real screen pages. ".repeat(30)
         val heading = SourceTextStyle(0, 7, fontScale = 1.4f, bold = true)
         val body = SourceTextStyle(8, text.length, fontScale = 1.8f, paragraph = true)
@@ -326,7 +411,7 @@ class ReaderScreenBookPageIndexRobolectricTest {
         show(book)
         awaitComplete(book)
         val originalFooter = footer()
-        val originalSnapshot = indexFiles(book).single().readBytes()
+        val originalSnapshot = chapterCacheFiles(book).single().readBytes()
         assertEquals(settings.fontSize, fontSizeAt("BODY_MARKER"), .001f)
         assertEquals(settings.fontSize * 1.4f, fontSizeAt("HEADING"), .001f)
         openPreferences()
@@ -343,7 +428,7 @@ class ReaderScreenBookPageIndexRobolectricTest {
         val toggle = compose.onNode(hasClickAction() and hasAnyAncestor(hasTestTag("reader_use_source_css")))
         toggle.assertIsOff().performClick()
         closePreferences()
-        await { ready() && fontSizeAt("BODY_MARKER") > settings.fontSize * 1.5f && indexFiles(book).size == 2 }
+        await { ready() && fontSizeAt("BODY_MARKER") > settings.fontSize * 1.5f && chapterCacheFiles(book).size == 2 }
         assertEquals(settings.fontSize * 1.8f, fontSizeAt("BODY_MARKER"), .001f)
         assertEquals(settings.fontSize * 1.4f, fontSizeAt("HEADING"), .001f)
         assertNotEquals(originalFooter, footer())
@@ -351,7 +436,8 @@ class ReaderScreenBookPageIndexRobolectricTest {
         compose.onNode(hasClickAction() and hasAnyAncestor(hasTestTag("reader_use_source_css"))).assertIsOn().performClick()
         closePreferences()
         await { ready() && fontSizeAt("BODY_MARKER") == settings.fontSize && footer() == originalFooter }
-        assertTrue(indexFiles(book).any { it.readBytes().contentEquals(originalSnapshot) })
+        assertTrue(chapterCacheFiles(book).any { it.readBytes().contentEquals(originalSnapshot) })
+        assertTrue(indexFiles(book).isEmpty())
     }
 
     @Test fun originalCssOptionIsShownForEpubAndMobiButNotTxt() {
@@ -378,13 +464,13 @@ class ReaderScreenBookPageIndexRobolectricTest {
     private fun lazyBook(css: String = ""): Book {
         val directory = File(root, "lazy").apply { mkdirs() }
         val chapters = (0 until 6).map { index ->
-            val html = "<body><h2>CHAPTER_$index</h2>" + (0 until 6).joinToString("") {
+            val html = "<body><h2>CHAPTER_$index</h2>" + (0 until 20).joinToString("") {
                 "<p>BODY_$index A quiet harbor and the boats beside the old stone bridge.</p>"
             } + "</body>"
             val parsed = HtmlChapterParser.readPlain("第${index + 1}章", html) { null }
             saveLazyChapter(directory, index, parsed, html, css, emptyMap())
         }
-        return Book(title = "持久分页索引", format = BookFormat.EPUB, mode = LibraryMode.NOVEL, chapters = chapters, characterOffset = 25)
+        return Book(title = "按章分页缓存", format = BookFormat.EPUB, mode = LibraryMode.NOVEL, chapters = chapters, characterOffset = 25)
     }
     private fun show(book: Book) {
         currentBook = mutableStateOf(book); ids += book.id
@@ -393,7 +479,8 @@ class ReaderScreenBookPageIndexRobolectricTest {
             CompositionLocalProvider(LocalReaderSpeechFactory provides { speech }) { MaterialTheme {
                 Box(Modifier.fillMaxWidth().then(readerHeight?.let { Modifier.height(it) } ?: Modifier.fillMaxHeight())) {
                 ReaderScreen(currentBook.value, settings, emptyList(), {},
-                    { chapter, _, offset, _, _ -> position.set(chapter to offset) }, { settings = it }, {}, {}, {}, emptyFlow())
+                    { chapter, _, offset, progress, _ -> position.set(chapter to offset); readingProgress.set(progress) },
+                    { settings = it }, {}, {}, {}, emptyFlow(), tabletDualPage = tabletDualPage)
                 }
             } }
         } }
@@ -401,9 +488,11 @@ class ReaderScreenBookPageIndexRobolectricTest {
     private fun ready() = compose.onAllNodesWithTag("reader_loading").fetchSemanticsNodes().isEmpty() &&
         compose.onAllNodesWithContentDescription("阅读正文").fetchSemanticsNodes().isNotEmpty()
     private fun footer() = compose.onNodeWithTag("reader_page_progress").fetchSemanticsNode().config[SemanticsProperties.Text].joinToString { it.text }
-    private fun pageLabel() = Regex("\\d+\\s*/\\s*\\d+\\s*页").find(footer())?.value ?: error("Page numbers are unavailable: ${footer()}")
+    private fun pageLabel() = Regex("本章\\s*\\d+\\s*/\\s*\\d+\\s*页").find(footer())?.value ?: error("Chapter page numbers are unavailable: ${footer()}")
+    private fun chapterPageNumbers() = Regex("本章\\s*(\\d+)\\s*/\\s*(\\d+)\\s*页").find(footer())
+        ?.let { it.groupValues[1].toInt() to it.groupValues[2].toInt() }
     private fun awaitComplete(book: Book) = await {
-        ready() && indexFiles(book).size == 1 && !footer().contains("统计") && position.get() != null
+        ready() && chapterCacheFiles(book).isNotEmpty() && chapterPageNumbers() != null && position.get() != null
     }
     private fun prefix(book: Book) = MessageDigest.getInstance("SHA-256").digest(book.id.toByteArray()).joinToString("") { "%02x".format(it) }
     private fun indexFiles(book: Book) = File(context.cacheDir, "reader-book-page-index").listFiles().orEmpty()
