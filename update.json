@@ -1,24 +1,24 @@
 {
-  "versionCode": 37,
-  "versionName": "1.9.8",
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.9.8",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.9.8/ERead-1.9.8-debug.apk",
+  "versionCode": 38,
+  "versionName": "1.9.9",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.9.9",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.9.9/ERead-1.9.9-debug.apk",
   "mirrors": [
     {
       "name": "百度网盘",
-      "url": "https://pan.baidu.com/s/1Ra3NehKhPxP38xkFAlxkdA?pwd=READ",
+      "url": "https://pan.baidu.com/s/1bxmPrHyNE4B4qKQTnBEXgA?pwd=READ",
       "extractionCode": "READ"
     },
     {
       "name": "夸克网盘",
-      "url": "https://pan.quark.cn/s/ec7ea60343d1",
-      "extractionCode": "sQdT"
+      "url": "https://pan.quark.cn/s/7513b88e1253",
+      "extractionCode": "wdwp"
     }
   ],
   "changelog": [
-    "页码按当前章节显示，取消全书页数统计，复用章节分页缓存。",
-    "滑动达到阈值立即翻页，缩短翻页动画等待。",
-    "新增上、下、左、右边距设置，可随阅读主题保存。",
+    "连续阅读仅保留当前及相邻章节，减少跨章阅读的内存累积。",
+    "朗读优先播放当前章，后续章节按需加载，缓存标识按章刷新。",
+    "阅读进度独立保存，云端记录更新复用未变化的文件摘要。",
     "更多功能请自行体验。"
   ]
 }
