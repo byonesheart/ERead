@@ -1,5 +1,17 @@
 # 构建与验证记录
 
+> 目录迁移说明（2026-10-20）：下文保留各版本验证当时的路径与结果。整理后，Android 工程位于 `app/`，原 `.tools/...` 对应 `app/.tools/...`，原 `artifacts/ERead-*` 发布文件对应 `release/android/ERead-*`，原 `docs/...` 对应 `release/docs/...`。私人测试资料移入 `app/.tools/artifacts/`，其中导入样本位于 `import-fixtures/`。此次目录整理未重新执行下文的测试或设备验证。
+
+## 2026-10-20 项目目录整理
+
+完整 Android 工程移至 `app/`，保留 `:app` 模块及内部 `app/app/` 布局；`windows/` 用于后续桌面开发；`release/` 汇总安装包、源码发布包、共用说明和图片。根目录保留导航、许可证与旧 Android 客户端仍请求的 `update.json`，发布清单维护副本位于 `release/update.json`，两者内容一致。当前应用仍为 1.9.8，本次没有生成新软件版本。
+
+移动前后校验 339 个原有源码及文档文件、47 个既有发布包，移动阶段摘要全部一致；后续只修改构建输出路径、导航、忽略规则及相应文档链接。原 Android 模块的 291 个文件内容保持不变，发布包摘要也全部保持不变。共用头像、赞赏码保留与 Android 内打包副本相同的内容；参考 APK 与私人测试资料移入被忽略的 `app/.tools/`。
+
+从仓库根目录执行 `app/scripts/build.ps1`，任务为 `testDebugUnitTest`、`packageDebug`、`assembleDebugAndroidTest`、`lintDebug`，日志 `app/.tools/build-reorganization-20261020-1.log`，`BUILD SUCCESSFUL in 27s`。82 项任务中 81 项复用未改变源码的构建缓存，未重新执行全部测试；原有 910 项／122 类、0 失败的报告保留，不能表述为本次重新运行了 910 项测试。模块中的 APK 与既有 1.9.8 发布 APK 的 SHA-256 相同；验证使用 `packageDebug`，不覆盖已发布安装包。
+
+根导航及共用目录共 16 份 Markdown 的 UTF-8 检查通过，52 个本地链接及图片路径均有效。忽略规则覆盖两平台发布文件、工具、构建缓存、私钥及本机配置；仅说明 README 进入发布子目录的 Git 记录。Windows 目录目前只有交接入口，未生成桌面应用或安装包。
+
 ## 1.9.8 的变更与验证
 
 日期：2026-10-20。安装包为 `artifacts/ERead-1.9.8-debug.apk`，versionCode 37，包名 `com.eyue.reader`，最低 API 26、目标 API 35。大小 30,160,614 字节，SHA-256 为 `25F241F1C97437511B6314FB843EC19893C75FAA7343A0EFC2939144080A08D6`。签名与旧版一致，可覆盖安装。
@@ -17,6 +29,8 @@
 作者提供的 9,383,542 字节 MOBI 使用隔离副本进行导入与写回，153 章核对通过，原文件 SHA-256 保持 `202ABFC82510484F665351DF46EABA9422B404614AE61B47E53049B2B3F551A5`。本轮桌面导入约 4,389 ms、写回约 4,230 ms，不代表手机耗时。APK 共 310 个 ZIP 条目，含 13 个法律与许可证资产、5 个 OpenCC 资产，未发现个人书籍、日志文档、测试音频、签名密钥或嵌入 API 密钥模式。
 
 ## 1.9.7 的变更与验证
+
+
 
 日期：2026-10-19。安装包为 `artifacts/ERead-1.9.7-debug.apk`，versionCode 36，包名 `com.eyue.reader`，最低 API 26、目标 API 35。大小 31,477,321 字节，SHA-256 为 `035487675B5FD0F03159355BAFAC3CFE1B47BEEF85C4BB9E4236171A9CFE5492`。签名校验通过，证书与旧版一致，可覆盖安装。
 

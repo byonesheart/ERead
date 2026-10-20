@@ -1,7 +1,7 @@
-.gradle/
-.kotlin/
-.tools/
-local.properties
+**/.gradle/
+**/.kotlin/
+**/.tools/
+**/local.properties
 **/build/
 .idea/
 *.iml
@@ -20,3 +20,8 @@ artifacts/
 /*.mobi
 /*.epub
 /*.pdf
+/release/android/*
+!/release/android/README.md
+/release/windows/*
+!/release/windows/README.md
+/release/marketing/

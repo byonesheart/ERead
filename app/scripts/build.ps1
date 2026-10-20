@@ -5,6 +5,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $buildProjectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot)).TrimEnd('\')
+$buildRepositoryRoot = Split-Path -Parent $buildProjectRoot
 $buildRoot = $buildProjectRoot
 $aliasDrive = $null
 $aliasCreated = $false
@@ -77,7 +78,7 @@ try {
 
     $apkPath = Join-Path $buildProjectRoot 'app\build\outputs\apk\debug\app-debug.apk'
     if ('assembleDebug' -in $Tasks -and (Test-Path -LiteralPath $apkPath)) {
-        $artifactRoot = Join-Path $buildProjectRoot 'artifacts'
+        $artifactRoot = Join-Path $buildRepositoryRoot 'release\android'
         New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
         $versionSource = [IO.File]::ReadAllText((Join-Path $buildProjectRoot 'app\build.gradle.kts'))
         $artifactVersion = [regex]::Match($versionSource, 'versionName\s*=\s*"([^"]+)"').Groups[1].Value

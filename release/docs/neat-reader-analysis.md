@@ -1,5 +1,7 @@
 # Neat Reader APK 对比记录
 
+> 目录迁移说明（2026-10-20）：下文保留分析当时的路径与结论。整理后，参考 APK 位于 `app/.tools/reference/base.apk`，分析输出位于 `app/.tools/neat-analysis/`，Android 工程位于 `app/`；本文位于 `release/docs/`。参考 APK 与反编译输出仍不提交或分发。此次仅整理目录，未重新分析 APK。
+
 日期：2026-10-13。用户提供 `base.apk`，包名 `com.gzhi.neatreader.r2.main`，版本 8.2.0 / 191。
 
 APK SHA-256：`93F91A279AAD831B6810ABCDBBC9FE92A07C03E5AEA97ED6E056FF2BE018874B`。

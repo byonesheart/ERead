@@ -1,6 +1,6 @@
 # 协议与开源材料维护说明
 
-隐私政策、用户协议和开源介绍的应用内正文位于 `app/src/main/assets/legal/`，本目录中的对应 Markdown 为便于 GitHub 阅读的副本，更新时应同步。涉及数据处理或协议的重要变化需更新 `ConsentStore.DOCUMENT_VERSION`、正文版本与日期，使下次进入再次主动确认。
+隐私政策、用户协议和开源介绍的 Android 应用内正文位于仓库根目录下的 `app/app/src/main/assets/legal/`，本目录（`release/docs/`）中的对应 Markdown 为便于 GitHub 阅读的副本，更新时应同步。涉及数据处理或协议的重要变化需更新 `ConsentStore.DOCUMENT_VERSION`、正文版本与日期，使下次进入再次主动确认。
 
 隐私政策按本版本实际功能编写，包含本机数据、文件授权、可选系统/AI语音、WebDAV、更新检查、外部链接、权限、诊断和清理方式；用户协议不设置不合理的单方免责或“最终解释权”。制定时参考以下权威公开文本，本文不替代具体运营或发行场景下的专业审查：
 
@@ -16,4 +16,4 @@
 - OkHttp 4.12.0 JAR 内 `okhttp3/internal/publicsuffix/NOTICE` 与 [MPL 2.0原文](https://www.mozilla.org/MPL/2.0/)，用于内含的Public Suffix List数据。
 - PDFBox AAR中内置字体name表标记为LiberationSans-Regular 2.1.5、Google/Red Hat版权及SIL OFL1.1；保留 [Liberation Fonts 2.1.5许可证](https://github.com/liberationfonts/liberation-fonts/blob/2.1.5/LICENSE)。
 
-离线许可证原文、上游声明及依赖清单位于 `app/src/main/assets/legal/licenses/`；本目录的 `licenses/` 为对应副本。项目本身的GPL-3.0以仓库根目录 `LICENSE` 为准。更换依赖或发布版本时应重新核对清单和版权声明。
+离线许可证原文、上游声明及依赖清单位于 `app/app/src/main/assets/legal/licenses/`；本目录的 `licenses/` 为对应副本。项目本身的GPL-3.0以仓库根目录 [LICENSE](../../LICENSE) 为准。更换依赖或发布版本时应重新核对清单和版权声明。
