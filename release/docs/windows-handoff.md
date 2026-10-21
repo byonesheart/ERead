@@ -1,16 +1,16 @@
 # E阅 Windows 端开发交接
 
-交接日期：2026-10-20。基线：Android **1.9.8 / versionCode 37**。
+最近更新：2026-10-21。当前基线：Android **1.10.0 / versionCode 39**。最初功能清单来自 1.9.8，接手前必须先阅读 [1.9.9～1.10.0 增量交接](windows-handoff-1.10.0.md)，其中列出数据访问、缓存、朗读与云端界面的变化及验收要求。
 
-本文供新对话独立接手。用户计划开发 Windows 端；项目已整理为 `app/`、`windows/`、`release/` 三个目录，尚未创建 Windows 应用工程、选定桌面框架或修改 Android 功能。下文明确区分现有行为、兼容要求和建议路线。除特别说明外，路径均相对仓库根目录。
+本文供新对话独立接手。项目分为 `app/`、`windows/`、`release/` 三个目录；本地 `windows/` 已有 Kotlin／Compose Desktop 开发内容及未提交工作，不能覆盖或当作已完成验收。下文明确区分现有行为、兼容要求和建议路线。除特别说明外，路径均相对仓库根目录。
 
 ## 1. 从哪里开始
 
 - 本地项目：`D:/Project/E阅`。
-- GitHub：[byonesheart/ERead](https://github.com/byonesheart/ERead)。当前分支 `main`。
-- Android 1.9.8 源码及发布标签：`v1.9.8`，功能提交 `7d2ab4795636872fe2edfb80a71e5bb2193319dd`。
-- 发布后的更新清单提交：`fc881c5337b82a724ddfdf3d3b39eef4a5dfd348`。这是编写本文前的 HEAD；新增本文后 HEAD 可能变化。
-- 已发布安装包：[1.9.8 Release](https://github.com/byonesheart/ERead/releases/tag/v1.9.8)。这是 Android APK，不是 Windows 安装包。
+- GitHub：[byonesheart/ERead](https://github.com/byonesheart/ERead)，公开发布分支为 `main`。本地工作分支应以 `git status` 为准，不要为阅读本文切换或重置已有 Windows 工作。
+- Android 1.10.0 源码及发布标签：`v1.10.0`，功能提交 `7e8504d3da73d10223702a6c7e32fb755bfa74e3`。
+- 1.10.0 已生效更新清单提交：`59ced0a9ca8059cd143b7081742c05151713f4be`。后续文档提交不改变该软件基线。
+- 已发布安装包：[1.10.0 Release](https://github.com/byonesheart/ERead/releases/tag/v1.10.0)。这是 Android APK，不是 Windows 安装包。
 - Android Gradle 工程根目录为 `app/`，其中 `:app` 应用模块位于 `app/app/`。Kotlin 2.1.21、Java 17、AGP 8.9.2、Jetpack Compose，最低 Android API 26、目标／编译 API 35。
 - Windows 工程统一放入 `windows/`；两端的安装包、说明、更新清单和共用图片放入 `release/`。
 
@@ -38,16 +38,16 @@ E阅/
 
 ## 2. 用户目标与开发边界
 
-Windows 端应延续 E阅的定位：本地优先的小说、漫画阅读器，集阅读、听书、标注和个人 WebDAV 备份于一体。桌面目录已确定为 `windows/`；用户尚未指定 Windows 框架、系统最低版本、处理器架构、安装形式和首版功能优先级。
+Windows 端应延续 E阅的定位：本地优先的小说、漫画阅读器，集阅读、听书、标注和个人 WebDAV 备份于一体。桌面目录为 `windows/`。当前本地 [Windows README](../../windows/README.md) 记录 Kotlin 2.1.21／Compose Desktop 1.8.2／JDK 17、Windows 10/11 x64、开发版便携包及首版覆盖全部主要功能的方案；接手时应核对 Windows 开发对话中的既有决定，不依据本文早期内容重复选型。
 
-新对话首先确认这几项决策：
+最初交接时列出的决策如下；已有结论的继续沿用，只补充尚未确定的部分：
 
 1. 支持哪些 Windows 版本、是否只做 x64；提供安装版、便携版还是两者。
 2. 首版是否要求下述全部功能，还是先完成核心阅读与 Android 备份互通。
 3. 桌面界面希望沿用多少手机端风格，以及可共享业务代码的边界；工程保留在 `windows/`。
 4. 是否要求读取 Android 已有 WebDAV 备份；建议将协议兼容作为目标，但当前尚无 Windows 实现验证。
 
-不要把“Windows 移植”理解为把 Android 工程换一个构建目标。先评估可共享的 Kotlin 业务代码与平台依赖，再确定桌面 UI／文本渲染方案；本文不替用户锁定技术选型。不需要在本次交接中执行任何 Windows 开发或发布。
+不要把“Windows 移植”理解为把 Android 工程换一个构建目标。沿既有桌面方案评估可共享的 Kotlin 业务代码与平台依赖，分别验证桌面 UI／文本渲染和系统适配。本次补充交接没有修改、编译或发布 Windows 应用。
 
 ### 工作方式
 
@@ -144,7 +144,7 @@ EPUB／MOBI 默认普通正文使用软件排版，标题、引用等特殊内�
 - AI 无逐字时间戳，当前按播放时长近似推算高亮位置，不能承诺逐字精准。速度由本地播放器改变，不重新生成音频。
 - 音频按书独立保存、统计、清理；漫画不提供清理 AI 配音缓存的入口。**音频缓存只在本机，不随 WebDAV 书籍备份上传。**
 - 片段键由协议、最终 endpoint、实际请求 JSON 构成；密钥、配置名称／ID、播放速度不进片段键。修改配置不能删除旧缓存或把旧音色误当当前音色已完成。
-- 章节完成记录另校验正文版本、正文摘要、配置身份、角色摘要、上章对白 seed、全部片段及扩展名；整章音频均存在才完成。即时朗读完整章也应形成完成标识。
+- 章节完成记录另校验正文版本、源缓存属性指纹（章节 ID、路径、大小和修改时间）、配置身份、角色摘要、上章对白 seed、全部片段及扩展名；不为刷新徽标读取正文计算哈希。整章音频均存在才完成。即时朗读完整章也应形成完成标识。
 - 批量转换选整书或目录中的章节，最小管理单位是章节；已完整缓存章跳过，**不完整章重新合成全部片段，原子覆盖已有部分**，不是只补缺片。
 - 同书多章并行，当前最多 3 章、全局批量 HTTP 请求上限 3；用户能从目录或系统通知中取消。进度在通知和对应章节显示，不用阻塞窗口；完成显示带 √ 耳机。
 - 任务需持久保存计划、身份、进度和取消状态，运行时核对正文／配置／角色是否变化；不能只靠阅读窗口里的临时协程。清理缓存后旧请求不能把音频重新写回来。
@@ -163,6 +163,7 @@ EPUB／MOBI 默认普通正文使用软件排版，标题、引用等特殊内�
 ### 本地模型
 
 - `LibraryRepository` 当前写 `library.json`，`version=13`，UTF-8／JSON，原子写入和锁保护；不能因为有 version 字段就假定已有统一版本迁移框架。
+- 自 1.9.9 起，最近进度和阅读时长另存 `reading_positions.json`。`positionRevision` 匹配后合并根级阅读时长，各书位置再校验 `id` 与 `contentVersion`。只复制 `library.json` 会遗漏最新进度；缺失、过期及损坏位置文件的处理见 [增量交接](windows-handoff-1.10.0.md)。云端仍从合成状态写入既有 manifest，不直接上传这个本地位置文件。
 - 枚举按名称保存；Book／Chapter／Annotation／ShelfGroup 使用字符串 ID。保留现有 ID、`contentVersion`、来源身份、角色与云端状态，避免标注和音频关联丢失。
 - 阅读与标注偏移按 Kotlin 字符串的 **UTF-16 code unit** 语义，不能换成 UTF-8 字节或 Unicode 码点；补充字符、emoji、简繁显示映射均要测试。
 - 用章节＋字符偏移＋必要的插图位置恢复正文；`pageIndex` 是排版相关提示，Windows 字体和窗口改变后需重定位。
@@ -250,7 +251,7 @@ EPUB／MOBI 默认普通正文使用软件排版，标题、引用等特殊内�
 - 编辑／注释：`EbookSourceWritebackRobolectricTest`、`AnnotationRelocationTest`、`ReaderSourceFootnoteRobolectricTest`、`ReaderSearchReplaceRobolectricTest`。
 - 语音／云端：`AiSpeech*`、`ReaderNarrationInteractionRobolectricTest`、`ReaderAudioServiceRobolectricTest`、`CloudArchiveTest`、`CloudBackupServiceRobolectricTest`、`CloudParallelTransfersRobolectricTest`、`CloudRestoreConflictTest`。
 
-Android 1.9.8 基线为 **910 项测试、122 个类、0 失败／错误／跳过**；安装包与设备测试包构建及 lint 通过，lint 0 错误，未连接手机，未验证 Windows 或 vivo 真机流畅度。详细记录在 [verification.md](verification.md)。本次写交接文档没有重跑这些测试。
+Android 1.10.0 基线为 **1008 项测试、135 个类、0 失败／错误／跳过**；安装包、设备测试包、独立 Macrobenchmark 测试包构建及 lint 通过，lint 0 错误。未连接手机，没有真机性能基线，也没有因此验证 Windows 功能。详细记录在 [verification.md](verification.md)。本次仅更新交接文档，没有重跑软件测试。
 
 如需确认 Android 未被桌面改动破坏，使用现有脚本：
 
@@ -281,4 +282,4 @@ Set-Location -LiteralPath 'D:/Project/E阅/app'
 
 ## 9. 可直接发给新对话的开场说明
 
-> 请先阅读 `D:/Project/E阅/release/docs/windows-handoff.md`，以 Android 1.9.8 为功能与数据基线，在 `D:/Project/E阅/windows/` 为 E阅开发 Windows 端。Android 工程位于 `app/`，共用安装包与说明位于 `release/`。先核查当前源码和 Git 状态，说明可以复用的逻辑与必须适配的平台层，确认桌面框架、系统／架构、安装形式及首版范围，再按阶段实现。保留按章节计页、稳定原文锚点、每书并发和手动保存语义；若做跨端备份，兼容现有 WebDAV 格式并以 manifest 的最新记录为准。不要改变 Android 更新渠道，不要把私人书籍、密钥或 `app/.tools/` 内容提交仓库。
+> 请先阅读 `D:/Project/E阅/release/docs/windows-handoff.md` 和 `D:/Project/E阅/release/docs/windows-handoff-1.10.0.md`，以 Android 1.10.0（v1.10.0，功能提交 7e8504d3da73d10223702a6c7e32fb755bfa74e3）为当前功能与数据基线。继续 `D:/Project/E阅/windows/` 的既有开发，先核查 Git 状态并保留未提交工作，沿用 Windows 开发对话中已确定的技术栈和范围。逐项对齐独立进度持久化、当前及相邻章节窗口、懒加载朗读、明确读取错误、布局代次保护、云端还原进度与实际下载目录展示，不能把交接完成当成 Windows 实现已完成。保留按章计页、UTF-16 原文锚点、每书并发与手动保存语义；兼容现有 WebDAV 格式并以 manifest 最新记录为准。保持 Android 与 Windows 更新渠道独立，不提交私人书籍、密钥或 `app/.tools/`。
