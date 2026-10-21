@@ -43,7 +43,7 @@ internal fun readerFileChangeToken(file: File): String? {
 private fun bookIndexHash(value: String): String = MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
     .joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
-/** Opening checks only metadata; unknown filesystems fall back to the existing verified chapter cache. */
+/** Legacy whole-book index: the production reader uses chapter caches and does not call this factory. */
 internal suspend fun readerBookPageIndex(context: Context, book: Book, settings: ReaderSettings,
     density: Density, direction: LayoutDirection, width: Int, height: Int,
     fileIdentity: (File) -> String? = ::readerFileChangeToken): ReaderBookPageIndex = withContext(Dispatchers.IO) {

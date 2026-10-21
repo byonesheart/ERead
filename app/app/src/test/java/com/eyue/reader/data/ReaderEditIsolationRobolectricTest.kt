@@ -379,6 +379,24 @@ class ReaderEditIsolationRobolectricTest {
         assertArrayEquals(metadata, File(app.filesDir, "library.json").readBytes())
     }
 
+    @Test fun aLateProgressCallbackFromThePreviousReaderDoesNotChangeEitherBooksSavedPosition() {
+        val first = textBook("旧阅读会话", "第一章\n甲正文。")
+        val second = textBook("当前阅读会话", "第一章\n乙正文。")
+        openLibrary(first, second)
+        vm.open(book(first.id))
+        vm.progress(0, 1, 4, .25f, bookId = first.id)
+        vm.open(book(second.id))
+        vm.progress(0, 2, 6, .75f, bookId = second.id)
+        vm.progress(0, 99, 999, 1f, bookId = first.id)
+        vm.flush()
+        await { LibraryRepository(app).load().books.first { it.id == second.id }.characterOffset == 6 }
+        val saved = LibraryRepository(app).load()
+        assertEquals(4, saved.books.first { it.id == first.id }.characterOffset)
+        assertEquals(.25f, saved.books.first { it.id == first.id }.progress)
+        assertEquals(6, saved.books.first { it.id == second.id }.characterOffset)
+        assertEquals(.75f, saved.books.first { it.id == second.id }.progress)
+    }
+
     private fun textBook(title: String, text: String): Book {
         val source = File(root, "$title.txt").apply { writeText(text) }
         return Book(title = title, format = BookFormat.TXT, mode = LibraryMode.NOVEL,
@@ -406,7 +424,8 @@ class ReaderEditIsolationRobolectricTest {
     }
 
     private fun holdPersistence(): CompletableDeferred<Unit> {
-        val mutex = ReaderViewModel::class.java.getDeclaredField("saveMutex").apply { isAccessible = true }.get(vm) as Mutex
+        val saves = ReaderViewModel::class.java.getDeclaredField("saves").apply { isAccessible = true }.get(vm)
+        val mutex = LibrarySaveCoordinator::class.java.getDeclaredField("mutex").apply { isAccessible = true }.get(saves) as Mutex
         val acquired = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>().also { releases += it }
         holders.launch { mutex.withLock { acquired.complete(Unit); release.await() } }

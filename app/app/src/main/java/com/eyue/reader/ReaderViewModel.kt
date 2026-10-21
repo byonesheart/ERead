@@ -57,7 +57,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         private set
     private var systemDark = (application.resources.configuration.uiMode and
         android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
-    private var saveJob: Job? = null
     private var cloudJob: Job? = null
     private val cloudUploadJobs = mutableMapOf<String, Job>()
     private val cloudBookJobs = mutableMapOf<String, Job>()
@@ -69,14 +68,19 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private var cloudGeneration = 0
     private var cloudMetadataJob: Job? = null
     private var cloudMetadataEpoch = 0
+    private val cloudRestoreState = com.eyue.reader.data.cloud.CloudRestoreProgressState()
+    val cloudRestoreProgress get() = cloudRestoreState.progress
     private val cloudHistory = CloudBackupHistory(application)
     private val cloudDirtyIndex = CloudDirtyBookIndex(repository)
     private var cloudDirtyFilesRevision by mutableStateOf(0)
     private var openJob: Job? = null
     private var sessionStarted = 0L
     private var foreground = false
-    private val saveMutex = Mutex()
-    private var persistedStructure: LibraryState? = null
+    private val saves = LibrarySaveCoordinator(viewModelScope,
+        currentState = { state.takeIf { storageReady } },
+        writeStructure = { repository.save(it) }, writePositions = { repository.savePositions(it) },
+        onSaved = { CloudBackupAutomation.changed(application, it, cloudConfigured) },
+        onError = { message = "阅读记录保存失败：${it.message ?: "请重试"}" })
     private data class ImportRequest(val id: String, val uris: List<Uri>, val mode: LibraryMode,
         val folder: Boolean = false, val external: Boolean = false, val mimeType: String? = null, val requestId: String? = null)
     private val importRequests = Channel<ImportRequest>(Channel.UNLIMITED)
@@ -251,7 +255,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 return@launch
             }
             val originalState = loaded.getOrThrow().withResolvedTheme(systemDark)
-            persistedStructure = loaded.getOrThrow().withoutReadingPositions()
+            saves.initialize(loaded.getOrThrow())
             state = originalState.copy(settings = originalState.settings.ensureActiveAppearanceProfile(),
                 comicSettings = originalState.comicSettings.ensureActiveAppearanceProfile())
             message = (importer.lastImportErrors + importer.lastImportWarnings).takeIf { it.isNotEmpty() }?.joinToString("\n")
@@ -454,7 +458,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     state = state.copy(books = state.books.filterNot { it.id in discardedIds } +
                         if (keepIncoming) listOf(incoming) else emptyList(),
                         annotations = state.annotations.filterNot { it.bookId in discardedIds })
-                    saveJob?.cancel()
+                    saves.cancelPending()
                     persistNow()
                     withContext(Dispatchers.IO) { discarded.forEach { book ->
                         CloudBackupService(getApplication()).discardPendingUpload(book.id)
@@ -507,11 +511,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun changed(newState: LibraryState) {
         state = newState
-        saveJob?.cancel()
-        saveJob = viewModelScope.launch {
-            delay(350)
-            persistNow()
-        }
+        saves.schedule()
     }
 
     private fun referencedBookPaths(book: Book): List<String> = listOfNotNull(book.sourcePath, book.coverPath) +
@@ -539,27 +539,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         super.onCleared()
     }
 
-    private suspend fun persistNow() {
-        if (!storageReady) return
-        saveMutex.withLock {
-            val snapshot = state
-            val structure = snapshot.withoutReadingPositions()
-            withContext(NonCancellable + Dispatchers.IO) {
-                if (structure != persistedStructure) repository.save(snapshot) else repository.savePositions(snapshot)
-            }
-            persistedStructure = structure
-            CloudBackupAutomation.changed(getApplication(), snapshot, cloudConfigured)
-        }
-    }
+    private suspend fun persistNow() = saves.persistNow()
 
     fun flush() {
         val elapsed = if (sessionStarted > 0) (System.currentTimeMillis() - sessionStarted) / 1000 else 0
         if (sessionStarted > 0) sessionStarted = System.currentTimeMillis()
         if (elapsed > 0) state = state.copy(readingSeconds = state.readingSeconds + elapsed)
-        saveJob?.cancel()
-        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            withContext(NonCancellable) { persistNow() }
-        }
+        saves.flush()
     }
 
     fun pauseSession() {
@@ -761,7 +747,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (activeBookId == book.id) close()
         state = state.copy(books = state.books.filterNot { it.id == book.id },
             annotations = state.annotations.filterNot { it.bookId == book.id })
-        saveJob?.cancel()
+        saves.cancelPending()
         persistNow()
         withContext(Dispatchers.IO) {
             CloudBackupService(getApplication()).discardPendingUpload(book.id)
@@ -1146,7 +1132,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         val cache = AiSpeechCache(getApplication()); ids.forEach(cache::clear)
                     }
                     state = cleanLibraryRecords(state, kind, ids)
-                    saveJob?.cancel()
+                    saves.cancelPending()
                     // Do not immediately upload the local-only cleanup as an automatic backup change.
                     if (account != null) withContext(Dispatchers.IO) {
                         state.books.filter { it.id in ids && it.cloudEnabled && !it.cloudOnly && !cloudHistory.automaticPaused(account, it.id) }.forEach {
@@ -1352,7 +1338,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         } else state = state.copy(books = state.books.map {
             if (it.id == current.id) it.copy(cloudEnabled = false, cloudBackupAt = 0) else it
         })
-        saveJob?.cancel()
+        saves.cancelPending()
         persistNow()
         message = "《${book.title}》的云端文件已删除，本书自动备份已关闭"
     }
@@ -1362,12 +1348,16 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (loading || rebuildingContents || !storageReady) { message = "请等待本地书架和文件整理完成"; return }
         val account = cloudIdentity.takeIf { cloudConfigured } ?: run { message = "请先配置 WebDAV 网盘"; return }
         val epoch = cloudMetadataEpoch
+        val progressToken = cloudRestoreState.begin("读取云端书架")
         cloudMetadataJob = viewModelScope.launch {
             try {
-                val service = CloudBackupService(getApplication())
+                val service = CloudBackupService(getApplication(), onProgress = { progress ->
+                    viewModelScope.launch { cloudRestoreState.update(progressToken, progress) }
+                })
                 // Metadata reads deliberately use no transfer slot, even when all three uploads are busy.
                 val info = service.list(account)
                 val matches = service.restoreBookMatches(state, info)
+                cloudRestoreState.update(progressToken, com.eyue.reader.data.cloud.CloudOperationProgress("核对最新云端书架"))
                 var needsDecision = false
                 cloudOperationMutex.withCatalog(account) {
                     val existingIds = service.catalogBookIds(account)
@@ -1387,11 +1377,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
                 if (!needsDecision) {
+                    cloudRestoreState.update(progressToken, com.eyue.reader.data.cloud.CloudOperationProgress("保存书架与阅读记录"))
                     persistNow()
                 }
             } catch (error: CancellationException) { throw error }
               catch (error: Exception) { message = error.message ?: "还原云端书籍信息失败，请稍后重试" }
-            finally { cloudMetadataJob = null }
+            finally { if (cloudRestoreState.finish(progressToken)) cloudMetadataJob = null }
         }
     }
 
@@ -1494,6 +1485,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (cloudMetadataJob?.isActive == true || cloudBusy || rebuildingContents) return
         val account = pendingRestoreIdentity ?: return
         val epoch = cloudMetadataEpoch
+        val progressToken = cloudRestoreState.begin("核对最新云端书架")
         cloudMetadataJob = viewModelScope.launch {
             try {
                 val service = CloudBackupService(getApplication())
@@ -1515,11 +1507,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     applied = true
                 }
                 if (applied) {
+                    cloudRestoreState.update(progressToken, com.eyue.reader.data.cloud.CloudOperationProgress("保存书架与阅读记录"))
                     persistNow()
                 }
             } catch (error: CancellationException) { throw error }
               catch (error: Exception) { message = error.message ?: "还原云端书籍信息失败，请稍后重试" }
-            finally { cloudMetadataJob = null }
+            finally { if (cloudRestoreState.finish(progressToken)) cloudMetadataJob = null }
         }
     }
 
@@ -1854,7 +1847,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                             sourceUri = sourceBook.sourceUri, sourceLinked = sourceBook.sourceLinked)
                         val updated = withContext(Dispatchers.IO) { hydrateBookSourceIdentity(getApplication(), committed) }
                         progress("保存阅读记录", 0.97f)
-                        saveJob?.cancel()
+                        saves.cancelPending()
                         val previous = state
                         state = state.copy(books = state.books.map { if (it.id == bookId) updated else it },
                             annotations = state.annotations.filterNot { it.bookId == bookId } + latest.annotations)

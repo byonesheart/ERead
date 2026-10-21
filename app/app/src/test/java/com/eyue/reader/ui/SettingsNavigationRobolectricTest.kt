@@ -4,12 +4,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import com.eyue.reader.data.LibraryState
 import com.eyue.reader.data.ThemeMode
 import com.eyue.reader.BuildConfig
 import com.eyue.reader.data.AppUpdateResult
 import com.eyue.reader.data.AppUpdateMirror
 import com.eyue.reader.data.cloud.DEFAULT_WEBDAV_SERVER
+import com.eyue.reader.data.cloud.CloudOperationProgress
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -18,9 +20,11 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
+import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
@@ -89,6 +93,32 @@ class SettingsNavigationRobolectricTest {
         compose.onNodeWithTag("cloud_test_connection").assertDoesNotExist()
         compose.onNodeWithTag("settings_back").performClick()
         compose.onNodeWithTag("settings_theme").assertIsDisplayed()
+    }
+
+    @Test fun cloudRestorationShowsLiveProgressAndTheRealApplicationDownloadDirectory() {
+        var progress by mutableStateOf<CloudOperationProgress?>(null)
+        var restores = 0
+        compose.setContent { MaterialTheme {
+            SettingsScreen(LibraryState(), {}, {}, {}, {}, cloudConfigured = true,
+                onRestoreCloudBookInfo = { restores++; progress = CloudOperationProgress("读取云端书籍列表") },
+                restoreProgress = progress)
+        } }
+        compose.onNodeWithTag("settings_cloud").performScrollTo().performClick()
+        val expected = File(RuntimeEnvironment.getApplication().filesDir, "books").absolutePath
+        compose.onNodeWithTag("cloud_download_directory").performScrollTo().assertTextEquals(expected)
+        compose.onNodeWithText("应用内部存储，按书籍分别保存。").assertExists()
+        compose.onNodeWithTag("cloud_restore_progress").assertDoesNotExist()
+        compose.onNodeWithTag("cloud_restore_info").performScrollTo().performClick()
+        compose.onNodeWithTag("cloud_restore_info").assertIsNotEnabled()
+        compose.onNodeWithTag("cloud_restore_progress_bar").performScrollTo()
+            .assertRangeInfoEquals(ProgressBarRangeInfo.Indeterminate)
+        compose.onNodeWithTag("cloud_restore_progress_percent").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(1, restores); progress = CloudOperationProgress("已读取 2 / 4 本书籍", .5f) }
+        compose.onNodeWithTag("cloud_restore_progress_percent").performScrollTo().assertTextEquals("50%")
+        compose.onNodeWithTag("cloud_restore_progress_bar").assertRangeInfoEquals(ProgressBarRangeInfo(.5f, 0f..1f))
+        compose.runOnIdle { progress = null }
+        compose.onNodeWithTag("cloud_restore_progress").assertDoesNotExist()
+        compose.onNodeWithTag("cloud_restore_info").performScrollTo().assertIsEnabled()
     }
 
     @Test fun cacheActionsRequireSeparateConfirmationsAndNeverInvokeEachOther() {

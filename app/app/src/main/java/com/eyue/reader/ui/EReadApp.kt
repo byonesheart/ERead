@@ -262,7 +262,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
                                         cloudConfigured = vm.cloudConfigured, meteredNetwork = vm.meteredNetwork,
                                         speechCacheRevision = vm.aiSpeechCacheRevision, cloudTransfers = vm.cloudTransfers,
                                         cloudDirtyBookIds = vm.cloudDirtyBookIds, pendingImports = vm.pendingImports.filter { it.mode == vm.mode },
-                                        onRemoveBatch = vm::removeBooks)
+                                        onRemoveBatch = vm::removeBooks, restoreProgress = vm.cloudRestoreProgress)
                                 }
                                 else -> SettingsScreen(state, { vm.settings(vm.readerSettings.copy(nightMode = it.nightMode)) }, vm::saveChapterRule,
                                     ::importFont, vm::clearHistory, mode = LibraryMode.NOVEL, cloudAccount = vm.cloudAccount,
@@ -282,7 +282,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
                                     onBookVoiceRoles = { id -> selectedRoleText = null; voiceRolesBookId = id },
                                     onCleanup = vm::cleanupLibrary, speechCacheRevision = vm.aiSpeechCacheRevision,
                                     meteredNetwork = vm.meteredNetwork, onCommonVoiceRoles = { commonVoiceRolesOpen = true },
-                                    onEinkMode = vm::setEinkMode, onTabletDualPage = vm::setTabletDualPage)
+                                    onEinkMode = vm::setEinkMode, onTabletDualPage = vm::setTabletDualPage,
+                                    restoreProgress = vm.cloudRestoreProgress)
                             }
                         }
                     }

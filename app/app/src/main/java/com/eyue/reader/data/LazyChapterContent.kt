@@ -20,12 +20,15 @@ private val chapterContentLocks = Array(32) { Mutex() }
 suspend fun loadChapterContent(context: Context, book: Book, chapterIndex: Int): PreparedChapter = withContext(Dispatchers.IO) {
     val chapter = book.chapters[chapterIndex]
     val sourcePath = chapter.lazySourcePath
-    if (sourcePath == null) return@withContext PreparedChapter(chapter, chapter.textPath?.let { File(it).readText() }.orEmpty())
+    if (sourcePath == null) {
+        val job = currentCoroutineContext()
+        return@withContext PreparedChapter(chapter, readChapterText(book, chapterIndex) { job.ensureActive() })
+    }
     val lock = chapterContentLocks[(sourcePath.hashCode() and Int.MAX_VALUE) % chapterContentLocks.size]
     lock.withLock {
         val job = currentCoroutineContext()
+        val text = readChapterText(chapter) { job.ensureActive() }
         val textFile = File(requireNotNull(chapter.textPath))
-        val text = textFile.readText()
         val textHash = chapterTextHash(textFile) { job.ensureActive() }
         val metadata = AtomicFile(File("$sourcePath.prepared.json"))
         val repository = LibraryRepository(context)

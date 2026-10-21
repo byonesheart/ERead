@@ -51,7 +51,12 @@ class LazyChapterContentRobolectricTest {
 
     @After fun tearDown() {
         check(root.canonicalFile.parentFile == File("build").canonicalFile)
-        check(root.deleteRecursively())
+        // Windows can briefly retain a handle to the now-empty test directory.
+        for (attempt in 0 until 5) {
+            if (root.deleteRecursively()) break
+            Thread.sleep(50)
+        }
+        check(!root.exists())
     }
 
     @Test fun loadsOnlyRequestedChapterAndKeepsExactCanonicalTextOffsets() = runBlocking {

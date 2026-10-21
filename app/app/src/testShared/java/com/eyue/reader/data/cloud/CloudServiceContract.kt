@@ -53,6 +53,40 @@ abstract class CloudServiceContract {
 
     @After fun cleanup() { root.deleteRecursively() }
 
+    @Test fun informationRestoreReportsCompletedEntriesIncludingMissingManifests() = runBlocking {
+        val (first, state) = novel()
+        val second = first.copy(id = "second-progress-book", title = "第二本书")
+        service.upload(state, first)
+        service.upload(state.copy(books = listOf(second)), second)
+        transport.files.remove("books/${second.id}/manifest.json")
+        val progress = mutableListOf<CloudOperationProgress>()
+        val reader = CloudBackupService(context, credentials, { _, _ -> transport }, onProgress = { progress += it })
+        val result = reader.list()
+        assertEquals(listOf(first.id), result.map { it.book.id })
+        assertEquals("读取云端书架", progress.first().stage)
+        assertNull(progress.first().fraction)
+        val completed = progress.filter { it.stage.startsWith("读取云端书籍信息") }
+        assertEquals(listOf(0f, .5f, 1f), completed.map { it.fraction })
+        assertTrue(completed.last().stage.contains("2 / 2"))
+    }
+
+    @Test fun anEmptyInformationRestoreReportsCompletionWithoutInventingBookWork() = runBlocking {
+        val progress = mutableListOf<CloudOperationProgress>()
+        val reader = CloudBackupService(context, credentials, { _, _ -> transport }, onProgress = { progress += it })
+        assertTrue(reader.list().isEmpty())
+        assertNull(progress.first().fraction)
+        assertEquals(CloudOperationProgress("读取云端书籍信息 0 / 0", 1f), progress.last())
+    }
+
+    @Test fun aFailedInformationRestoreDoesNotReportFalseCompletion() = runBlocking {
+        transport.files["catalog.json"] = "{".toByteArray()
+        val progress = mutableListOf<CloudOperationProgress>()
+        val reader = CloudBackupService(context, credentials, { _, _ -> transport }, onProgress = { progress += it })
+        assertNotNull(runCatching { reader.list() }.exceptionOrNull())
+        assertEquals("读取云端书架", progress.first().stage)
+        assertTrue(progress.none { it.fraction == 1f })
+    }
+
     @Test fun backgroundAssetAndContentIdentitySurviveInformationRestoreAndDownload() = runBlocking {
         val (book, state) = novel()
         val image = File(root, "background.jpg").apply { writeBytes(byteArrayOf(9, 8, 7, 6)) }

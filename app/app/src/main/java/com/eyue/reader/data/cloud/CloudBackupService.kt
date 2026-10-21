@@ -57,6 +57,7 @@ class CloudBackupService(
         val check = { job.ensureActive() }
         val content = HashMap<String, String?>()
         val source = HashMap<String, String?>()
+        onProgress(CloudOperationProgress("核对本地同名书籍"))
         val identified = state.copy(books = state.books.map { hydrateBookSourceIdentity(context, it) })
         buildMap {
             for (info in incoming) for (local in sameTitleLocalBooks(identified, info.book)) {
@@ -234,34 +235,41 @@ class CloudBackupService(
             require(credentialStore.read()?.identity == credentials.identity) { "WebDAV 配置已更改，请重新还原书籍信息" }
         }
         val transport = transportFactory(credentials, check)
-        transport.ensureCollection("")
-        transport.ensureCollection("books/")
-        val ids = cloudOperationMutex.withCatalog(credentials.identity) {
-            check()
-            transport.metadata("catalog.json")?.let(::readCatalog) ?: legacyIds(transport)
-        }
-        val covers = cloudCoverDirectory(credentials).apply { check(mkdirs() || isDirectory) }
-        ids.mapIndexedNotNull { index, id ->
-            check()
-            CloudArchive.safeId(id)
-            onProgress(CloudOperationProgress("读取云端书籍信息", if (ids.isEmpty()) 1f else index.toFloat() / ids.size))
-            val bytes = transport.metadata("books/$id/manifest.json") ?: return@mapIndexedNotNull null
-            val manifest = readManifest(bytes, id)
-            val coverName = manifest.cover
-            val cover = if (coverName != null) {
-                val file = File(covers, "$id-${manifest.info.revision}.jpg")
-                if (!file.exists()) {
-                    val partial = File(covers, "$id-${UUID.randomUUID()}.tmp")
-                    try {
-                        transport.download("books/$id/$coverName", partial, false, 4L * 1024 * 1024) { check() }
-                        check(partial.renameTo(file)) { "封面保存失败" }
-                    } finally { partial.delete() }
+        onProgress(CloudOperationProgress("读取云端书架"))
+        try {
+            transport.ensureCollection("")
+            transport.ensureCollection("books/")
+            val ids = cloudOperationMutex.withCatalog(credentials.identity) {
+                check()
+                transport.metadata("catalog.json")?.let(::readCatalog) ?: legacyIds(transport)
+            }
+            val covers = cloudCoverDirectory(credentials).apply { check(mkdirs() || isDirectory) }
+            onProgress(CloudOperationProgress("读取云端书籍信息 0 / ${ids.size}", if (ids.isEmpty()) 1f else 0f))
+            ids.mapIndexedNotNull { index, id ->
+                check()
+                CloudArchive.safeId(id)
+                val bytes = transport.metadata("books/$id/manifest.json")
+                val info = bytes?.let {
+                    val manifest = readManifest(it, id)
+                    val coverName = manifest.cover
+                    val cover = if (coverName != null) {
+                        val file = File(covers, "$id-${manifest.info.revision}.jpg")
+                        if (!file.exists()) {
+                            val partial = File(covers, "$id-${UUID.randomUUID()}.tmp")
+                            try {
+                                transport.download("books/$id/$coverName", partial, false, 4L * 1024 * 1024) { check() }
+                                check(partial.renameTo(file)) { "封面保存失败" }
+                            } finally { partial.delete() }
+                        }
+                        file.absolutePath
+                    } else null
+                    manifest.info.copy(book = manifest.info.book.copy(coverPath = cover, cloudOnly = true,
+                        cloudEnabled = true, sourceUri = null, sourceLinked = false, cloudBackupAt = manifest.info.backupAt))
                 }
-                file.absolutePath
-            } else null
-            manifest.info.copy(book = manifest.info.book.copy(coverPath = cover, cloudOnly = true,
-                cloudEnabled = true, sourceUri = null, sourceLinked = false, cloudBackupAt = manifest.info.backupAt))
-        }
+                onProgress(CloudOperationProgress("读取云端书籍信息 ${index + 1} / ${ids.size}", (index + 1).toFloat() / ids.size))
+                info
+            }
+        } finally { transport.cancel() }
     }
 
     /** The caller may hold the short catalog lock while validating and merging a metadata snapshot. */

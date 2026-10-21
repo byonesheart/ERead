@@ -5,8 +5,12 @@ import android.content.ContextWrapper
 import com.eyue.reader.data.Book
 import com.eyue.reader.data.BookFormat
 import com.eyue.reader.data.Chapter
+import com.eyue.reader.data.ChapterTextReadException
 import com.eyue.reader.data.LibraryMode
+import com.eyue.reader.data.PageSource
 import com.eyue.reader.data.PreparedChapter
+import com.eyue.reader.data.readChapterText
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -15,6 +19,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -192,5 +197,96 @@ class ReaderChapterStoreTest {
         val legacy = File(root, "legacy.txt").apply { writeText("原缓存😀") }
         val mixed = book.copy(chapters = book.chapters + Chapter(title = "旧章", textPath = legacy.absolutePath))
         assertEquals(listOf(123, 456, "原缓存😀".length), readerChapterLengths(context, mixed))
+    }
+
+    @Test fun successfulEmptyChapterRemainsValidForReadingPreparationAndLegacyCounts() = runBlocking {
+        val file = File(root, "empty.txt").apply { writeText("") }
+        val chapter = Chapter(title = "合法空章", textPath = file.absolutePath)
+        val book = book(listOf(chapter))
+        val store = ReaderChapterStore(context, book)
+        assertEquals("", store.readText(0))
+        assertEquals("", store.load(0).text)
+        assertEquals(listOf(ReaderTextPage(0, 0)), store.load(0).blocks)
+        assertEquals(listOf(0), readerChapterLengths(context, book))
+    }
+
+    @Test fun missingAndCorruptTextRetainTheChapterErrorAndCanBeRetriedAfterRepair() = runBlocking {
+        val missing = File(root, "missing.txt")
+        val corrupt = File(root, "corrupt.txt").apply { writeBytes(byteArrayOf(0xc3.toByte(), 0x28)) }
+        for (file in listOf(missing, corrupt)) {
+            val chapter = Chapter(title = "损坏章节 ${file.name}", textPath = file.absolutePath)
+            val book = book(listOf(chapter))
+            val store = ReaderChapterStore(context, book)
+            for (failure in listOf(runCatching { store.readText(0) }.exceptionOrNull(),
+                runCatching { store.load(0) }.exceptionOrNull(),
+                runCatching { readerChapterLengths(context, book) }.exceptionOrNull())) {
+                assertTrue("A read error must never become a successful empty chapter", failure is ChapterTextReadException)
+                assertEquals(chapter.title, (failure as ChapterTextReadException).chapterTitle)
+                assertTrue(failure.message.orEmpty().contains(chapter.title))
+                assertNotNull(failure.cause)
+            }
+            file.writeText("已修复的正文😀")
+            assertEquals("已修复的正文😀", store.readText(0))
+            assertEquals("已修复的正文😀", store.load(0).text)
+            assertEquals(listOf("已修复的正文😀".length), readerChapterLengths(context, book))
+        }
+    }
+
+    @Test fun absentOcrIsValidButBrokenOcrAndMissingNovelReferencesAreErrors() = runBlocking {
+        val missing = File(root, "missing-ocr.txt")
+        val empty = File(root, "empty-ocr.txt").apply { writeText("") }
+        val chapter = Chapter(title = "PDF 正文", pages = listOf(PageSource("page0.png"),
+            PageSource("page1.png", textPath = missing.absolutePath), PageSource("page2.png", textPath = empty.absolutePath)))
+        val pdf = book(listOf(chapter)).copy(format = BookFormat.PDF)
+        val store = ReaderChapterStore(context, pdf)
+        assertEquals("", store.readPageText(0, 0))
+        assertEquals("", store.readPageText(0, 2))
+        assertEquals("", store.load(0).text)
+        val failure = runCatching { store.readPageText(0, 1) }.exceptionOrNull()
+        assertTrue(failure is ChapterTextReadException)
+        assertTrue(failure?.message.orEmpty().contains("第 2 页"))
+        val novel = ReaderChapterStore(context, book(listOf(Chapter(title = "缺少正文路径"))))
+        assertTrue(runCatching { novel.readText(0) }.exceptionOrNull() is ChapterTextReadException)
+    }
+
+    @Test fun searchAndSpeechUseThePreparedWindowWithoutPreparingOrRetainingDistantChapters() = runBlocking {
+        val paths = (0..5).map { File(root, "raw-$it.txt").apply { writeText("正文 $it") } }
+        val book = book(paths.mapIndexed { index, file -> Chapter(title = "第 $index 章", textPath = file.absolutePath) })
+        val prepared = mutableListOf<Int>()
+        val store = ReaderChapterStore(context, book) { index ->
+            prepared += index
+            PreparedChapter(book.chapters[index], "已准备的 $index")
+        }
+        store.retainWindow(1)
+        store.load(1)
+        assertEquals("已准备的 1", store.readText(1))
+        assertEquals("正文 5", store.readText(5))
+        paths[5].writeText("远章正文已变更")
+        assertEquals("远章正文已变更", store.readText(5))
+        assertEquals(listOf(1), prepared)
+        store.retainWindow(5)
+        assertEquals("正文 1", store.readText(1))
+    }
+
+    @Test fun textReadsPreserveCancellationInsteadOfWrappingItAsDamagedCache() {
+        val chapter = Chapter(title = "可取消章节", textPath = File(root, "cancel.txt").apply {
+            writeText("长正文😀".repeat(10_000))
+        }.absolutePath)
+        var checks = 0
+        val cancellation = CancellationException("stop reading")
+        val failure = runCatching { readChapterText(chapter) { if (++checks == 3) throw cancellation } }.exceptionOrNull()
+        assertSame(cancellation, failure)
+    }
+
+    @Test fun corruptSourceMetadataReportsItsChapterWhilePlainTextRemainsReadable() = runBlocking {
+        val chapter = Chapter(title = "源排版损坏章节", textPath = File(root, "body.txt").apply {
+            writeText("正文缓存仍然完整")
+        }.absolutePath, lazySourcePath = File(root, "source.json").apply { writeText("broken json") }.absolutePath)
+        val store = ReaderChapterStore(context, book(listOf(chapter)))
+        val failure = runCatching { store.load(0) }.exceptionOrNull()
+        assertTrue(failure is ChapterTextReadException)
+        assertEquals(chapter.title, (failure as ChapterTextReadException).chapterTitle)
+        assertNotNull(failure.cause)
+        assertEquals("正文缓存仍然完整", store.readText(0))
     }
 }

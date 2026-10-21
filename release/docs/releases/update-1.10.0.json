@@ -1,0 +1,25 @@
+{
+  "versionCode": 39,
+  "versionName": "1.10.0",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.10.0",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.10.0/ERead-1.10.0-debug.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1RCnGaUVk_T71UZwCIW0btg?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/c9fa57d403d1",
+      "extractionCode": "Rvgp"
+    }
+  ],
+  "changelog": [
+    "阅读、书架与设置切换时复用封面，减少图片闪动。",
+    "正文缓存损坏时明确提示，支持修复后重试。",
+    "优化阅读位置保存、章节准备和朗读切换的稳定性。",
+    "WebDAV 设置显示书籍下载位置，还原书籍信息时显示进度。",
+    "更多功能请自行体验。"
+  ]
+}

@@ -1,14 +1,17 @@
 package com.eyue.reader.ui
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import com.eyue.reader.data.Book
 import com.eyue.reader.data.BookFormat
 import com.eyue.reader.data.Chapter
 import com.eyue.reader.data.LibraryMode
+import com.eyue.reader.data.cloud.CloudOperationProgress
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -117,6 +120,29 @@ class BookshelfBatchBackupRobolectricTest {
         openBatchSelection()
         compose.onNodeWithTag("backup_select_local").performClick()
         compose.onNodeWithTag("shelf_batch_transfer").assertIsNotEnabled()
+    }
+
+    @Test fun restorationProgressStaysBelowItsEntryAndLeavesOtherBookTransfersAvailable() {
+        val progress = mutableStateOf<CloudOperationProgress?>(CloudOperationProgress("已读取 1 / 4 本书籍", .25f))
+        var transferred = 0
+        compose.setContent { MaterialTheme {
+            Bookshelf(listOf(book("local")), "", {}, {}, {}, {}, onCloud = { transferred++ }, onCloudBatch = {},
+                onRestoreCloudBookInfo = {}, restoreProgress = progress.value)
+        } }
+        compose.onNodeWithTag("shelf_restore_cloud_info").assertIsNotEnabled()
+        compose.onNodeWithTag("shelf_restore_progress_percent").assertTextEquals("25%")
+        compose.onNodeWithTag("shelf_restore_progress_bar").assertRangeInfoEquals(ProgressBarRangeInfo(.25f, 0f..1f))
+        val filters = compose.onNodeWithTag("shelf_status_filters").fetchSemanticsNode().boundsInRoot
+        val indicator = compose.onNodeWithTag("shelf_restore_progress").fetchSemanticsNode().boundsInRoot
+        assertTrue("Restore progress must stay below the entry row", indicator.top >= filters.bottom)
+        compose.onNodeWithTag("cloud_book_local").assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(1, transferred) }
+        openBatchSelection()
+        compose.onNodeWithTag("backup_select_local").performClick()
+        compose.onNodeWithTag("shelf_batch_transfer").assertIsEnabled()
+        compose.runOnIdle { progress.value = null }
+        compose.onNodeWithTag("shelf_restore_progress").assertDoesNotExist()
+        compose.onNodeWithTag("shelf_restore_cloud_info").assertIsEnabled()
     }
 
     @Test fun mixedBatchDeletionListsEachLocalSizeAndRequiresCloudMeteredConfirmation() {

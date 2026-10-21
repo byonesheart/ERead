@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -27,12 +28,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.eyue.reader.data.*
 import com.eyue.reader.data.cloud.DEFAULT_WEBDAV_SERVER
+import com.eyue.reader.data.cloud.CloudOperationProgress
 import com.eyue.reader.data.cloud.normalizeWebDavServer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import java.io.File
 
 private enum class SettingsPage(val title: String) {
     SPEECH("朗读引擎"), CLOUD("WebDAV 备份与还原"), CACHE("清理缓存"),
@@ -59,7 +62,8 @@ private enum class SettingsPage(val title: String) {
     onCleanup: ((LibraryCleanupKind, Boolean) -> Unit)? = null, speechCacheRevision: Int = 0,
     meteredNetwork: Boolean = false, onCommonVoiceRoles: () -> Unit = {},
     onEinkMode: (Boolean) -> Unit = {}, onTabletDualPage: (Boolean) -> Unit = {},
-    onCheckUpdate: (suspend () -> AppUpdateResult)? = null) {
+    onCheckUpdate: (suspend () -> AppUpdateResult)? = null,
+    restoreProgress: CloudOperationProgress? = null) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
     val page = pages.lastOrNull()
@@ -136,7 +140,7 @@ private enum class SettingsPage(val title: String) {
                 SettingsPage.CLOUD -> CloudBackupSettings(cloudAccount, cloudConfigured, state.cloudAutoBackup, cloudBusy,
                     cloudTaskLabel, cloudFraction, onSaveCloudAccount, onTestCloudConnection, onCloudAutoBackup,
                     onRestoreCloudBookInfo, onDisconnectCloud, cloudServerUrl, state.cloudAutoBackupMetered,
-                    onCloudAutoBackupMetered, onTestCloudDraftConnection)
+                    onCloudAutoBackupMetered, onTestCloudDraftConnection, restoreProgress)
                 SettingsPage.CACHE -> {
                     SettingsCard {
                         LibraryCleanupKind.entries.forEachIndexed { index, kind ->
@@ -240,8 +244,11 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
     onAutoBackup: (Boolean) -> Unit, onRestore: () -> Unit, onDisconnect: () -> Unit,
     serverUrl: String = DEFAULT_WEBDAV_SERVER, autoBackupMetered: Boolean = false,
     onAutoBackupMetered: (Boolean) -> Unit = {},
-    onTestDraftConnection: (suspend (account: String, password: String, server: String) -> String)? = null) {
+    onTestDraftConnection: (suspend (account: String, password: String, server: String) -> String)? = null,
+    restoreProgress: CloudOperationProgress? = null) {
     var accountDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current.applicationContext
+    val downloadDirectory = remember(context) { File(context.filesDir, "books").absolutePath }
     SettingsCard {
         Column(Modifier.fillMaxWidth().padding(16.dp).testTag("cloud_settings"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             OutlinedButton(onClick = { accountDialog = true }, enabled = !busy,
@@ -258,16 +265,39 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
             CloudPreferenceToggle("允许计费网络自动备份", "可能使用移动数据", autoBackupMetered, configured && !busy,
                 "cloud_auto_backup_metered", onAutoBackupMetered)
             HorizontalDivider(color = Line)
-            Button(onClick = onRestore, enabled = configured && !busy, modifier = Modifier.fillMaxWidth().testTag("cloud_restore_info")) {
+            Button(onClick = onRestore, enabled = configured && !busy && restoreProgress == null,
+                modifier = Modifier.fillMaxWidth().testTag("cloud_restore_info")) {
                 Text("手动还原书籍信息")
             }
+            restoreProgress?.let { CloudRestoreProgressIndicator(it, "cloud_restore_progress") }
             Text("先还原书架、分组及阅读记录，再点击书籍云图标下载正文。", style = MaterialTheme.typography.bodySmall, color = Muted)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("云端书籍下载位置", fontSize = 14.sp)
+                SelectionContainer {
+                    Text(downloadDirectory, style = MaterialTheme.typography.bodySmall, color = Muted,
+                        modifier = Modifier.fillMaxWidth().testTag("cloud_download_directory"))
+                }
+                Text("应用内部存储，按书籍分别保存。", style = MaterialTheme.typography.bodySmall, color = Muted)
+            }
             if (configured) TextButton(onClick = onDisconnect, enabled = !busy, modifier = Modifier.align(Alignment.End).testTag("cloud_disconnect")) {
                 Text("解绑此账号")
             }
         }
     }
     if (accountDialog) CloudAccountDialog(account, serverUrl, configured, busy, onSave, onTestDraftConnection, onTest) { accountDialog = false }
+}
+
+@Composable internal fun CloudRestoreProgressIndicator(progress: CloudOperationProgress, tag: String, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxWidth().testTag(tag), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(progress.stage, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = Muted)
+            progress.fraction?.let { Text("${(it.coerceIn(0f, 1f) * 100).toInt()}%", style = MaterialTheme.typography.bodySmall,
+                color = Muted, modifier = Modifier.padding(start = 8.dp).testTag("${tag}_percent")) }
+        }
+        val bar = Modifier.fillMaxWidth().height(3.dp).testTag("${tag}_bar")
+        if (progress.fraction == null) LinearProgressIndicator(modifier = bar, color = Olive, trackColor = Line)
+        else LinearProgressIndicator(progress = { progress.fraction.coerceIn(0f, 1f) }, modifier = bar, color = Olive, trackColor = Line)
+    }
 }
 
 @Composable private fun CloudPreferenceToggle(title: String, detail: String, checked: Boolean, enabled: Boolean, tag: String,

@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "ERead"
 include(":app")
+include(":benchmark")

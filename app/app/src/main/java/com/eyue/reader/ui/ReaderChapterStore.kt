@@ -5,8 +5,13 @@ import android.util.AtomicFile
 import com.eyue.reader.data.Book
 import com.eyue.reader.data.Chapter
 import com.eyue.reader.data.PreparedChapter
+import com.eyue.reader.data.ChapterTextReadException
+import com.eyue.reader.data.countChapterText
 import com.eyue.reader.data.loadChapterContent
+import com.eyue.reader.data.readChapterPageText
+import com.eyue.reader.data.readChapterText
 import com.eyue.reader.data.readerSourceStyles
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -37,9 +42,28 @@ internal class ReaderChapterStore(private val context: Context, private val book
         cache.keys.retainAll(requireNotNull(window).toSet())
     }
 
+    /** Search and speech share the prepared window, but never prepare or retain distant styles. */
+    suspend fun readText(index: Int): String = locks[index].withLock {
+        currentCoroutineContext().ensureActive()
+        cache[index]?.text ?: withContext(Dispatchers.IO) {
+            val work = currentCoroutineContext()
+            readChapterText(book, index) { work.ensureActive() }
+        }
+    }
+
+    /** An absent OCR source is valid; an existing OCR reference that cannot be read is an error. */
+    suspend fun readPageText(chapterIndex: Int, pageIndex: Int): String = withContext(Dispatchers.IO) {
+        val work = currentCoroutineContext()
+        readChapterPageText(book.chapters[chapterIndex], pageIndex) { work.ensureActive() }
+    }
+
     suspend fun load(index: Int): ReaderLoadedChapter = locks[index].withLock {
+        currentCoroutineContext().ensureActive()
         cache[index]?.let { return@withLock it }
-        val prepared = read(index)
+        val prepared = try { read(index) }
+        catch (error: CancellationException) { throw error }
+        catch (error: ChapterTextReadException) { throw error }
+        catch (error: Exception) { throw ChapterTextReadException(book.chapters[index].title, error) }
         val result = withContext(Dispatchers.Default) {
             val work = currentCoroutineContext()
             ReaderLoadedChapter(prepared.chapter, prepared.text,
@@ -55,6 +79,7 @@ internal class ReaderChapterStore(private val context: Context, private val book
 /** Old books get an inexpensive, persistent length catalog without retaining all chapter strings. */
 internal suspend fun readerChapterLengths(context: Context, book: Book): List<Int> = withContext(Dispatchers.IO) {
     if (book.chapters.all { it.characterCount >= 0 }) return@withContext book.chapters.map { it.characterCount }
+    val work = currentCoroutineContext()
     val key = MessageDigest.getInstance("SHA-256").digest(book.id.toByteArray()).joinToString("") { "%02x".format(it) }
     val catalog = AtomicFile(File(context.cacheDir, "reader-chapter-lengths/$key.json"))
     val identities = book.chapters.map { chapter -> chapter.textPath?.let { path ->
@@ -69,21 +94,7 @@ internal suspend fun readerChapterLengths(context: Context, book: Book): List<In
         when {
             chapter.characterCount >= 0 -> chapter.characterCount
             row?.optString("identity") == identities[index] && row.optInt("length", -1) >= 0 -> row.getInt("length")
-            chapter.textPath == null -> 0
-            else -> runCatching { File(chapter.textPath).reader(Charsets.UTF_8).use { input ->
-                val buffer = CharArray(8192)
-                var total = 0
-                while (true) {
-                    currentCoroutineContext().ensureActive()
-                    val size = input.read(buffer)
-                    if (size < 0) break
-                    total += size
-                }
-                total
-            } }.getOrElse { error ->
-                if (error is kotlinx.coroutines.CancellationException) throw error
-                0
-            }
+            else -> countChapterText(chapter) { work.ensureActive() }
         }
     }
     currentCoroutineContext().ensureActive()

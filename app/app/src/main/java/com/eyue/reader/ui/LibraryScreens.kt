@@ -35,6 +35,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.eyue.reader.data.*
+import com.eyue.reader.data.cloud.CloudOperationProgress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
@@ -164,7 +165,8 @@ private const val UNGROUPED_FILTER = "@ungrouped"
     cloudTransfers: Map<String, CloudTransferProgress> = emptyMap(),
     cloudDirtyBookIds: Set<String> = emptySet(),
     pendingImports: List<PendingImport> = listOfNotNull(pending),
-    onRemoveBatch: ((List<Book>, Boolean) -> Unit)? = null) {
+    onRemoveBatch: ((List<Book>, Boolean) -> Unit)? = null,
+    restoreProgress: CloudOperationProgress? = null) {
     fun transfer(book: Book) = cloudTransfers[book.id] ?: if (cloudBookId == book.id)
         CloudTransferProgress(cloudTaskLabel, cloudFraction, cloudCanCancel) else null
     var selectingBackup by remember { mutableStateOf(false) }
@@ -232,7 +234,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                     Icon(Icons.Outlined.Checklist, "批量管理", Modifier.size(20.dp), tint = Muted)
                 }
             }
-            if (onRestoreCloudBookInfo != null) IconButton(enabled = !cloudBusy, onClick = onRestoreCloudBookInfo,
+            if (onRestoreCloudBookInfo != null) IconButton(enabled = !cloudBusy && restoreProgress == null, onClick = onRestoreCloudBookInfo,
                 modifier = Modifier.size(34.dp).testTag("shelf_restore_cloud_info")) {
                 Icon(Icons.Outlined.CloudDownload, "还原书籍信息", Modifier.size(20.dp), tint = Muted)
             }
@@ -249,6 +251,8 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 Icon(if (grid) Icons.Outlined.ViewList else Icons.Outlined.GridView, "切换书架布局", Modifier.size(20.dp), tint = Muted)
             }
         }
+        restoreProgress?.let { CloudRestoreProgressIndicator(it, "shelf_restore_progress",
+            Modifier.padding(start = 24.dp, end = 24.dp, bottom = 12.dp)) }
         if (selectingBackup) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("shelf_backup_actions"), verticalAlignment = Alignment.CenterVertically) {
             val available = displayed.map { it.id }.toSet()
             val selected = books.filter { it.id in backupSelection }
@@ -638,16 +642,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
 @Composable fun BookCover(book: Book, modifier: Modifier = Modifier, onCloud: (() -> Unit)? = null,
     cloudBusy: Boolean = false, cloudInProgress: Boolean = false, cloudTaskLabel: String = "", cloudFraction: Float? = null,
     onCancelCloud: (() -> Unit)? = null, cloudCanCancel: Boolean = false, cloudDirty: Boolean = false) {
-    val bitmap by produceState<android.graphics.Bitmap?>(null, book.coverPath, book.cloudOnly) {
-        value = null
-        value = withContext(Dispatchers.IO) {
-            book.coverPath?.let { path ->
-                BitmapLoader.decodeThumbnail(java.io.File(path))?.let { cover ->
-                    if (book.cloudOnly) try { cloudBookCover(cover) } finally { cover.recycle() } else cover
-                }
-            }
-        }
-    }
+    val bitmap by rememberBookCoverBitmap(book)
     val colors = listOf(Color(0xFF63705D), Color(0xFF7F8972), Color(0xFF6E8290), Color(0xFF9A816A))
     val base = colors[(book.title.hashCode() and Int.MAX_VALUE) % colors.size]
     Box(modifier.clip(RoundedCornerShape(7.dp)).background(base)) {

@@ -158,7 +158,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent() {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 连续阅读仅保留当前及相邻章节，减少跨章阅读的内存累积。\n• 朗读优先播放当前章，后续章节按需加载，缓存标识按章刷新。\n• 阅读进度独立保存，云端记录更新复用未变化的文件摘要。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 修复阅读、书架与设置之间切换时封面闪动。\n• 正文缓存缺失或损坏时明确提示，并可在修复后重试。\n• 改善阅读位置恢复、朗读切换及保存过程的稳定性。\n• WebDAV 设置显示书籍下载位置，还原书籍信息时显示进度。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

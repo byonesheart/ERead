@@ -2,6 +2,26 @@
 
 > 目录迁移说明（2026-10-20）：下文保留各版本验证当时的路径与结果。整理后，Android 工程位于 `app/`，原 `.tools/...` 对应 `app/.tools/...`，原 `artifacts/ERead-*` 发布文件对应 `release/android/ERead-*`，原 `docs/...` 对应 `release/docs/...`。私人测试资料移入 `app/.tools/artifacts/`，其中导入样本位于 `import-fixtures/`。此次目录整理未重新执行下文的测试或设备验证。
 
+## 1.10.0 的变更与验证
+
+日期：2026-10-21。安装包为 `release/android/ERead-1.10.0-debug.apk`，versionCode 39，包名 `com.eyue.reader`，最低 API 26、目标 API 35。大小 30,414,329 字节，SHA-256 为 `43E83FD2A94E0278602624CA280B964BB7BD3C18126F26FD56B522D1390DC57D`。签名校验通过，证书与旧版一致，可覆盖安装。
+
+最终 `testDebugUnitTest`、`assembleDebug`、`assembleDebugAndroidTest`、`lintDebug`、`:app:assembleBenchmark`、`:benchmark:assembleBenchmark` 全部通过，日志 `app/.tools/build-1.10.0-final-6.log`，`BUILD SUCCESSFUL in 5m 38s`。1008 项 JVM / Robolectric 测试、135 个类，0 失败、0 错误、0 跳过；本次生成的 debug lint 报告为 0 错误、59 警告、4 信息。阅读页 DEX 静态检查为 367 个寄存器、15,172 条指令、0 类别错误。静态检查不代替设备上的 ART 或实际帧率验证。
+
+阅读首页与书架共用按位图字节限制容量的封面缓存，热切换首帧直接复用图片，文件校验、解码及未下载封面的虚化放在后台。实际页面切换回归阻塞后台校验，仍确认封面已显示且未重复解码；同时覆盖并发请求、文件或书籍版本变化、损坏封面恢复、云端与本地图差异以及淘汰后不回收仍在绘制的位图。Windows Robolectric 的区域解码器不提供真实像素，像素回归沿用已有测试的 shadow 使其回退到真实 BitmapFactory，保留精确颜色及失效断言，未替换生产解码器。
+
+保存去抖、串行提交、结构基线与退出 flush 收拢到 `LibrarySaveCoordinator`；正文准备、搜索与朗读通过 `ReaderChapterStore` 和严格 UTF-8 访问入口，明确区分合法空章、缺失引用及损坏正文。`ReaderSpeechSession` 负责准备、取消和引擎切换，`ReaderLayoutSession` 负责布局阶段和过期结果保护。回归包括初次失败后重试、目录选择同一故障章重试、远章搜索失败、PDF 缓存变更后朗读保留原错误、旧加载结果不能改写新位置，以及书末快进保留暂停节点。既有记笔记不中断朗读、引擎切换、CSS 与模式切换及按章页码回归全部通过。
+
+WebDAV 设置显示设备实际的应用内部 `files/books` 下载根目录，可选择复制。设置和书架共用还原书籍信息的进度状态，未知总量时显示不定条，逐本处理后显示真实完成数量及比例，匹配和保存阶段分别显示。回归核对空云端目录、缺失书籍清单、失败、完成及过期回调，确认还原期间其他书籍上传仍可使用，不占用上传槽位。
+
+核对 `ReaderBookPageIndex` 工厂没有生产调用方，保留历史实现和测试，没有重新接入全书页数统计。独立 Macrobenchmark 工程覆盖冷启动 TTID、三页热切换、打开示例书和滚动，目标 APK 包名为 `com.eyue.reader.benchmark`，非 debuggable 且允许 shell profiling；测试驱动为 `com.eyue.reader.macrobenchmark`，最低 API 34，两个 APK 均编译通过。当前没有连接设备，没有生成手机性能基线、TTFD、帧率或内存峰值数据；Room、正式构建 R8 和 Baseline Profiles 没有在此轮启用。
+
+PDF 错误传播的定向 5 项回归通过后重新执行了上述完整测试。另一次运行仅在 Windows 删除测试临时空目录时失败，给该测试清理增加最多 5 次、间隔 50 ms 的重试，仍验证目标位于 build 目录且最终不存在，生产读取逻辑及功能断言保持不变。
+
+作者提供的 MOBI 使用隔离副本完成导入与写回，153 章核对通过，桌面导入约 5,394 ms、写回约 4,254 ms，不代表手机耗时；原文件 SHA-256 保持 `202ABFC82510484F665351DF46EABA9422B404614AE61B47E53049B2B3F551A5`。APK 共 310 个 ZIP 条目，含 13 个法律与许可证资产、5 个 OpenCC 资产，未发现个人书籍、日志文档、签名私钥或嵌入 API 密钥模式。Windows 目录的既有未提交开发内容保留，未纳入本次 Android 修改。
+
+组件边界、缓存取舍和后续设备测量见 [代码职责与性能验证](architecture-1.10.0.md) 及 [Macrobenchmark 说明](../../app/benchmark/README.md)。
+
 ## 1.9.9 的变更与验证
 
 日期：2026-10-20。安装包为 `release/android/ERead-1.9.9-debug.apk`，versionCode 38，包名 `com.eyue.reader`，最低 API 26、目标 API 35。大小 31,539,076 字节，SHA-256 为 `D7A431A5AF26BF43F56586ABED743DAD0EB2FA67878FDE240B5F3553EBA5C56C`。签名校验通过，证书与旧版一致，可覆盖安装。
