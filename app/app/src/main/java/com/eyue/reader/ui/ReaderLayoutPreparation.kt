@@ -50,13 +50,15 @@ internal data class ReaderLayoutSpec(
 
 /** Body viewport is the same measured size as ReaderScreen's reader_body, after its outer gutters. */
 internal fun readerLayoutSpec(settings: ReaderSettings, density: Density, direction: LayoutDirection,
-                              bodyViewport: IntSize): ReaderLayoutSpec {
+                              bodyViewport: IntSize, context: Context): ReaderLayoutSpec {
     val family = readerFontFamily(settings)
+    val calibration = readerFontCalibration(context, settings)
     val workerDensity = Density(density.density, density.fontScale)
     val padding = readerContentPadding(settings)
     return ReaderLayoutSpec(
-        textStyle = TextStyle(fontFamily = family, fontSize = settings.fontSize.sp,
-            lineHeight = (settings.fontSize * settings.lineHeight).sp, letterSpacing = settings.letterSpacing.sp,
+        textStyle = TextStyle(fontFamily = family, fontSize = (settings.fontSize * calibration.sizeScale).sp,
+            lineHeight = (settings.fontSize * settings.lineHeight).sp,
+            letterSpacing = (settings.letterSpacing + settings.fontSize * calibration.trackingEm).sp,
             lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Proportional, LineHeightStyle.Trim.None),
             fontWeight = if (settings.bold) FontWeight.Bold else FontWeight.Normal),
         textWidth = (bodyViewport.width - with(workerDensity) {

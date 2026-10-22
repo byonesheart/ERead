@@ -95,7 +95,7 @@ data class ReaderSettings(
     val backgroundImagePath: String? = null,
     val nightMode: Boolean = false,
     val brightness: Float = -1f,
-    val letterSpacing: Float = 0f,
+    val letterSpacing: Float = .5f,
     val readingMode: ReadingMode = ReadingMode.SCROLL,
     val pageTurnStyle: PageTurnStyle = PageTurnStyle.SLIDE,
     val chineseConversion: ChineseConversion = ChineseConversion.ORIGINAL,

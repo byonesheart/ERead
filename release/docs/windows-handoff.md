@@ -1,6 +1,6 @@
 # E阅 Windows 端开发交接
 
-最近更新：2026-10-22。当前基线：Android **1.10.1 / versionCode 40**。最初功能清单来自 1.9.8，接手前依次阅读 [1.9.9～1.10.0 增量交接](windows-handoff-1.10.0.md) 和 [1.10.1 增量交接](windows-handoff-1.10.1.md)，核对数据访问、缓存、字体、软件主题、朗读与云端界面的变化及验收要求。
+最近更新：2026-10-22。当前基线：Android **1.10.2 / versionCode 41**。最初功能清单来自 1.9.8，接手前依次阅读 [1.9.9～1.10.0 增量交接](windows-handoff-1.10.0.md)、[1.10.1 增量交接](windows-handoff-1.10.1.md) 和 [1.10.2 增量交接](windows-handoff-1.10.2.md)，核对数据访问、缓存、字体、软件主题、注释、朗读与云端界面的变化及验收要求。本次验证及发布状态以 [验证记录](verification.md) 为准。
 
 本文供新对话独立接手。项目分为 `app/`、`windows/`、`release/` 三个目录；本地 `windows/` 已有 Kotlin／Compose Desktop 开发内容及未提交工作，不能覆盖或当作已完成验收。下文明确区分现有行为、兼容要求和建议路线。除特别说明外，路径均相对仓库根目录。
 
@@ -8,9 +8,9 @@
 
 - 本地项目：`D:/Project/E阅`。
 - GitHub：[byonesheart/ERead](https://github.com/byonesheart/ERead)，公开发布分支为 `main`。本地工作分支应以 `git status` 为准，不要为阅读本文切换或重置已有 Windows 工作。
-- Android 1.10.1 源码及发布标签：`v1.10.1`，具体功能提交以该标签为准。
+- Android 1.10.2 的本次发布标签为 `v1.10.2`；是否已创建标签及发布，以验证记录为准。
 - Android 更新入口为根目录 `update.json`，`release/update.json` 保持相同内容；文档提交不改变软件功能标签。
-- 安装包发布入口：[1.10.1 Release](https://github.com/byonesheart/ERead/releases/tag/v1.10.1)。这是 Android APK，不是 Windows 安装包。
+- 安装包发布入口：[1.10.2 Release](https://github.com/byonesheart/ERead/releases/tag/v1.10.2)。这是 Android APK 的发布入口，不是 Windows 安装包；链接列出不代表本次已发布。
 - Android Gradle 工程根目录为 `app/`，其中 `:app` 应用模块位于 `app/app/`。Kotlin 2.1.21、Java 17、AGP 8.9.2、Jetpack Compose，最低 Android API 26、目标／编译 API 35。
 - Windows 工程统一放入 `windows/`；两端的安装包、说明、更新清单和共用图片放入 `release/`。
 

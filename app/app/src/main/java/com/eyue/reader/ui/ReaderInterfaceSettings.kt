@@ -1,5 +1,7 @@
 package com.eyue.reader.ui
 
+import com.eyue.reader.ui.AppIcon as Icon
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll

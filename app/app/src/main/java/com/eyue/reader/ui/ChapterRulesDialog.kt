@@ -1,5 +1,7 @@
 package com.eyue.reader.ui
 
+import com.eyue.reader.ui.AppIcon as Icon
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn

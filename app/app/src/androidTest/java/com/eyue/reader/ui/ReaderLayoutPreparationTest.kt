@@ -67,7 +67,7 @@ class ReaderLayoutPreparationTest {
         compose.runOnIdle {
             assertTrue(safeArea.width > 0 && safeArea.height > 0)
             assertEquals(body, readerBodyViewport(density, safeArea))
-            val spec = readerLayoutSpec(ReaderSettings(), density, LayoutDirection.Rtl, body)
+            val spec = readerLayoutSpec(ReaderSettings(), density, LayoutDirection.Rtl, body, context)
             assertEquals(content.width, spec.textWidth)
             assertEquals(content.height, spec.textHeight)
             assertEquals(LayoutDirection.Rtl, spec.layoutDirection)
@@ -94,7 +94,7 @@ class ReaderLayoutPreparationTest {
         val settings = ReaderSettings(fontSize = 18f, lineHeight = 1.7f, letterSpacing = .2f)
         val density = Density(2.8125f, 1.23f)
         val spec = readerLayoutSpec(settings, density, LayoutDirection.Rtl,
-            readerBodyViewport(density, IntSize(700, 1100)))
+            readerBodyViewport(density, IntSize(700, 1100)), context)
         val firstProgress = mutableListOf<Float>()
         prepaginateBook(context, book, settings, spec) { firstProgress += it }
         assertEquals(0f, firstProgress.first())

@@ -28,7 +28,7 @@ import org.robolectric.annotation.GraphicsMode
 class ReaderParagraphSpacingRobolectricTest {
     private val density = Density(1f, 1f)
     private val spec = readerLayoutSpec(ReaderSettings(fontName = "系统黑体", fontSize = 20f, lineHeight = 2f),
-        density, LayoutDirection.Ltr, IntSize(320, 640))
+        density, LayoutDirection.Ltr, IntSize(320, 640), RuntimeEnvironment.getApplication())
 
     @Test fun customParagraphSpacingChangesOnlyTheExtraParagraphHeight() {
         val text = AnnotatedString("First paragraph.\nSecond paragraph.")

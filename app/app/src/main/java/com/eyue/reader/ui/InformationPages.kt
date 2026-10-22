@@ -1,5 +1,7 @@
 package com.eyue.reader.ui
 
+import com.eyue.reader.ui.AppIcon as Icon
+
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -159,7 +161,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent() {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 内置独立宋体与黑体，修复切换字体时的显示问题。\n• 新增经典／像素软件主题，与阅读配置独立保存。\n• 启动时静默检查更新，设置红点提示，可从关于页直接下载。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 放宽默认字距，校正内置字体与系统字体的显示大小和字缝。\n• 像素主题同步使用像素图标，适配深色与墨水屏。\n• 改善 TXT／EPUB／MOBI 原书注释识别与点击查看。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

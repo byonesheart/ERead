@@ -1,5 +1,7 @@
 package com.eyue.reader.ui
 
+import com.eyue.reader.ui.AppIcon as Icon
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*

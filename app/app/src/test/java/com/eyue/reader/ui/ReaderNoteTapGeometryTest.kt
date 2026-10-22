@@ -29,7 +29,7 @@ import org.robolectric.annotation.GraphicsMode
 class ReaderNoteTapGeometryTest {
     private val density = Density(1f, 1f)
     private val style = readerLayoutSpec(ReaderSettings(fontName = "系统黑体", fontSize = 20f),
-        density, LayoutDirection.Ltr, IntSize(320, 640)).textStyle
+        density, LayoutDirection.Ltr, IntSize(320, 640), RuntimeEnvironment.getApplication()).textStyle
 
     @Test fun aTappedGlyphOnBothSidesOfItsCenterResolvesToTheSameSourceOffset() {
         val source = "First body.\nA note starts here."

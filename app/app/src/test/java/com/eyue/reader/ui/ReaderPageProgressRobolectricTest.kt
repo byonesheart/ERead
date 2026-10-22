@@ -126,7 +126,7 @@ class ReaderPageProgressRobolectricTest {
     }
 
     private fun spec(settings: ReaderSettings, height: Int = 360) =
-        readerLayoutSpec(settings, density, LayoutDirection.Ltr, IntSize(320, height))
+        readerLayoutSpec(settings, density, LayoutDirection.Ltr, IntSize(320, height), context)
 
     private fun book(vararg texts: String) = Book(title = "Screen pages", format = BookFormat.MOBI,
         mode = LibraryMode.NOVEL, chapters = texts.mapIndexed { index, text -> Chapter(title = "Chapter $index",

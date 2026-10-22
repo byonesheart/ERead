@@ -27,12 +27,12 @@ internal object HtmlChapterParser {
         val prefix = "\uE000${UUID.randomUUID()}_"
         val paths = mutableListOf<String>()
         val references = sourceNoteReferences(html, checkActive)
-        val targets = sourceLocalNoteTargets(html, references, checkActive) + noteTargets
+        val targets = sourceLocalNoteTargets(html, references.filter { it.target !in noteTargets }, checkActive) + noteTargets
         val bodies = mutableMapOf<String, String>()
         val notes = references.mapNotNull { reference ->
             targets[reference.target]?.let { body ->
                 val content = bodies.getOrPut(reference.target) {
-                    normalizeHtmlText(Html.fromHtml(hideHtmlContent(removeHtmlComments(removeNoteBacklinks(body)), false, checkActive),
+                    normalizeHtmlText(Html.fromHtml(hideHtmlContent(removeHtmlComments(removeNoteBacklinks(body, reference.label)), false, checkActive),
                         Html.FROM_HTML_SEPARATOR_LINE_BREAK_PARAGRAPH or Html.FROM_HTML_SEPARATOR_LINE_BREAK_DIV).toString(), intArrayOf(), checkActive).text
                 }
                 content.takeIf(String::isNotBlank)?.let { reference to it }

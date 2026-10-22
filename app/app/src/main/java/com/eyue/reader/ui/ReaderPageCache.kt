@@ -28,7 +28,7 @@ import java.security.MessageDigest
 private const val CACHE_MAGIC = 0x45525043
 private const val CACHE_FORMAT = 1
 // Bump when page boundaries or inline-image placement rules change.
-private const val PAGINATION_ALGORITHM_VERSION = 10
+private const val PAGINATION_ALGORITHM_VERSION = 11
 private const val MAX_CACHE_PAGES = 200_000
 private const val MAX_CACHE_BYTES = 4L * 1024 * 1024
 private const val MAX_BOOK_LAYOUTS = 3
@@ -105,6 +105,7 @@ internal suspend fun readerCachedChapterPages(
 
 internal fun readerLayoutPlatform(context: Context, settings: ReaderSettings): String {
     val configuration = context.resources.configuration
+    val calibration = readerFontCalibration(context, settings)
     val systemFont = if (settings.fontPath == null) {
         val family = readerBundledFontResource(settings)?.let(context.resources::getFont)
             ?: if (settings.fontName == "等宽字体") Typeface.MONOSPACE else Typeface.DEFAULT
@@ -117,7 +118,8 @@ internal fun readerLayoutPlatform(context: Context, settings: ReaderSettings): S
             paint.measureText("山水故事阅读 ABCabc 0123456789").toBits()
     } else ""
     return "${Build.FINGERPRINT}:${Build.VERSION.SDK_INT}:${configuration.locales.toLanguageTags()}:" +
-        (if (Build.VERSION.SDK_INT >= 31) configuration.fontWeightAdjustment else 0) + ":$systemFont"
+        (if (Build.VERSION.SDK_INT >= 31) configuration.fontWeightAdjustment else 0) +
+        ":$systemFont:${calibration.sizeScale.toBits()}:${calibration.trackingEm.toBits()}"
 }
 
 /** Hash text in bounded UTF-16 chunks rather than allocating an entire encoded novel. */

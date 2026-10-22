@@ -1,5 +1,7 @@
 package com.eyue.reader.ui
 
+import com.eyue.reader.ui.AppIcon as Icon
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background

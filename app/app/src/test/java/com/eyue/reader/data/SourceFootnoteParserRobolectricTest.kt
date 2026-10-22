@@ -10,6 +10,38 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
 class SourceFootnoteParserRobolectricTest {
+    @Test fun calibreNumericBacklinksAreNotNotesAndPopupOmitsTheReturnNumber() {
+        val html = "<body><p>正文<a id='filepos100'></a><sup><small><a href='part.html#filepos900'>" +
+            "<span><span>[1]</span></span></a></small></sup>后文。</p>" +
+            "<p>另一处<sup><small><a href='part.html#filepos950'>[2]</a></small></sup><a id='filepos200'></a></p><hr/>" +
+            "<p id='filepos900'><a href='part.html#filepos100'><span>[1]</span></a><span> 第一条原书注释。</span></p>" +
+            "<p id='filepos950'><a href='part.html#filepos200'>[2]</a><span> 第二条原书注释。</span></p></body>"
+        val references = sourceNoteReferences(html)
+        assertEquals(listOf("[1]", "[2]"), references.map { it.label })
+        val targets = sourceNoteTargets(html, references.associate { it.target to sourceNoteFragment(it.href!!)!! })
+        val plain = HtmlChapterParser.readPlainWithNotes("回", html, noteTargets = targets) { null }
+        val styled = HtmlChapterParser.readWithNotes("回", html, "span{font-size:90%}", noteTargets = targets) { null }
+        val canonical = normalizeHtmlText(Html.fromHtml(html, Html.FROM_HTML_SEPARATOR_LINE_BREAK_PARAGRAPH or
+            Html.FROM_HTML_SEPARATOR_LINE_BREAK_DIV).toString(), intArrayOf()).text
+        assertEquals(canonical, plain.text)
+        assertEquals(plain.text, styled.text)
+        assertEquals(plain.sourceFootnotes, styled.sourceFootnotes)
+        assertEquals(listOf("第一条原书注释。", "第二条原书注释。"), plain.sourceFootnotes.map { it.content })
+        assertTrue(plain.sourceFootnotes.all { plain.text.substring(it.start, it.end) == it.label })
+    }
+
+    @Test fun nativeMobiNumberedReturnLinksDoNotBecomeAdditionalFootnotes() {
+        val html = "<p>正文<sup><small><a filepos='900'><font size='2'>[1]</font></a></small></sup>" +
+            "后文<sup><small><a filepos='950'>[2]</a></small></sup>。</p><hr/>" +
+            "<p><a filepos='100'>[1]</a><font size='2'> 第一条释文。</font></p>" +
+            "<p><a filepos='200'>[2]</a><font size='2'> 第二条释文。</font></p>"
+        assertEquals(listOf("filepos:900", "filepos:950"), sourceNoteReferences(html).map { it.target })
+        val parsed = HtmlChapterParser.readPlainWithNotes("回", html, noteTargets = mapOf(
+            "filepos:900" to "<a filepos='100'>[1]</a><font size='2'> 第一条释文。</font>",
+            "filepos:950" to "<a filepos='200'>[2]</a><font size='2'> 第二条释文。</font>")) { null }
+        assertEquals(listOf("第一条释文。", "第二条释文。"), parsed.sourceFootnotes.map { it.content })
+    }
+
     @Test fun bothCssProjectionsShareCanonicalTextImagesAndFootnoteOffsets() {
         val html = "<body><h1>标题🙂</h1><p class='body'>甲<a role='doc-noteref' href='#fn1'>[1]</a>" +
             "<strong>乙</strong><img src='body.png'/></p><p class='body'>丙</p><aside id='fn1'>解释</aside></body>"

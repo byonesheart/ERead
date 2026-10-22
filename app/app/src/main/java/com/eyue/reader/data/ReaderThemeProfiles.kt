@@ -9,7 +9,7 @@ data class ReaderAppearance(
     val fontSize: Float = 19f,
     val lineHeight: Float = 1.85f,
     val paragraphSpacing: Float = .8f,
-    val letterSpacing: Float = 0f,
+    val letterSpacing: Float = .5f,
     val fontName: String = "跟随系统",
     val fontPath: String? = null,
     val bold: Boolean = false,

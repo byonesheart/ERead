@@ -238,13 +238,64 @@ class LazyChapterContentRobolectricTest {
         val book = Book(title = "旧注释", format = BookFormat.EPUB, mode = LibraryMode.NOVEL, chapters = listOf(chapter))
         val first = loadChapterContent(context, book, 0)
         val metadata = File("${chapter.lazySourcePath}.prepared.json")
-        metadata.writeText(JSONObject(metadata.readText()).apply { remove("sourceFootnotesVersion"); remove("sourceFootnotes") }.toString())
+        metadata.writeText(JSONObject(metadata.readText()).put("sourceFootnotesVersion", 1).apply { remove("sourceFootnotes") }.toString())
         val upgraded = loadChapterContent(context, book, 0)
         assertEquals(first, upgraded)
         assertEquals("本章注释", upgraded.chapter.sourceFootnotes.single().content)
-        assertEquals(1, JSONObject(metadata.readText()).getInt("sourceFootnotesVersion"))
+        assertEquals(2, JSONObject(metadata.readText()).getInt("sourceFootnotesVersion"))
         assertTrue(File(chapter.lazySourcePath!!).delete())
         assertEquals(upgraded, loadChapterContent(context, book, 0))
+    }
+
+    @Test fun olderTxtChaptersGainSourceNotesWithoutRewritingTheirTextOrLibraryMetadata() = runBlocking {
+        val text = "第一回\n正文[1]后文。\n\n[1] 原书释文。"
+        val source = File(root, "old-txt.txt").apply { writeText(text) }
+        val chapter = Chapter(title = "第一回", textPath = source.absolutePath, characterCount = text.length)
+        val book = Book(title = "旧TXT", format = BookFormat.TXT, mode = LibraryMode.NOVEL,
+            chapters = listOf(chapter), characterOffset = text.indexOf("后文"))
+        val prepared = loadChapterContent(context, book, 0)
+        assertEquals(text, prepared.text)
+        assertEquals(text, source.readText())
+        assertEquals(chapter.id, prepared.chapter.id)
+        assertEquals(chapter.textPath, prepared.chapter.textPath)
+        assertEquals("原书释文。", prepared.chapter.sourceFootnotes.single().content)
+        assertTrue(book.chapters.single().sourceFootnotes.isEmpty())
+        assertEquals(text.indexOf("后文"), book.characterOffset)
+    }
+
+    @Test fun oldEpubManifestWithoutNoteTargetsRecoversOnlyReciprocalChapterLocalNotes() = runBlocking {
+        val html = "<p>正文<sup><small><a href='part.html#filepos900'>[1]</a></small></sup><a id='filepos100'></a>后文。</p>" +
+            "<p id='filepos900'><a href='part.html#filepos100'>[1]</a> 本章释文。</p>"
+        assertOldManifestNotes(BookFormat.EPUB, html)
+        val unrelated = "<p id='ref'>正文<a href='notes.html#fn1'>[1]</a></p>" +
+            "<aside id='fn1'><a href='other.html#ref'>[1]</a> 不同文档的同名锚点。</aside>"
+        assertTrue(HtmlChapterParser.readPlain("正文", unrelated) { null }.sourceFootnotes.isEmpty())
+    }
+
+    @Test fun oldMobiManifestWithoutNoteTargetsRecoversNativeChapterLocalReturnPairs() = runBlocking {
+        val html = "<p>正文<sup><small><a filepos='900'>[1]</a></small></sup>后文。</p>" +
+            "<p><a filepos='100'>[1]</a> 本章释文。</p>"
+        assertOldManifestNotes(BookFormat.MOBI, html)
+    }
+
+    private suspend fun assertOldManifestNotes(format: BookFormat, html: String) {
+        val plain = HtmlChapterParser.readPlain("正文", html) { null }
+        val chapter = saveLazyChapter(root, 0, plain, html, "", emptyMap()).copy(sourceFootnotes = emptyList())
+        val source = File(chapter.lazySourcePath!!)
+        source.writeText(JSONObject(source.readText()).put("version", 1).apply { remove("noteTargets") }.toString())
+        val textFile = File(chapter.textPath!!)
+        val originalBytes = textFile.readBytes()
+        val book = Book(title = "旧缓存", format = format, mode = LibraryMode.NOVEL, chapters = listOf(chapter),
+            characterOffset = plain.text.indexOf("后文"))
+        val prepared = loadChapterContent(context, book, 0)
+        assertEquals("本章释文。", prepared.chapter.sourceFootnotes.single().content)
+        assertEquals("[1]", prepared.chapter.sourceFootnotes.single().let { prepared.text.substring(it.start, it.end) })
+        assertArrayEquals(originalBytes, textFile.readBytes())
+        assertEquals(chapter.id, prepared.chapter.id)
+        assertEquals(chapter.textPath, prepared.chapter.textPath)
+        assertTrue(book.chapters.single().sourceFootnotes.isEmpty())
+        assertTrue(source.delete())
+        assertEquals(prepared, loadChapterContent(context, book, 0))
     }
 
     @Test fun footnoteProjectionKeepsTextAndZeroWidthImageReferencesAtCanonicalOffsets() {

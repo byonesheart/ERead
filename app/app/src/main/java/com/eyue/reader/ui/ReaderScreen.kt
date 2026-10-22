@@ -1,5 +1,7 @@
 package com.eyue.reader.ui
 
+import com.eyue.reader.ui.AppIcon as Icon
+
 import android.app.Activity
 import android.content.*
 import android.os.BatteryManager
@@ -258,7 +260,7 @@ internal fun ReaderScreen(
     val layoutSpec = remember(settings.fontPath, settings.fontName, settings.fontSize, settings.bold,
         settings.lineHeight, settings.letterSpacing, density, layoutDirection, pageViewport,
         settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom) {
-        readerLayoutSpec(settings, density, layoutDirection, pageViewport)
+        readerLayoutSpec(settings, density, layoutDirection, pageViewport, context)
     }
     val colors = MaterialTheme.colorScheme
     val background = if (einkMode) { if (settings.nightMode) Color.Black else Color.White }
@@ -288,7 +290,7 @@ internal fun ReaderScreen(
         LocalWindowInfo.current.containerSize, density)
     val requestedSpec = remember(layoutSpec, requestedDualPage, viewport) {
         if (requestedDualPage == dualPage) layoutSpec else readerLayoutSpec(requestedSettings, density, layoutDirection,
-            readerPageViewport(viewport, requestedDualPage, density))
+            readerPageViewport(viewport, requestedDualPage, density), context)
     }
     val requestedLayoutKey = layoutKey(requestedSettings.readingMode, requestedSpec)
     val chapter = book.chapters.getOrNull(chapterIndex)

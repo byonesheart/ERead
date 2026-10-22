@@ -24,6 +24,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.eyue.reader.data.ReaderSettings
 import org.junit.Assert.assertEquals
@@ -46,7 +48,7 @@ class ReaderLineHeightTest {
         assertEquals(text, blocks.joinToString("") { text.substring(it.start, it.end) })
         val density = Density(1f, 1f)
         val spec = readerLayoutSpec(ReaderSettings(fontName = "系统黑体", fontSize = 20f, lineHeight = 2f),
-            density, LayoutDirection.Ltr, IntSize(320, 640))
+            density, LayoutDirection.Ltr, IntSize(320, 640), ApplicationProvider.getApplicationContext<Context>())
         val source = ReaderSourceStyles(text, emptyList())
         val uninterrupted = "长路上的清风缓缓经过树林，枝叶在日光中轻轻摇动。".repeat(100)
         val artificial = readerScrollBlocks(uninterrupted, emptyList())

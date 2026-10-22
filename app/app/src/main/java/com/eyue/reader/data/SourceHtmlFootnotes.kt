@@ -26,7 +26,7 @@ internal fun sourceNoteFragment(href: String): String? = href.substringAfter('#'
 /** Candidate references only; normal navigation links never become notes merely because they have a target. */
 internal fun sourceNoteReferences(html: String, checkActive: () -> Unit = {}): List<SourceNoteReference> {
     val scanned = hideHtmlContent(maskHtmlComments(html), true, checkActive)
-    return sourceHtmlElements(scanned, setOf("a"), checkActive).mapNotNull { link ->
+    val references = sourceHtmlElements(scanned, setOf("a"), checkActive).mapNotNull { link ->
         val attributes = link.tag.attributes
         val href = sourceHtmlAttribute(attributes, "href")?.replace("&amp;", "&")
         val position = sourceHtmlAttribute(attributes, "filepos")?.toIntOrNull()?.takeIf { it >= 0 }
@@ -50,6 +50,34 @@ internal fun sourceNoteReferences(html: String, checkActive: () -> Unit = {}): L
             return@mapNotNull null
         val target = if (href != null && fragment != null) href else if (position != null) "filepos:$position" else return@mapNotNull null
         SourceNoteReference(link.tag, link.contentEnd, link.end, label, target, href, position)
+    }
+    if (references.map { it.label }.distinct().size == references.size) return references
+    // Calibre uses the same [n] label for both the body reference and the return link at the
+    // start of its note paragraph. Generic filepos IDs alone cannot distinguish the two.
+    val blocks = sourceHtmlElements(scanned, noteBlocks, checkActive)
+    val idOffsets = mutableMapOf<String, Int>()
+    sourceHtmlTags(scanned, checkActive).filter { !it.closing }.forEach { tag ->
+        listOfNotNull(sourceHtmlAttribute(tag.attributes, "id"), sourceHtmlAttribute(tag.attributes, "name"))
+            .forEach { idOffsets.putIfAbsent(it, tag.start) }
+    }
+    val previous = mutableMapOf<String, SourceNoteReference>()
+    var blockIndex = 0
+    return references.filter { reference ->
+        while (blockIndex < blocks.size && blocks[blockIndex].end <= reference.tag.start) blockIndex++
+        val block = blocks.getOrNull(blockIndex)?.takeIf { it.tag.end <= reference.tag.start && reference.end <= it.contentEnd }
+        val earlier = previous[reference.label]
+        val returnsToBody = if (block == null || earlier == null) false else {
+            val fragment = reference.href?.let(::sourceNoteFragment)
+            val blockIds = listOfNotNull(sourceHtmlAttribute(block.tag.attributes, "id"), sourceHtmlAttribute(block.tag.attributes, "name"))
+            val reciprocal = earlier.href?.let(::sourceNoteFragment) in blockIds &&
+                fragment?.let { idOffsets[it]?.let { offset -> offset < block.tag.start } } == true
+            val nativePosition = reference.filepos?.let { back -> earlier.filepos?.let { back < it } } == true
+            (reciprocal || nativePosition) &&
+                sourceHtmlPlainText(scanned.substring(block.tag.end, reference.tag.start), checkActive).isBlank() &&
+                sourceHtmlPlainText(scanned.substring(reference.end, block.contentEnd), checkActive).isNotBlank()
+        }
+        if (!returnsToBody) previous[reference.label] = reference
+        !returnsToBody
     }
 }
 
@@ -102,17 +130,66 @@ internal fun sourceNoteTargets(html: String, fragments: Map<String, String>, pos
 }
 
 internal fun sourceLocalNoteTargets(html: String, references: List<SourceNoteReference>,
-                                    checkActive: () -> Unit = {}): Map<String, String> = sourceNoteTargets(html,
-    references.filter { it.href?.startsWith('#') == true }.mapNotNull { ref ->
-        ref.href?.let(::sourceNoteFragment)?.let { ref.target to it }
-    }.toMap(), checkActive = checkActive)
+                                    checkActive: () -> Unit = {}): Map<String, String> {
+    if (references.isEmpty()) return emptyMap()
+    val fragments = references.mapNotNull { ref ->
+        ref.href?.takeIf { !it.substringBefore('#').contains(':') && !it.startsWith("//") }
+            ?.let(::sourceNoteFragment)?.let { ref.target to it }
+    }.toMap()
+    val local = sourceNoteTargets(html, fragments, checkActive = checkActive)
+    val native = references.filter { it.filepos != null }.groupBy { it.label }
+    val qualified = references.filter { it.href?.startsWith('#') == false && it.target in local }
+    val blocks = if (native.isNotEmpty() || qualified.isNotEmpty()) sourceHtmlElements(html, noteBlocks, checkActive) else emptyList()
+    val ids = mutableMapOf<String, Int>()
+    if (qualified.isNotEmpty()) sourceHtmlTags(html, checkActive).filter { !it.closing }.forEach { tag ->
+        listOfNotNull(sourceHtmlAttribute(tag.attributes, "id"), sourceHtmlAttribute(tag.attributes, "name"))
+            .forEach { ids.putIfAbsent(it, tag.start) }
+    }
+    val targets = mutableMapOf<String, String>()
+    references.forEach { reference ->
+        local[reference.target]?.let { body ->
+            // Old manifests did not store cross-document targets. A numbered return link is
+            // sufficient evidence that a qualified href actually targets this chapter's note.
+            val link = leadingNoteReturn(body, reference.label)
+            val backHref = link?.let { sourceHtmlAttribute(it.tag.attributes, "href") }
+            val backOffset = backHref?.let(::sourceNoteFragment)?.let(ids::get)
+            val forwardBlock = if (backOffset == null) null else blocks.firstOrNull {
+                it.tag.end <= reference.tag.start && reference.end <= it.contentEnd && backOffset in it.tag.start until it.end
+            }
+            val sameDocument = backHref?.substringBefore('#')?.let { it.isEmpty() || it == reference.href?.substringBefore('#') } == true
+            if (reference.href?.startsWith('#') == true || forwardBlock != null && sameDocument)
+                targets[reference.target] = body
+        }
+    }
+    if (native.isNotEmpty()) blocks.forEach { block ->
+        if (block.contentEnd - block.tag.end > 256 * 1024) return@forEach
+        val body = html.substring(block.tag.end, block.contentEnd)
+        val link = sourceHtmlElements(body, setOf("a"), checkActive).firstOrNull() ?: return@forEach
+        val label = sourceHtmlPlainText(body.substring(link.tag.end, link.contentEnd), checkActive).trim()
+        val back = sourceHtmlAttribute(link.tag.attributes, "filepos")?.toIntOrNull() ?: return@forEach
+        val reference = native[label]?.lastOrNull { it.tag.start < block.tag.start && back < requireNotNull(it.filepos) }
+            ?: return@forEach
+        if (leadingNoteReturn(body, label) != null) targets.putIfAbsent(reference.target, body)
+    }
+    return targets
+}
 
-internal fun removeNoteBacklinks(html: String): String {
+private fun leadingNoteReturn(html: String, label: String): SourceHtmlElement? =
+    sourceHtmlElements(html, setOf("a")).firstOrNull()?.takeIf { link ->
+        sourceHtmlPlainText(html.substring(0, link.tag.start)).isBlank() &&
+            sourceHtmlPlainText(html.substring(link.tag.end, link.contentEnd)).trim() == label &&
+            (sourceHtmlAttribute(link.tag.attributes, "href")?.contains('#') == true ||
+                sourceHtmlAttribute(link.tag.attributes, "filepos") != null)
+    }
+
+internal fun removeNoteBacklinks(html: String, referenceLabel: String? = null): String {
     val links = sourceHtmlElements(html, setOf("a")).filter { link ->
         val attrs = link.tag.attributes
         val href = sourceHtmlAttribute(attrs, "href").orEmpty()
         val label = sourceHtmlPlainText(html.substring(link.tag.end, link.contentEnd)).trim()
-        isNoteBacklink(attrs, href, label)
+        isNoteBacklink(attrs, href, label) || referenceLabel != null && label == referenceLabel &&
+            (href.isNotEmpty() || sourceHtmlAttribute(attrs, "filepos") != null) &&
+            sourceHtmlPlainText(html.substring(0, link.tag.start)).isBlank()
     }
     if (links.isEmpty()) return html
     return buildString {

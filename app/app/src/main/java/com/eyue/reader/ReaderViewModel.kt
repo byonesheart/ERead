@@ -491,7 +491,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 updateImportProgress(ImportProgress("预排版", book.title, index, novels.size, 0f))
                 try {
                     prepaginateBook(getApplication(), book, settings,
-                        readerLayoutSpec(settings, viewport.density, viewport.direction, viewport.size)) { fraction ->
+                        readerLayoutSpec(settings, viewport.density, viewport.direction, viewport.size, getApplication())) { fraction ->
                         withContext(Dispatchers.Main) {
                             updateImportProgress(ImportProgress("预排版", book.title, index, novels.size, fraction))
                         }

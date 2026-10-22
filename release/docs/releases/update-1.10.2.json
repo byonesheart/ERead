@@ -1,0 +1,24 @@
+{
+  "versionCode": 41,
+  "versionName": "1.10.2",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.10.2",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.10.2/ERead-1.10.2-debug.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1cIYy_On_PhI3qq-zaQEFYA?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/3c8c889ea2af",
+      "extractionCode": "EQdJ"
+    }
+  ],
+  "changelog": [
+    "放宽默认字距，校正内置字体与系统字体的显示大小和字缝。",
+    "像素主题同步使用像素图标，适配深色与墨水屏。",
+    "改善 TXT／EPUB／MOBI 原书注释识别与点击查看。",
+    "更多功能请自行体验。"
+  ]
+}

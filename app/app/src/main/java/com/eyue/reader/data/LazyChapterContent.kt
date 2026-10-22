@@ -22,7 +22,9 @@ suspend fun loadChapterContent(context: Context, book: Book, chapterIndex: Int):
     val sourcePath = chapter.lazySourcePath
     if (sourcePath == null) {
         val job = currentCoroutineContext()
-        return@withContext PreparedChapter(chapter, readChapterText(book, chapterIndex) { job.ensureActive() })
+        val text = readChapterText(book, chapterIndex) { job.ensureActive() }
+        val prepared = if (book.format == BookFormat.TXT) chapter.copy(sourceFootnotes = txtSourceFootnotes(text) { job.ensureActive() }) else chapter
+        return@withContext PreparedChapter(prepared, text)
     }
     val lock = chapterContentLocks[(sourcePath.hashCode() and Int.MAX_VALUE) % chapterContentLocks.size]
     lock.withLock {
@@ -34,7 +36,7 @@ suspend fun loadChapterContent(context: Context, book: Book, chapterIndex: Int):
         val repository = LibraryRepository(context)
         val cached = runCatching {
             val json = JSONObject(metadata.readFully().toString(Charsets.UTF_8))
-            if (json.optString("textSha256") == textHash && json.optInt("sourceFootnotesVersion") == 1 && json.optInt("sourceCssVersion") == 1)
+            if (json.optString("textSha256") == textHash && json.optInt("sourceFootnotesVersion") == 2 && json.optInt("sourceCssVersion") == 1)
                 repository.readChapter(json) else null
         }.getOrNull()?.takeIf { it.id == chapter.id && it.textPath == chapter.textPath && it.title == chapter.title &&
             it.lazySourcePath == sourcePath && it.characterCount == text.length && it.inlineImages == chapter.inlineImages &&
@@ -59,7 +61,7 @@ suspend fun loadChapterContent(context: Context, book: Book, chapterIndex: Int):
             sourceFootnotes = mapCanonicalFootnotes(styled.text, text, styled.sourceFootnotes))
         job.ensureActive()
         writeChapterAtomic(metadata, repository.writeChapter(prepared).put("textSha256", textHash)
-            .put("sourceFootnotesVersion", 1).put("sourceCssVersion", 1).toString())
+            .put("sourceFootnotesVersion", 2).put("sourceCssVersion", 1).toString())
         PreparedChapter(prepared, text)
     }
 }
