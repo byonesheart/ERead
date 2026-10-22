@@ -105,7 +105,8 @@ internal fun openAuthorLink(context: Context, url: String) {
     }
 }
 
-@Composable internal fun AboutIntro(onCheckUpdate: (suspend () -> AppUpdateResult)? = null, onOpenChangelog: () -> Unit = {}) {
+@Composable internal fun AboutIntro(onCheckUpdate: (suspend () -> AppUpdateResult)? = null, onOpenChangelog: () -> Unit = {},
+    availableUpdate: AppUpdateResult? = null) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val client = remember { AppUpdateClient() }
@@ -130,7 +131,7 @@ internal fun openAuthorLink(context: Context, url: String) {
             }
         }
         error?.let { Text("检查失败：$it", color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("settings_update_error")) }
-        result?.let { update ->
+        (result ?: availableUpdate)?.let { update ->
             Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.fillMaxWidth().testTag("settings_update_result")) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -158,7 +159,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent() {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 修复阅读、书架与设置之间切换时封面闪动。\n• 正文缓存缺失或损坏时明确提示，并可在修复后重试。\n• 改善阅读位置恢复、朗读切换及保存过程的稳定性。\n• WebDAV 设置显示书籍下载位置，还原书籍信息时显示进度。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 内置独立宋体与黑体，修复切换字体时的显示问题。\n• 新增经典／像素软件主题，与阅读配置独立保存。\n• 启动时静默检查更新，设置红点提示，可从关于页直接下载。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

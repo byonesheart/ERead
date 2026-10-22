@@ -624,6 +624,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         changed(state.copy(themeMode = theme).withResolvedTheme(systemDark))
     }
 
+    fun setAppTheme(theme: AppThemeStyle) {
+        if (storageReady) changed(state.copy(appTheme = theme))
+    }
+
     fun setEinkMode(enabled: Boolean) {
         if (storageReady) changed(state.copy(einkMode = enabled))
     }

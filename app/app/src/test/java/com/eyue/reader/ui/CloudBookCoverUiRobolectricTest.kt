@@ -7,9 +7,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import com.eyue.reader.data.Book
 import com.eyue.reader.data.BookFormat
@@ -30,20 +33,31 @@ import org.robolectric.annotation.LooperMode
 class CloudBookCoverUiRobolectricTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun gridShowsMissingAuthorAndDownloadLabelOnTheCoverInsteadOfBelowIt() {
+        val book = Book(id = "remote-grid", title = "云端示例", format = BookFormat.EPUB,
+            mode = LibraryMode.NOVEL, author = "  ", cloudOnly = true, chapters = emptyList())
+        compose.setContent { MaterialTheme { Bookshelf(listOf(book), "", {}, {}, {}, {}, onCloud = {}) } }
+        compose.onNodeWithTag("shelf_book_author_remote-grid").assertTextEquals("佚名")
+        compose.onNodeWithTag("cloud_book_pending_remote-grid", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("云端书籍 · 点击云图标下载").assertDoesNotExist()
+    }
+
     @Test fun cloudCoverLeavesTheDownloadActionAvailableAndClearsAfterDownload() {
         val book = mutableStateOf(Book(id = "remote", title = "待下载", format = BookFormat.EPUB,
             mode = LibraryMode.NOVEL, cloudOnly = true, chapters = emptyList()))
         var downloads = 0
         compose.setContent {
-            MaterialTheme { BookCover(book.value, Modifier.width(120.dp).height(180.dp), onCloud = { downloads++ }) }
+            MaterialTheme { BookCover(book.value, Modifier.width(120.dp).height(180.dp), onCloud = { downloads++ }, showDownloadLabel = true) }
         }
         compose.onNodeWithTag("cloud_book_cover_remote").assertIsDisplayed()
+        compose.onNodeWithTag("cloud_book_pending_remote").assertIsDisplayed()
         compose.onNodeWithTag("cloud_book_remote").assertIsDisplayed().assertIsEnabled().performClick()
         compose.runOnIdle {
             assertEquals(1, downloads)
             book.value = book.value.copy(cloudOnly = false)
         }
         compose.onNodeWithTag("cloud_book_cover_remote").assertDoesNotExist()
+        compose.onNodeWithTag("cloud_book_pending_remote").assertDoesNotExist()
         compose.onNodeWithTag("cloud_book_remote").assertIsDisplayed().assertIsEnabled()
     }
 }

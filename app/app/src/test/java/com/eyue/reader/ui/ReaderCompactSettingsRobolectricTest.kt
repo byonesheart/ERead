@@ -112,6 +112,10 @@ class ReaderCompactSettingsRobolectricTest {
     @Test fun readingModesAreImmediatelyAvailableForComicsWithoutOpeningMoreSettings() {
         var settings by mutableStateOf(ReaderSettings())
         compose.setContent { MaterialTheme { ReaderCompactSettings(settings, true, { settings = it }, {}, {}) } }
+        val background = compose.onNodeWithText("背景").fetchSemanticsNode().boundsInRoot
+        val mode = compose.onNodeWithText("模式").fetchSemanticsNode().boundsInRoot
+        val brightness = compose.onNodeWithText("亮度").fetchSemanticsNode().boundsInRoot
+        assertTrue(background.bottom <= mode.top && mode.bottom <= brightness.top)
         compose.onNodeWithTag("reader_mode_paged").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(ReadingMode.PAGED, settings.readingMode) }
         compose.onNodeWithTag("reader_mode_vertical_paged").performClick()
@@ -229,7 +233,7 @@ class ReaderCompactSettingsRobolectricTest {
         compose.onNodeWithTag("reader_new_theme").performScrollTo().performClick()
         compose.onNodeWithContentDescription("阅读字号 增大").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(20f, settings.fontSize) }
-        compose.onNodeWithText("主题", substring = false).performScrollTo()
+        compose.onNodeWithText("配置", substring = false).performScrollTo()
         compose.onNodeWithText("配置2").assertIsDisplayed()
         compose.onNodeWithTag("reader_theme_$firstId").performClick()
         compose.runOnIdle {

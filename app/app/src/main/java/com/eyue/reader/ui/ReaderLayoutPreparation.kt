@@ -3,8 +3,6 @@ package com.eyue.reader.ui
 import android.content.Context
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.Density
@@ -23,7 +21,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
-import java.io.File
 
 internal val ReaderBodyTopPadding = 26.dp
 internal val ReaderBodyBottomPadding = 32.dp
@@ -54,13 +51,7 @@ internal data class ReaderLayoutSpec(
 /** Body viewport is the same measured size as ReaderScreen's reader_body, after its outer gutters. */
 internal fun readerLayoutSpec(settings: ReaderSettings, density: Density, direction: LayoutDirection,
                               bodyViewport: IntSize): ReaderLayoutSpec {
-    val family = settings.fontPath?.let { path -> runCatching { FontFamily(Font(File(path))) }.getOrNull() }
-        ?: when (settings.fontName) {
-            "系统宋体" -> FontFamily.Serif
-            "系统黑体" -> FontFamily.SansSerif
-            "等宽字体" -> FontFamily.Monospace
-            else -> FontFamily.Default
-        }
+    val family = readerFontFamily(settings)
     val workerDensity = Density(density.density, density.fontScale)
     val padding = readerContentPadding(settings)
     return ReaderLayoutSpec(

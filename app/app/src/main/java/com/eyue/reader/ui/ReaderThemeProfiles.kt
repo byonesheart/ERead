@@ -63,7 +63,7 @@ internal fun ReaderThemeProfiles(settings: ReaderSettings, onSettings: (ReaderSe
     editingProfileId: String?, onEditProfile: (String?) -> Unit, onNewProfile: () -> Unit) {
     var deleting by remember { mutableStateOf<ReaderThemeProfile?>(null) }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("主题", Modifier.width(34.dp), fontSize = 12.sp)
+        Text("配置", Modifier.width(34.dp), fontSize = 12.sp)
         LazyRow(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             item {
                 OutlinedButton(onClick = onNewProfile,

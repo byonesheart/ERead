@@ -26,7 +26,7 @@ data class AppUpdateResult(
 
 data class AppUpdateMirror(val name: String, val url: String, val extractionCode: String = "")
 
-/** A manual, anonymous request; no book, device identifier or configured service credentials are sent. */
+/** An anonymous request; no book, device identifier or configured service credentials are sent. */
 class AppUpdateClient(private val client: OkHttpClient = OkHttpClient.Builder()
     .connectTimeout(12, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS)
     .callTimeout(20, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()) {

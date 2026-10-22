@@ -1,6 +1,7 @@
 package com.eyue.reader.data
 
 enum class ThemeMode { LIGHT, DARK, SYSTEM }
+enum class AppThemeStyle { CLASSIC, PIXEL }
 
 fun ThemeMode.isDark(systemDark: Boolean): Boolean = when (this) {
     ThemeMode.LIGHT -> false

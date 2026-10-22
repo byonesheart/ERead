@@ -1,6 +1,6 @@
 # E阅 Windows 端开发交接
 
-最近更新：2026-10-21。当前基线：Android **1.10.0 / versionCode 39**。最初功能清单来自 1.9.8，接手前必须先阅读 [1.9.9～1.10.0 增量交接](windows-handoff-1.10.0.md)，其中列出数据访问、缓存、朗读与云端界面的变化及验收要求。
+最近更新：2026-10-22。当前基线：Android **1.10.1 / versionCode 40**。最初功能清单来自 1.9.8，接手前依次阅读 [1.9.9～1.10.0 增量交接](windows-handoff-1.10.0.md) 和 [1.10.1 增量交接](windows-handoff-1.10.1.md)，核对数据访问、缓存、字体、软件主题、朗读与云端界面的变化及验收要求。
 
 本文供新对话独立接手。项目分为 `app/`、`windows/`、`release/` 三个目录；本地 `windows/` 已有 Kotlin／Compose Desktop 开发内容及未提交工作，不能覆盖或当作已完成验收。下文明确区分现有行为、兼容要求和建议路线。除特别说明外，路径均相对仓库根目录。
 
@@ -8,9 +8,9 @@
 
 - 本地项目：`D:/Project/E阅`。
 - GitHub：[byonesheart/ERead](https://github.com/byonesheart/ERead)，公开发布分支为 `main`。本地工作分支应以 `git status` 为准，不要为阅读本文切换或重置已有 Windows 工作。
-- Android 1.10.0 源码及发布标签：`v1.10.0`，功能提交 `7e8504d3da73d10223702a6c7e32fb755bfa74e3`。
-- 1.10.0 已生效更新清单提交：`59ced0a9ca8059cd143b7081742c05151713f4be`。后续文档提交不改变该软件基线。
-- 已发布安装包：[1.10.0 Release](https://github.com/byonesheart/ERead/releases/tag/v1.10.0)。这是 Android APK，不是 Windows 安装包。
+- Android 1.10.1 源码及发布标签：`v1.10.1`，具体功能提交以该标签为准。
+- Android 更新入口为根目录 `update.json`，`release/update.json` 保持相同内容；文档提交不改变软件功能标签。
+- 安装包发布入口：[1.10.1 Release](https://github.com/byonesheart/ERead/releases/tag/v1.10.1)。这是 Android APK，不是 Windows 安装包。
 - Android Gradle 工程根目录为 `app/`，其中 `:app` 应用模块位于 `app/app/`。Kotlin 2.1.21、Java 17、AGP 8.9.2、Jetpack Compose，最低 Android API 26、目标／编译 API 35。
 - Windows 工程统一放入 `windows/`；两端的安装包、说明、更新清单和共用图片放入 `release/`。
 
@@ -251,7 +251,7 @@ EPUB／MOBI 默认普通正文使用软件排版，标题、引用等特殊内�
 - 编辑／注释：`EbookSourceWritebackRobolectricTest`、`AnnotationRelocationTest`、`ReaderSourceFootnoteRobolectricTest`、`ReaderSearchReplaceRobolectricTest`。
 - 语音／云端：`AiSpeech*`、`ReaderNarrationInteractionRobolectricTest`、`ReaderAudioServiceRobolectricTest`、`CloudArchiveTest`、`CloudBackupServiceRobolectricTest`、`CloudParallelTransfersRobolectricTest`、`CloudRestoreConflictTest`。
 
-Android 1.10.0 基线为 **1008 项测试、135 个类、0 失败／错误／跳过**；安装包、设备测试包、独立 Macrobenchmark 测试包构建及 lint 通过，lint 0 错误。未连接手机，没有真机性能基线，也没有因此验证 Windows 功能。详细记录在 [verification.md](verification.md)。本次仅更新交接文档，没有重跑软件测试。
+Android 1.10.1 基线为 **1027 项测试、140 个类、0 失败／错误／跳过**；安装包、设备测试包构建及 lint 通过，lint 0 错误。独立 Macrobenchmark 工程曾在 1.10.0 编译，本轮没有执行性能测量。未连接手机，也没有因此验证 Windows 功能。详细记录在 [verification.md](verification.md)。
 
 如需确认 Android 未被桌面改动破坏，使用现有脚本：
 
@@ -282,4 +282,4 @@ Set-Location -LiteralPath 'D:/Project/E阅/app'
 
 ## 9. 可直接发给新对话的开场说明
 
-> 请先阅读 `D:/Project/E阅/release/docs/windows-handoff.md` 和 `D:/Project/E阅/release/docs/windows-handoff-1.10.0.md`，以 Android 1.10.0（v1.10.0，功能提交 7e8504d3da73d10223702a6c7e32fb755bfa74e3）为当前功能与数据基线。继续 `D:/Project/E阅/windows/` 的既有开发，先核查 Git 状态并保留未提交工作，沿用 Windows 开发对话中已确定的技术栈和范围。逐项对齐独立进度持久化、当前及相邻章节窗口、懒加载朗读、明确读取错误、布局代次保护、云端还原进度与实际下载目录展示，不能把交接完成当成 Windows 实现已完成。保留按章计页、UTF-16 原文锚点、每书并发与手动保存语义；兼容现有 WebDAV 格式并以 manifest 最新记录为准。保持 Android 与 Windows 更新渠道独立，不提交私人书籍、密钥或 `app/.tools/`。
+> 请先阅读 `D:/Project/E阅/release/docs/windows-handoff.md`、`D:/Project/E阅/release/docs/windows-handoff-1.10.0.md` 和 `D:/Project/E阅/release/docs/windows-handoff-1.10.1.md`，以 Android 1.10.1（v1.10.1）为当前功能与数据基线。继续 `D:/Project/E阅/windows/` 的既有开发，先核查 Git 状态并保留未提交工作，沿用 Windows 开发对话中已确定的技术栈和范围。逐项对齐独立进度持久化、当前及相邻章节窗口、懒加载朗读、明确读取错误、布局代次保护、云端还原进度、实际下载目录、字体资源、软件主题与静默更新检查，不能把交接完成当成 Windows 实现已完成。保留按章计页、UTF-16 原文锚点、每书并发与手动保存语义；兼容现有 WebDAV 格式并以 manifest 最新记录为准。保持 Android 与 Windows 更新渠道独立，不提交私人书籍、密钥或 `app/.tools/`。

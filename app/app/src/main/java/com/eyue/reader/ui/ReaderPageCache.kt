@@ -28,7 +28,7 @@ import java.security.MessageDigest
 private const val CACHE_MAGIC = 0x45525043
 private const val CACHE_FORMAT = 1
 // Bump when page boundaries or inline-image placement rules change.
-private const val PAGINATION_ALGORITHM_VERSION = 9
+private const val PAGINATION_ALGORITHM_VERSION = 10
 private const val MAX_CACHE_PAGES = 200_000
 private const val MAX_CACHE_BYTES = 4L * 1024 * 1024
 private const val MAX_BOOK_LAYOUTS = 3
@@ -106,12 +106,8 @@ internal suspend fun readerCachedChapterPages(
 internal fun readerLayoutPlatform(context: Context, settings: ReaderSettings): String {
     val configuration = context.resources.configuration
     val systemFont = if (settings.fontPath == null) {
-        val family = when (settings.fontName) {
-            "系统宋体" -> Typeface.SERIF
-            "系统黑体" -> Typeface.SANS_SERIF
-            "等宽字体" -> Typeface.MONOSPACE
-            else -> Typeface.DEFAULT
-        }
+        val family = readerBundledFontResource(settings)?.let(context.resources::getFont)
+            ?: if (settings.fontName == "等宽字体") Typeface.MONOSPACE else Typeface.DEFAULT
         val paint = Paint().apply {
             typeface = Typeface.create(family, if (settings.bold) Typeface.BOLD else Typeface.NORMAL)
             textSize = 20f

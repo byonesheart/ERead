@@ -10,6 +10,14 @@ OpenCC 1.1.9 的 STCharacters、STPhrases、TSCharacters、TSPhrases 词库用�
 
 项目：https://github.com/BYVoid/OpenCC
 
+## 内置阅读字体
+
+宋体、黑体使用 Adobe 思源宋体 CN Regular、思源黑体 CN Regular 的官方地区子集，保留原始字体数据、版权及 SIL Open Font License 1.1 许可。用于固定阅读字形，不随手机系统主题更换。字体来源与校验信息见仓库 `release/docs/fonts.md`，原许可证可在软件内离线查看。
+
+思源宋体：https://github.com/adobe-fonts/source-han-serif
+
+思源黑体：https://github.com/adobe-fonts/source-han-sans
+
 ## 界面与 Android 基础组件
 
 AndroidX Activity 1.10.1、Compose UI / Foundation / Runtime 1.8.2、Material 3 1.3.2、Material Icons 1.7.8：用于页面、排版、手势和图标。Compose BOM 2025.05.01 管理对应版本。许可证：Apache-2.0。

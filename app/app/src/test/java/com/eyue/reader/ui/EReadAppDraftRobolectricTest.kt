@@ -159,7 +159,8 @@ class EReadAppDraftRobolectricTest {
             vm = ReaderViewModel(application)
             store.put("reader", vm)
         }
-        compose.setContent { host.set(LocalView.current); EReadApp(vm, emptyFlow()) }
+        val updates = AppUpdateSession(checker = { com.eyue.reader.data.AppUpdateResult(false, "", 0, "", null, "") })
+        compose.setContent { host.set(LocalView.current); EReadApp(vm, emptyFlow(), updates) }
         awaitState(30_000) { !vm.loading }
         compose.onNodeWithText("书架").performClick()
         openFromShelf()

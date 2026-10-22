@@ -1,5 +1,7 @@
 package com.eyue.reader.ui
 
+import androidx.compose.ui.platform.LocalView
+
 import android.app.Application
 import android.content.Context
 import android.content.ContextWrapper
@@ -73,13 +75,40 @@ class EReadAppStartupRobolectricTest {
             vm = ReaderViewModel(application)
             store.put("reader", vm)
         }
-        compose.setContent { EReadApp(vm, emptyFlow()) }
+        val updates = AppUpdateSession(checker = { com.eyue.reader.data.AppUpdateResult(true, "next",
+            com.eyue.reader.BuildConfig.VERSION_CODE + 1, "测试核心更新", null, "https://github.com/byonesheart/ERead/releases") })
+        val host = java.util.concurrent.atomic.AtomicReference<android.view.View>()
+        compose.setContent { host.set(LocalView.current); EReadApp(vm, emptyFlow(), updates) }
         awaitState(30_000) { !vm.loading && vm.state.books.isNotEmpty() }
         val book = compose.runOnIdle {
             assertTrue(vm.readerSettings.showBattery)
             assertTrue(vm.readerSettings.showTime)
             vm.state.books.first { it.mode == LibraryMode.NOVEL }
         }
+        fun capture(name: String) { System.getenv("EREAD_TEST_ARTIFACTS")?.let { directory ->
+            val bitmap = compose.runOnIdle {
+                val view = host.get()
+                android.graphics.Bitmap.createBitmap(view.width, view.height, android.graphics.Bitmap.Config.ARGB_8888)
+                    .also { view.draw(android.graphics.Canvas(it)) }
+            }
+            File(directory).mkdirs()
+            File(directory, "$name.png").outputStream().use {
+                check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it))
+            }
+        } }
+        capture("app-startup-update")
+        compose.onNodeWithTag("settings_update_badge", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("设置").performClick()
+        compose.onNodeWithTag("settings_update_badge", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithTag("settings_about").performScrollTo().performClick()
+        compose.onNodeWithTag("update_github_download").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("settings_back").performClick()
+        compose.onNodeWithText("待更新").assertExists()
+        compose.onNodeWithTag("settings_app_theme").performScrollTo().performClick()
+        compose.onNodeWithTag("app_theme_pixel").performClick().assertIsSelected()
+        compose.runOnIdle { assertEquals(com.eyue.reader.data.AppThemeStyle.PIXEL, vm.state.appTheme) }
+        compose.onNodeWithTag("settings_back").performClick()
+        capture("app-pixel-settings")
         compose.onNodeWithText("书架").performClick()
         compose.onNodeWithTag("bookshelf").assertIsDisplayed()
         awaitState(10_000) {

@@ -48,6 +48,7 @@ class LibraryRepository(private val context: Context) {
                 aiSpeechFallback = json.optBoolean("aiSpeechFallback", false),
                 einkMode = json.optBoolean("einkMode", false),
                 tabletDualPage = json.optBoolean("tabletDualPage", false),
+                appTheme = enumValue(json.optString("appTheme"), AppThemeStyle.CLASSIC),
                 commonVoiceRoles = if (json.has("commonVoiceRoles")) json.array("commonVoiceRoles").objects().map(BookVoiceRole::fromJson)
                     else defaultCommonVoiceRoles()
             )
@@ -74,6 +75,7 @@ class LibraryRepository(private val context: Context) {
             .put("speechEngine", state.speechEngine.name).put("themeMode", state.themeMode.name)
             .put("aiSpeechFallback", state.aiSpeechFallback)
             .put("einkMode", state.einkMode).put("tabletDualPage", state.tabletDualPage)
+            .put("appTheme", state.appTheme.name)
             .put("commonVoiceRoles", JSONArray(state.commonVoiceRoles.map { it.toJson() }))
         val output = stateFile.startWrite()
         try {

@@ -81,6 +81,27 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
             TextButton(onClick = onImportBackground, contentPadding = PaddingValues(horizontal = 4.dp)) { Text("导入图片", fontSize = 12.sp) }
         }
     }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("模式", Modifier.width(34.dp), fontSize = 12.sp)
+        FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            listOf(Triple(ReadingMode.SCROLL, "滚动", Icons.Outlined.UnfoldMore),
+                Triple(ReadingMode.PAGED, "翻页", Icons.Outlined.SwapHoriz),
+                Triple(ReadingMode.VERTICAL_PAGED, "上下", Icons.Outlined.SwapVert)).forEach { (mode, label, icon) ->
+                FilterChip(settings.readingMode == mode, { onSettings(settings.copy(readingMode = mode)) },
+                    { Text(label, fontSize = 12.sp) }, Modifier.height(32.dp).testTag("reader_mode_${mode.name.lowercase()}"),
+                    leadingIcon = { Icon(icon, null, Modifier.size(15.dp)) })
+            }
+        }
+    }
+    if (settings.readingMode == ReadingMode.PAGED) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("翻页", Modifier.width(34.dp), fontSize = 12.sp)
+        FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            listOf(PageTurnStyle.COVER to "覆盖", PageTurnStyle.SLIDE to "滑动", PageTurnStyle.CURL to "仿真").forEach { (style, label) ->
+                FilterChip(settings.pageTurnStyle == style, { onSettings(settings.copy(pageTurnStyle = style)) },
+                    { Text(label, fontSize = 12.sp) }, Modifier.height(32.dp).testTag("reader_turn_${style.name.lowercase()}"))
+            }
+        }
+    }
     ReaderAdjustableSlider("亮度", "阅读亮度", if (settings.brightness < 0f) .5f else settings.brightness, .01f..1f, .01f,
         { onSettings(settings.copy(brightness = it)) },
         { if (settings.brightness < 0f && it == .5f) "自动" else "${(it * 100).roundToInt()}%" }, trailing = {
@@ -125,25 +146,4 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
         { onSettings(settings.copy(marginTop = it)) }, { "${it.roundToInt()}dp" })
     ReaderAdjustableSlider("下距", "阅读下边距", settings.marginBottom, 0f..64f, 1f,
         { onSettings(settings.copy(marginBottom = it)) }, { "${it.roundToInt()}dp" })
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("模式", Modifier.width(34.dp), fontSize = 12.sp)
-        FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf(Triple(ReadingMode.SCROLL, "滚动", Icons.Outlined.UnfoldMore),
-                Triple(ReadingMode.PAGED, "翻页", Icons.Outlined.SwapHoriz),
-                Triple(ReadingMode.VERTICAL_PAGED, "上下", Icons.Outlined.SwapVert)).forEach { (mode, label, icon) ->
-                FilterChip(settings.readingMode == mode, { onSettings(settings.copy(readingMode = mode)) },
-                    { Text(label, fontSize = 12.sp) }, Modifier.height(32.dp).testTag("reader_mode_${mode.name.lowercase()}"),
-                    leadingIcon = { Icon(icon, null, Modifier.size(15.dp)) })
-            }
-        }
-    }
-    if (settings.readingMode == ReadingMode.PAGED) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("翻页", Modifier.width(34.dp), fontSize = 12.sp)
-        FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf(PageTurnStyle.COVER to "覆盖", PageTurnStyle.SLIDE to "滑动", PageTurnStyle.CURL to "仿真").forEach { (style, label) ->
-                FilterChip(settings.pageTurnStyle == style, { onSettings(settings.copy(pageTurnStyle = style)) },
-                    { Text(label, fontSize = 12.sp) }, Modifier.height(32.dp).testTag("reader_turn_${style.name.lowercase()}"))
-            }
-        }
-    }
 }

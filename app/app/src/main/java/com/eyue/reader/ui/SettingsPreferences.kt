@@ -2,10 +2,10 @@ package com.eyue.reader.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -38,6 +38,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 private enum class SettingsPage(val title: String) {
+    APP_THEME("主题"),
     SPEECH("朗读引擎"), CLOUD("WebDAV 备份与还原"), CACHE("清理缓存"),
     FEEDBACK("问题反馈"), SUPPORT("支持作者"), ABOUT("关于"), AUTHOR("作者"),
     PRIVACY("隐私政策"), TERMS("用户协议"), OPEN_SOURCE("开源相关"), CHANGELOG("更新日志")
@@ -63,10 +64,12 @@ private enum class SettingsPage(val title: String) {
     meteredNetwork: Boolean = false, onCommonVoiceRoles: () -> Unit = {},
     onEinkMode: (Boolean) -> Unit = {}, onTabletDualPage: (Boolean) -> Unit = {},
     onCheckUpdate: (suspend () -> AppUpdateResult)? = null,
-    restoreProgress: CloudOperationProgress? = null) {
+    restoreProgress: CloudOperationProgress? = null, onAppTheme: (AppThemeStyle) -> Unit = {},
+    availableUpdate: AppUpdateResult? = null) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
     val page = pages.lastOrNull()
+    val pageScroll = remember(page) { ScrollState(0) }
     val context = LocalContext.current
     val cleanupUsage by produceState<Result<LibraryCleanupUsage>?>(null, state, speechCacheRevision, page == SettingsPage.CACHE) {
         value = if (page != SettingsPage.CACHE) null else try {
@@ -85,7 +88,7 @@ private enum class SettingsPage(val title: String) {
             }
             Text(page.title, style = MaterialTheme.typography.titleMedium)
         }
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(pageScroll).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             when (page) {
                 null -> {
@@ -99,6 +102,9 @@ private enum class SettingsPage(val title: String) {
                                 }
                             }
                         }
+                        SettingsSeparator()
+                        SettingsLink(Icons.Outlined.Palette, "主题", if (state.appTheme == AppThemeStyle.PIXEL) "像素" else "经典",
+                            "settings_app_theme", { open(SettingsPage.APP_THEME) })
                         SettingsSeparator()
                         SettingsToggle("墨水屏模式", "高对比度显示，关闭翻页动画", state.einkMode, onEinkMode, "settings_eink_mode")
                         SettingsSeparator()
@@ -116,9 +122,10 @@ private enum class SettingsPage(val title: String) {
                         SettingsSeparator()
                         SettingsLink(Icons.Outlined.FavoriteBorder, "支持作者", "", "settings_support", { open(SettingsPage.SUPPORT) })
                         SettingsSeparator()
-                        SettingsLink(Icons.Outlined.Info, "关于", "", "settings_about", { open(SettingsPage.ABOUT) })
+                        SettingsLink(Icons.Outlined.Info, "关于", if (availableUpdate?.available == true) "待更新" else "", "settings_about", { open(SettingsPage.ABOUT) })
                     }
                 }
+                SettingsPage.APP_THEME -> AppThemeSettingsPage(state.appTheme, onAppTheme)
                 SettingsPage.SPEECH -> {
                     SpeechEngineSettings(state.speechEngine, aiSpeechConfig, onSpeechEngine, onSaveAiSpeech,
                     profiles = aiSpeechProfiles, onSelectProfile = onSelectAiSpeechProfile, onSaveProfile = onSaveAiSpeechProfile,
@@ -160,7 +167,7 @@ private enum class SettingsPage(val title: String) {
                 }
                 SettingsPage.ABOUT -> {
                     SettingsCard {
-                        AboutIntro(onCheckUpdate, onOpenChangelog = { open(SettingsPage.CHANGELOG) })
+                        AboutIntro(onCheckUpdate, onOpenChangelog = { open(SettingsPage.CHANGELOG) }, availableUpdate = availableUpdate)
                     }
                     SettingsCard {
                         listOf(SettingsPage.AUTHOR, SettingsPage.PRIVACY, SettingsPage.TERMS, SettingsPage.OPEN_SOURCE).forEachIndexed { index, destination ->
@@ -223,7 +230,7 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
 }
 
 @Composable private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surface), content = content)
+    Column(Modifier.fillMaxWidth().clip(appShape(16.dp)).background(MaterialTheme.colorScheme.surface), content = content)
 }
 
 @Composable private fun SettingsSeparator() = HorizontalDivider(color = Line, modifier = Modifier.padding(horizontal = 16.dp))

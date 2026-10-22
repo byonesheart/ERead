@@ -200,7 +200,7 @@ class ReaderScreenStartupRobolectricTest {
         compose.onNodeWithText("界面 · 配置1").assertIsDisplayed()
         compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
         compose.onNodeWithText("配置2", substring = false).assertDoesNotExist()
-        compose.onNodeWithText("主题", substring = false).performScrollTo()
+        compose.onNodeWithText("配置", substring = false).performScrollTo()
         compose.onNodeWithText("配置1", substring = false).assertIsDisplayed()
     }
 

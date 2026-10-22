@@ -14,7 +14,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.*
@@ -39,17 +38,19 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.eyue.reader.ReaderViewModel
 import com.eyue.reader.data.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
-fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
+fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpdateSession = viewModel()) {
     val systemDark = isSystemInDarkTheme()
     SideEffect { vm.updateSystemTheme(systemDark) }
     val dark = vm.state.themeMode.isDark(systemDark)
-    MaterialTheme(colorScheme = if (vm.state.einkMode) einkAppColors(dark) else if (dark) DarkAppColors else LightAppColors) {
+    EReadTheme(dark = dark, eink = vm.state.einkMode, style = vm.state.appTheme) {
+        LaunchedEffect(updateSession) { updateSession.checkOnStartup() }
         val state = vm.state.withResolvedTheme(systemDark)
         val settings = vm.readerSettings.copy(nightMode = dark)
         val density = LocalDensity.current
@@ -129,6 +130,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
             }
         }
         val book = vm.activeReaderBook
+        SideEffect { updateSession.setSettingsVisible(book == null && tab == 2) }
         val view = LocalView.current
         val activity = remember(view) {
             var context = view.context
@@ -220,8 +222,16 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                     listOf("阅读" to Icons.AutoMirrored.Outlined.MenuBook, "书架" to Icons.Outlined.LibraryBooks,
                         "设置" to Icons.Outlined.Tune).forEachIndexed { i, entry ->
-                        NavigationBarItem(selected = tab == i, onClick = { tab = i },
-                            icon = { Icon(entry.second, entry.first, Modifier.size(23.dp)) },
+                        NavigationBarItem(selected = tab == i, onClick = {
+                            tab = i
+                            if (i == 2) updateSession.setSettingsVisible(true)
+                        },
+                            icon = {
+                                BadgedBox(badge = {
+                                    if (i == 2 && updateSession.hasUnreadUpdate) Badge(
+                                        Modifier.testTag("settings_update_badge"), containerColor = Color(0xFFD64045))
+                                }) { Icon(entry.second, entry.first, Modifier.size(23.dp)) }
+                            },
                             label = { Text(entry.first, fontSize = 11.sp) },
                             colors = NavigationBarItemDefaults.colors(selectedIconColor = Olive,
                                 selectedTextColor = Olive, indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -283,7 +293,9 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
                                     onCleanup = vm::cleanupLibrary, speechCacheRevision = vm.aiSpeechCacheRevision,
                                     meteredNetwork = vm.meteredNetwork, onCommonVoiceRoles = { commonVoiceRolesOpen = true },
                                     onEinkMode = vm::setEinkMode, onTabletDualPage = vm::setTabletDualPage,
-                                    restoreProgress = vm.cloudRestoreProgress)
+                                    restoreProgress = vm.cloudRestoreProgress,
+                                    onAppTheme = vm::setAppTheme, availableUpdate = updateSession.availableUpdate,
+                                    onCheckUpdate = updateSession::checkNow)
                             }
                         }
                     }
@@ -350,11 +362,11 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
     onImport: () -> Unit = {}, importEnabled: Boolean = true, nightMode: Boolean = false, onToggleNight: () -> Unit = {}) {
     Row(Modifier.padding(start = 24.dp, end = 16.dp, top = 8.dp).fillMaxWidth().height(48.dp).testTag("mode_tabs"),
         verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(13.dp))
+        Row(Modifier.weight(1f).height(44.dp).clip(appShape(13.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(4.dp)) {
             listOf(LibraryMode.NOVEL to "小说", LibraryMode.COMIC to "漫画").forEach { (value, label) ->
                 val selected = mode == value
-                Row(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(10.dp))
+                Row(Modifier.weight(1f).fillMaxHeight().clip(appShape(10.dp))
                     .background(if (selected) MaterialTheme.colorScheme.surface else Color.Transparent).clickable { onMode(value) },
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                     Icon(if (value == LibraryMode.NOVEL) Icons.AutoMirrored.Outlined.MenuBook else Icons.Outlined.AutoStories,
@@ -378,9 +390,9 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>) {
 }
 
 @Composable private fun ImportOption(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(bottom = 12.dp).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surface).clickable(onClick = onClick).padding(17.dp),
+    Row(Modifier.fillMaxWidth().padding(bottom = 12.dp).clip(appShape(14.dp)).background(MaterialTheme.colorScheme.surface).clickable(onClick = onClick).padding(17.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(11.dp)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = Olive, modifier = Modifier.size(22.dp)) }
+        Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.secondaryContainer, appShape(11.dp)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = Olive, modifier = Modifier.size(22.dp)) }
         Column(Modifier.weight(1f).padding(start = 14.dp)) { Text(title, fontSize = 15.sp); Text(subtitle, color = Muted, fontSize = 10.sp, modifier = Modifier.padding(top = 5.dp)) }
         Icon(Icons.Outlined.ChevronRight, null, tint = Muted, modifier = Modifier.size(18.dp))
     }

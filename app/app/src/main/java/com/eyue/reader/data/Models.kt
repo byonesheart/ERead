@@ -142,5 +142,6 @@ data class LibraryState(
     val aiSpeechFallback: Boolean = false,
     val commonVoiceRoles: List<BookVoiceRole> = defaultCommonVoiceRoles(),
     val einkMode: Boolean = false,
-    val tabletDualPage: Boolean = false
+    val tabletDualPage: Boolean = false,
+    val appTheme: AppThemeStyle = AppThemeStyle.CLASSIC
 )

@@ -1,0 +1,24 @@
+{
+  "versionCode": 40,
+  "versionName": "1.10.1",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.10.1",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.10.1/ERead-1.10.1-debug.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1S4GiW26JIbp8fipWWdbb7A?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/45bc78e5c60a",
+      "extractionCode": "t8kU"
+    }
+  ],
+  "changelog": [
+    "内置独立宋体与黑体，修复切换字体时的显示问题。",
+    "新增经典／像素软件主题，与阅读配置独立保存。",
+    "启动时静默检查更新，设置红点提示，可从关于页直接下载。",
+    "更多功能请自行体验。"
+  ]
+}
