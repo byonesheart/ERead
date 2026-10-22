@@ -1,24 +1,24 @@
 {
-  "versionCode": 40,
-  "versionName": "1.10.1",
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.10.1",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.10.1/ERead-1.10.1-debug.apk",
+  "versionCode": 41,
+  "versionName": "1.10.2",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.10.2",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.10.2/ERead-1.10.2-debug.apk",
   "mirrors": [
     {
       "name": "百度网盘",
-      "url": "https://pan.baidu.com/s/1S4GiW26JIbp8fipWWdbb7A?pwd=READ",
+      "url": "https://pan.baidu.com/s/1cIYy_On_PhI3qq-zaQEFYA?pwd=READ",
       "extractionCode": "READ"
     },
     {
       "name": "夸克网盘",
-      "url": "https://pan.quark.cn/s/45bc78e5c60a",
-      "extractionCode": "t8kU"
+      "url": "https://pan.quark.cn/s/3c8c889ea2af",
+      "extractionCode": "EQdJ"
     }
   ],
   "changelog": [
-    "内置独立宋体与黑体，修复切换字体时的显示问题。",
-    "新增经典／像素软件主题，与阅读配置独立保存。",
-    "启动时静默检查更新，设置红点提示，可从关于页直接下载。",
+    "放宽默认字距，校正内置字体与系统字体的显示大小和字缝。",
+    "像素主题同步使用像素图标，适配深色与墨水屏。",
+    "改善 TXT／EPUB／MOBI 原书注释识别与点击查看。",
     "更多功能请自行体验。"
   ]
 }
