@@ -20,6 +20,10 @@ Android 设备测试包已编译，新增实际窗口／WebView／翻页截图�
 
 APK 共 315 个 ZIP 条目，含 15 个法律／许可证资产和两份字体资源；未发现私人书籍、日志文档、私钥或嵌入 API 密钥模式。提供样本原件 SHA-256 保持不变：TXT `6A4838EAA8AD814A9C53AE240705DF86360D61766FCD23F922AE9A9FEC936A68`；MOBI `E63A0953D0AE0A3577846EFF39CC5E0F3CF22A1E717D92D7E013332DC7A117C2`；EPUB `71E21D911D2B21960E53144BA7F63BBBBFCC1433A244829E3AA75822E5BF1655`；《龙族》MOBI `202ABFC82510484F665351DF46EABA9422B404614AE61B47E53049B2B3F551A5`。
 
+源码提交 `de4ef49aa42b3b5140dd7f9c0b667d9de5d11095`，标签 `v1.10.3`。[GitHub Release](https://github.com/byonesheart/ERead/releases/tag/v1.10.3) 已发布，Release ID 为 `422457279`；官方 API 返回的两份附件大小与 SHA-256 均匹配本地。源码包为 23,069,437 字节，SHA-256 `345B50B71C5C408B2457BE1C8777154237CD478BA1386BAAD9956632E6A9C967`，499 个归档条目，扫描未发现私人书籍、密钥、工具／构建目录或未提交的 Windows 源码。两个更新清单在附件验证后切换为 1.10.3，并与 README、Release 正文使用相同镜像链接。
+
+镜像安装包位于两网盘的 `/项目/E阅/ERead-1.10.3-debug.apk`：[百度网盘](https://pan.baidu.com/s/1Y3cpo3jyZVAxxqnjJOcLcA?pwd=READ)，提取码 `READ`；[夸克网盘](https://pan.quark.cn/s/1f5d8c87f74c)，提取码 `ft8w`。夸克工具在上传后校验步骤返回失败，随后只读目录核对远端文件名与 47,687,530 字节大小，再为该文件创建分享，未重复上传；该目录结果不提供内容摘要，不表述为远端逐字节校验。
+
 ## 1.10.2 的变更与验证
 
 日期：2026-10-22。安装包为 `release/android/ERead-1.10.2-debug.apk`，versionCode 41，包名 `com.eyue.reader`，最低 API 26、目标 API 35。大小 47,477,056 字节，SHA-256 为 `761767D9393CC35CC749DEEBAE07408517F6C308FAA54C7B52E485EFBF11A8A7`。签名校验通过，证书与旧版一致，可覆盖安装。

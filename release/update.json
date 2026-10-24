@@ -1,24 +1,27 @@
 {
-  "versionCode": 41,
-  "versionName": "1.10.2",
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.10.2",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.10.2/ERead-1.10.2-debug.apk",
+  "versionCode": 42,
+  "versionName": "1.10.3",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.10.3",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.10.3/ERead-1.10.3-debug.apk",
   "mirrors": [
     {
       "name": "百度网盘",
-      "url": "https://pan.baidu.com/s/1cIYy_On_PhI3qq-zaQEFYA?pwd=READ",
+      "url": "https://pan.baidu.com/s/1Y3cpo3jyZVAxxqnjJOcLcA?pwd=READ",
       "extractionCode": "READ"
     },
     {
       "name": "夸克网盘",
-      "url": "https://pan.quark.cn/s/3c8c889ea2af",
-      "extractionCode": "EQdJ"
+      "url": "https://pan.quark.cn/s/1f5d8c87f74c",
+      "extractionCode": "ft8w"
     }
   ],
   "changelog": [
-    "放宽默认字距，校正内置字体与系统字体的显示大小和字缝。",
-    "像素主题同步使用像素图标，适配深色与墨水屏。",
-    "改善 TXT／EPUB／MOBI 原书注释识别与点击查看。",
+    "EPUB／MOBI 按原书结构分章阅读，可切换原书 CSS 或软件格式，减少重复排版。",
+    "阅读设置更紧凑，简繁切换移至字体下方。",
+    "清晰像素图标，支持高刷新率，减少滚动中的重复计算。",
+    "补充 EPUB／MOBI 无链接正文的数字注释识别。",
+    "长按书名重命名并同步云备份，同名上传确认后后台处理。",
+    "搜索双击定位，可返回原位置，手动移动后返回入口消失。",
     "更多功能请自行体验。"
   ]
 }
