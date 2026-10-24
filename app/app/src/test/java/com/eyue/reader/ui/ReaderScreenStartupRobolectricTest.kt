@@ -194,7 +194,8 @@ class ReaderScreenStartupRobolectricTest {
         revealToolbar()
         compose.onNodeWithContentDescription("界面设置").performClick()
         compose.onNodeWithText("配置1", substring = false).performTouchInput { longClick() }
-        compose.onNodeWithTag("reader_more_fonts").performScrollTo().performClick()
+        compose.onNodeWithText("字体", substring = false).performScrollTo()
+        compose.onNodeWithTag("reader_more_fonts").performScrollTo().assertIsDisplayed().performClick()
         compose.onNodeWithText("等宽字体", substring = false).performClick()
         compose.onNodeWithText("完成", substring = false).performClick()
         compose.onNodeWithText("界面 · 配置1").assertIsDisplayed()

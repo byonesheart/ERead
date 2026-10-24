@@ -23,7 +23,7 @@ suspend fun loadChapterContent(context: Context, book: Book, chapterIndex: Int):
     if (sourcePath == null) {
         val job = currentCoroutineContext()
         val text = readChapterText(book, chapterIndex) { job.ensureActive() }
-        val prepared = if (book.format == BookFormat.TXT) chapter.copy(sourceFootnotes = txtSourceFootnotes(text) { job.ensureActive() }) else chapter
+        val prepared = chapterTextFootnotes(book.format, chapter, text) { job.ensureActive() }
         return@withContext PreparedChapter(prepared, text)
     }
     val lock = chapterContentLocks[(sourcePath.hashCode() and Int.MAX_VALUE) % chapterContentLocks.size]
@@ -36,7 +36,7 @@ suspend fun loadChapterContent(context: Context, book: Book, chapterIndex: Int):
         val repository = LibraryRepository(context)
         val cached = runCatching {
             val json = JSONObject(metadata.readFully().toString(Charsets.UTF_8))
-            if (json.optString("textSha256") == textHash && json.optInt("sourceFootnotesVersion") == 2 && json.optInt("sourceCssVersion") == 1)
+            if (json.optString("textSha256") == textHash && json.optInt("sourceFootnotesVersion") == 3 && json.optInt("sourceCssVersion") == 1)
                 repository.readChapter(json) else null
         }.getOrNull()?.takeIf { it.id == chapter.id && it.textPath == chapter.textPath && it.title == chapter.title &&
             it.lazySourcePath == sourcePath && it.characterCount == text.length && it.inlineImages == chapter.inlineImages &&
@@ -44,7 +44,7 @@ suspend fun loadChapterContent(context: Context, book: Book, chapterIndex: Int):
             it.sourceCssStyles.all { style -> style.start >= 0 && style.end > style.start && style.end <= text.length } &&
             it.sourceFootnotes.all { note -> note.start >= 0 && note.end >= note.start && note.end <= text.length &&
                 (note.end > note.start || note.imagePath != null) } }
-        if (cached != null) return@withLock PreparedChapter(cached, text)
+        if (cached != null) return@withLock PreparedChapter(chapterTextFootnotes(book.format, cached, text) { job.ensureActive() }, text)
         job.ensureActive()
         val manifest = JSONObject(AtomicFile(File(sourcePath)).readFully().toString(Charsets.UTF_8))
         val images = manifest.getJSONObject("images")
@@ -56,14 +56,25 @@ suspend fun loadChapterContent(context: Context, book: Book, chapterIndex: Int):
             images.optString(attributes).takeIf { it.isNotEmpty() }
         }
         val styles = mapCanonicalStyles(styled.text, text, styled.sourceStyles)
-        val prepared = chapter.copy(characterCount = text.length, sourceStyles = styles,
+        val prepared = chapterTextFootnotes(book.format, chapter.copy(characterCount = text.length, sourceStyles = styles,
             sourceCssStyles = mapCanonicalStyles(styled.text, text, styled.sourceCssStyles),
-            sourceFootnotes = mapCanonicalFootnotes(styled.text, text, styled.sourceFootnotes))
+            sourceFootnotes = mapCanonicalFootnotes(styled.text, text, styled.sourceFootnotes)), text) { job.ensureActive() }
         job.ensureActive()
         writeChapterAtomic(metadata, repository.writeChapter(prepared).put("textSha256", textHash)
-            .put("sourceFootnotesVersion", 2).put("sourceCssVersion", 1).toString())
+            .put("sourceFootnotesVersion", 3).put("sourceCssVersion", 1).toString())
         PreparedChapter(prepared, text)
     }
+}
+
+/** Some converted/restored ebooks retain [n] prose but no usable link metadata. */
+private fun chapterTextFootnotes(format: BookFormat, chapter: Chapter, text: String,
+                                checkActive: () -> Unit): Chapter = when {
+    format == BookFormat.TXT -> chapter.copy(sourceFootnotes = txtSourceFootnotes(text, checkActive = checkActive))
+    format in setOf(BookFormat.MOBI, BookFormat.EPUB) && chapter.sourceFootnotes.isEmpty() -> {
+        val notes = txtSourceFootnotes(text, allowAttachedDefinition = true, checkActive = checkActive)
+        if (notes.isEmpty()) chapter else chapter.copy(sourceFootnotes = notes)
+    }
+    else -> chapter
 }
 
 /** Used by imports after lightweight text/image extraction; no source styling is evaluated here. */

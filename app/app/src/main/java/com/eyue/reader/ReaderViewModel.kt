@@ -71,6 +71,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val cloudRestoreState = com.eyue.reader.data.cloud.CloudRestoreProgressState()
     val cloudRestoreProgress get() = cloudRestoreState.progress
     private val cloudHistory = CloudBackupHistory(application)
+    private val shelfRenamePreferences = application.getSharedPreferences("shelf_renames", 0)
     private val cloudDirtyIndex = CloudDirtyBookIndex(repository)
     private var cloudDirtyFilesRevision by mutableStateOf(0)
     private var openJob: Job? = null
@@ -478,6 +479,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun prepareImportedBooks(books: List<Book>): List<String> {
         val novels = books.filter { it.mode == LibraryMode.NOVEL && it.format in setOf(BookFormat.TXT, BookFormat.EPUB, BookFormat.MOBI) &&
+            !(it.format in setOf(BookFormat.EPUB, BookFormat.MOBI) && (!it.sourcePath.isNullOrBlank() || !it.sourceUri.isNullOrBlank())) &&
             profileSettings(it.mode).readingMode != ReadingMode.SCROLL }
         if (novels.isEmpty()) return emptyList()
         preparingLayout = true
@@ -539,7 +541,21 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         super.onCleared()
     }
 
-    private suspend fun persistNow() = saves.persistNow()
+    private suspend fun persistNow() {
+        saves.persistNow()
+        val ids = shelfRenamePreferences.getStringSet("pending_titles", emptySet()).orEmpty()
+        val retained = state.books.filter { it.cloudOnly && it.id in ids }.map { it.id }.toSet()
+        if (retained != ids) shelfRenamePreferences.edit().putStringSet("pending_titles", retained).apply()
+    }
+
+    private fun preserveRenamedPlaceholderTitles(restored: LibraryState): LibraryState {
+        val ids = shelfRenamePreferences.getStringSet("pending_titles", emptySet()).orEmpty()
+        val names = state.books.filter { it.cloudOnly && it.id in ids }.associate { it.id to it.title }
+        if (names.isEmpty()) return restored
+        return restored.copy(books = restored.books.map { book ->
+            names[book.id]?.takeIf { book.cloudOnly }?.let { book.copy(title = it) } ?: book
+        })
+    }
 
     fun flush() {
         val elapsed = if (sessionStarted > 0) (System.currentTimeMillis() - sessionStarted) / 1000 else 0
@@ -691,6 +707,24 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             message = "请选择该书所属模式的分组"; return
         }
         changed(state.copy(books = state.books.map { if (it.id == bookId) it.copy(groupId = groupId) else it }))
+    }
+
+    fun renameBook(bookId: String, title: String): Boolean {
+        if (!storageReady) return false
+        val value = title.trim()
+        if (value.isEmpty()) { message = "请输入书籍名称"; return false }
+        val book = state.books.find { it.id == bookId } ?: return false
+        if (bookId in editingBookIds || hasBookDraft(bookId)) {
+            message = "请先保存或放弃这本书的正文修改，再重命名"; return false
+        }
+        if (value != book.title) {
+            if (book.cloudOnly) {
+                val ids = shelfRenamePreferences.getStringSet("pending_titles", emptySet()).orEmpty() + book.id
+                shelfRenamePreferences.edit().putStringSet("pending_titles", ids).apply()
+            }
+            changed(state.copy(books = state.books.map { if (it.id == bookId) it.copy(title = value) else it }))
+        }
+        return true
     }
 
     fun deleteBook(book: Book) = removeBook(book, false)
@@ -1253,8 +1287,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val resolved = try { normalizedCloudRestoreSelections(conflicts, selections) }
             catch (error: IllegalArgumentException) { message = error.message; return }
         if (meteredNetwork && !allowMetered) { message = "当前为计费网络，请确认允许流量后更新云端"; return }
+        if (cloudBusy || loading || rebuildingContents || !storageReady) return
+        val matches = pendingUploadMatches
         cloudOperation(label = "处理上传的同名书籍", allowImport = true) { service ->
-            require(service.identity() == account && pendingCloudUpload === incoming) { "网盘或待上传书籍已变化，请重新上传" }
+            require(service.identity() == account) { "网盘已变化，请重新上传" }
             val retainedLocalIds = resolved.values.flatMap { it.keepLocalIds }.toSet()
             val retainedRemoteIds = resolved.filterValues { it.keepRemote }.keys
             val uploadedIds = mutableSetOf<String>()
@@ -1288,7 +1324,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 require(!meteredNetwork || allowMetered) { "网络已切换为计费网络，请确认后继续处理" }
                 service.deleteBook(id)
             }
-            val restored = applyCloudUploadSelections(state, incoming, conflicts, resolved, pendingUploadMatches)
+            val restored = preserveRenamedPlaceholderTitles(applyCloudUploadSelections(state, incoming, conflicts, resolved, matches))
             val discarded = state.books.filter { local -> !local.cloudOnly && restored.books.none { it.id == local.id } }
             for (book in discarded) stopAiSpeechConversion(book.id)
             changed(restored)
@@ -1298,8 +1334,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 repository.removeBookFiles(book)
                 AiSpeechCache(getApplication()).clear(book.id)
             } }
-            cancelCloudUploadConflict()
         }
+        // The confirmed choices belong to the job; the selection dialog is no longer needed.
+        cancelCloudUploadConflict()
     }
 
     fun cancelCloudUpload(book: Book) {
@@ -1377,7 +1414,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     } else {
                         // Merge the current state, preserving progress and notes changed during network reads.
                         rememberCloudMatches(account, available, matches)
-                        state = resolveCloudRestoreInformation(state, available, emptyMap(), matches)
+                        state = preserveRenamedPlaceholderTitles(resolveCloudRestoreInformation(state, available, emptyMap(), matches))
                     }
                 }
                 if (!needsDecision) {
@@ -1470,8 +1507,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         withContext(Dispatchers.IO) { cloudHistory.forget(requireNotNull(service.identity()), local.id) }
                 }
             }
-            val restored = resolveCloudRestoreSelectionsInformation(state, info, resolved, pendingRestoreMatches,
-                protectedLocalIds = state.books.map { it.id }.toSet() - confirmedBookIds)
+            val restored = preserveRenamedPlaceholderTitles(resolveCloudRestoreSelectionsInformation(state, info, resolved, pendingRestoreMatches,
+                protectedLocalIds = state.books.map { it.id }.toSet() - confirmedBookIds))
             val discarded = state.books.filter { local -> !local.cloudOnly && restored.books.none { it.id == local.id } }
             for (book in discarded) stopAiSpeechConversion(book.id)
             changed(restored)
@@ -1506,7 +1543,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         conflict.remote.id to CloudRestoreSelection(conflict.locals.map { it.id }.toSet(), true)
                     }
                     rememberCloudMatches(account, available, pendingRestoreMatches)
-                    state = resolveCloudRestoreSelectionsInformation(state, available, selections, pendingRestoreMatches)
+                    state = preserveRenamedPlaceholderTitles(resolveCloudRestoreSelectionsInformation(state, available, selections, pendingRestoreMatches))
                     cancelCloudRestore()
                     applied = true
                 }
@@ -1527,7 +1564,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             withContext(Dispatchers.IO) { repository.removeBookFiles(restored.book) }
             return@cloudOperation
         }
-        val downloaded = mergeCloudDownloadedBook(state, restored)
+        val localTitle = state.books.first { it.id == book.id }.title
+        val downloaded = mergeCloudDownloadedBook(state, restored.copy(book = restored.book.copy(title = localTitle)))
         changed(downloaded.copy(settings = downloaded.settings.ensureActiveAppearanceProfile(),
             comicSettings = downloaded.comicSettings.ensureActiveAppearanceProfile()))
         persistNow()
@@ -1535,7 +1573,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val snapshot = state
         val downloadedBook = snapshot.books.first { it.id == book.id }
         if (account != null) withContext(Dispatchers.IO) {
-            cloudHistory.record(account, book.id, cloudBackupFingerprint(repository, snapshot, downloadedBook), restored.backupAt)
+            // A local shelf rename has not been uploaded merely because the content was downloaded.
+            cloudHistory.record(account, book.id, cloudBackupFingerprint(repository, snapshot,
+                downloadedBook.copy(title = restored.book.title)), restored.backupAt)
         }
     }
 

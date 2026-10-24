@@ -56,6 +56,17 @@ class CloudLibraryMergeTest {
         assertEquals(50L, second.readingSeconds)
     }
 
+    @Test fun informationRefreshReceivesRemoteNameChangesForUneditedPlaceholders() {
+        val remote = book("remote").copy(title = "原书名", sourceFileName = "原文件.mobi", sourceFileBytes = 1234)
+        val first = mergeCloudBookInformation(LibraryState(), listOf(remote), emptyList(), emptyList(), 0)
+        val next = mergeCloudBookInformation(first, listOf(remote.copy(title = "云端新书名", progress = .8f)), emptyList(), emptyList(), 0)
+        assertEquals("云端新书名", next.books.single().title)
+        assertEquals(.8f, next.books.single().progress, 0f)
+        assertEquals("原文件.mobi", next.books.single().sourceFileName)
+        assertEquals(1234L, next.books.single().sourceFileBytes)
+        assertTrue(next.books.single().cloudOnly)
+    }
+
     @Test fun groupsWithTheSameNameStaySeparateBetweenNovelAndComic() {
         val novel = ShelfGroup("收藏", LibraryMode.NOVEL, "novel")
         val comic = ShelfGroup("收藏", LibraryMode.COMIC, "comic")

@@ -173,6 +173,25 @@ abstract class CloudServiceContract {
         assertEquals(reimported.id, localState.books.single().id)
     }
 
+    @Test fun aShelfRenameUpdatesTheCloudTitleWithoutReuploadingOrRenamingTheOriginalFile() = runBlocking {
+        val (original, state) = novel()
+        val source = File(requireNotNull(original.sourcePath))
+        val originalBytes = source.readBytes()
+        val first = service.upload(state, original)
+        val transfers = transport.binaryUploads
+        val renamed = original.copy(title = "自选书名")
+        val refreshed = service.upload(state.copy(books = listOf(renamed)), renamed)
+        assertEquals(first.revision, refreshed.revision)
+        assertEquals(transfers, transport.binaryUploads)
+        val listed = service.list().single()
+        assertEquals("自选书名", listed.book.title)
+        assertEquals(first.book.sourceFileName, listed.book.sourceFileName)
+        assertEquals(first.book.sourceFileBytes, listed.book.sourceFileBytes)
+        val downloaded = service.download(listed)
+        assertEquals("自选书名", downloaded.book.title)
+        assertArrayEquals(originalBytes, source.readBytes())
+    }
+
     private fun novel(): Pair<Book, LibraryState> {
         val source = File(root, "original.mobi").apply { writeText("mock original bytes") }
         val text = File(root, "chapter.txt").apply { writeText("第一章\n正文的第一段。\n正文的第二段。") }

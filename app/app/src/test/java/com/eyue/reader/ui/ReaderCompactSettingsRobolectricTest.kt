@@ -6,8 +6,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Density
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -75,6 +78,7 @@ class ReaderCompactSettingsRobolectricTest {
         compose.onNodeWithTag("reader_conversion_traditional").performScrollTo().assertIsDisplayed()
         compose.onNodeWithContentDescription("阅读下边距 增大").performScrollTo().assertIsDisplayed()
         capture("reader-interface-margins")
+        compose.onNodeWithText("模式", substring = false).performScrollTo()
         compose.onNodeWithTag("reader_mode_vertical_paged").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
         compose.onNodeWithTag("reader_finish_theme_edit").assertDoesNotExist()
@@ -88,25 +92,62 @@ class ReaderCompactSettingsRobolectricTest {
         capture("reader-settings-dark")
     }
 
+    @Config(qualifiers = "w360dp-h800dp-mdpi")
     @Test fun compactFontChoicesKeepBoldIndependentAndOpenMoreBeforeImporting() {
         var settings by mutableStateOf(ReaderSettings(fontName = "自选字体", fontPath = "/font.ttf",
             fonts = listOf(ImportedFont("自选字体", "/font.ttf"))))
         var moreFonts = false
         var imports = 0
-        compose.setContent { MaterialTheme {
+        var fontScale by mutableStateOf(1f)
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) { MaterialTheme {
             ReaderCompactSettings(settings, false, { settings = it }, { imports++ }, {}, onFonts = { moreFonts = true })
-        } }
+        } } }
         compose.onNodeWithText("自选字体").assertDoesNotExist()
         compose.onNodeWithText("等宽字体").assertDoesNotExist()
-        compose.onNodeWithText("宋体").performScrollTo().performClick()
+        compose.onNodeWithText("字体", substring = false).performScrollTo()
+        val choices = listOf("系统", "宋体", "黑体", "加粗", "更多").map { label ->
+            compose.onNodeWithText(label, substring = false).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        }
+        choices.zipWithNext().forEach { (left, right) ->
+            assertEquals("The five font choices must stay aligned on a single row", left.top, right.top, 1f)
+            assertEquals("Ordinary two-character choices use the same height", left.height, right.height, 1f)
+            assertEquals("Ordinary two-character choices use the same width", left.width, right.width, 1f)
+            assertTrue("Font choices must not overlap", right.left >= left.right)
+        }
+        val conversion = compose.onNodeWithText("简繁", substring = false).fetchSemanticsNode().boundsInRoot
+        val spacing = compose.onNodeWithText("行距", substring = false).fetchSemanticsNode().boundsInRoot
+        assertTrue("Chinese conversion must immediately follow fonts and precede spacing", choices.first().bottom <= conversion.top && conversion.bottom <= spacing.top)
+        compose.onNodeWithText("宋体").performClick()
+        compose.onNodeWithText("宋体").assertIsSelected()
         compose.runOnIdle { assertEquals("系统宋体", settings.fontName); assertNull(settings.fontPath) }
         compose.onNodeWithText("加粗").performClick()
+        compose.onNodeWithText("加粗").assertIsOn()
         compose.onNodeWithText("黑体").performClick()
         compose.runOnIdle { assertEquals("系统黑体", settings.fontName); assertTrue(settings.bold) }
         compose.onNodeWithText("系统", substring = false).performClick()
         compose.runOnIdle { assertEquals("跟随系统", settings.fontName); assertTrue(settings.bold) }
         compose.onNodeWithTag("reader_more_fonts").performClick()
         compose.runOnIdle { assertTrue(moreFonts); assertEquals(0, imports) }
+        compose.runOnIdle { fontScale = 2f }
+        compose.onNodeWithTag("reader_more_fonts").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("更多", useUnmergedTree = true).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { action ->
+            val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            assertTrue(action(layouts))
+            assertEquals(1, layouts.single().lineCount)
+            val layout = layouts.single()
+            assertEquals(layout.layoutInput.text.length, layout.getLineEnd(0))
+            // The scroll row has unbounded width. Compare the actual glyphs with the
+            // displayed text bounds, rather than MultiParagraph's infinite line box.
+            for (index in layout.layoutInput.text.indices) {
+                val glyph = layout.getBoundingBox(index)
+                assertTrue("Large-font label glyph $index must fit horizontally: $glyph / ${layout.size}",
+                    glyph.left >= -1f && glyph.right <= layout.size.width + 1f)
+                assertTrue("Large-font label glyph $index must fit vertically: $glyph / ${layout.size}",
+                    glyph.top >= -1f && glyph.bottom <= layout.size.height + 1f)
+            }
+        }
     }
 
     @Test fun readingModesAreImmediatelyAvailableForComicsWithoutOpeningMoreSettings() {

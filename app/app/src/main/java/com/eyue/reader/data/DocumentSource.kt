@@ -37,12 +37,13 @@ fun <T> withDocumentDescriptor(context: Context, pathOrUri: String, block: (Parc
     }
 }
 
-/** Adapts ZIP/random-access parsers without retaining a second original. The File is valid only in block. */
-fun <T> withLocalDocument(context: Context, pathOrUri: String, block: (File) -> T): T {
+/** A caller-owned temporary file may be reused for non-seekable sources; serialize access and delete it on close. */
+fun <T> withLocalDocument(context: Context, pathOrUri: String, temporaryFile: File? = null, block: (File) -> T): T {
     documentFile(pathOrUri)?.let { file ->
         requireDocumentAvailable(context, pathOrUri)
         return block(file)
     }
+    if (temporaryFile?.isFile == true) return block(temporaryFile)
     val asset = sourceRead { context.contentResolver.openAssetFileDescriptor(Uri.parse(pathOrUri), "r")
         ?: throw FileNotFoundException(pathOrUri) }
     asset.use {
@@ -53,7 +54,15 @@ fun <T> withLocalDocument(context: Context, pathOrUri: String, block: (File) -> 
             if (reopenable) return block(file)
         }
     }
-    return withTemporaryDocument(context, pathOrUri, block)
+    if (temporaryFile == null) return withTemporaryDocument(context, pathOrUri, block)
+    temporaryFile.parentFile?.mkdirs()
+    try {
+        sourceRead { openDocumentStream(context, pathOrUri).use { input -> temporaryFile.outputStream().use { input.copyTo(it) } } }
+    } catch (error: Throwable) {
+        temporaryFile.delete()
+        throw error
+    }
+    return block(temporaryFile)
 }
 
 private fun wholeSeekableDocument(asset: AssetFileDescriptor): Boolean {

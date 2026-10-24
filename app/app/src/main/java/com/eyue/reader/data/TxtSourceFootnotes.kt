@@ -2,9 +2,11 @@ package com.eyue.reader.data
 
 private val txtNoteMarker = Regex("\\[[0-9]{1,4}]")
 private val txtNoteDefinition = Regex("^[ \\t\\u3000]*(\\[[0-9]{1,4}])[ \\t\\u3000]+(\\S.*)$")
+private val attachedNoteDefinition = Regex("^[ \\t\\u3000]*(\\[[0-9]{1,4}])[ \\t\\u3000]*(\\S.*)$")
 
 /** Attach only unambiguous chapter-local references; the original text and edit offsets stay intact. */
-internal fun txtSourceFootnotes(text: String, checkActive: () -> Unit = {}): List<SourceFootnote> {
+internal fun txtSourceFootnotes(text: String, allowAttachedDefinition: Boolean = false,
+                               checkActive: () -> Unit = {}): List<SourceFootnote> {
     checkActive()
     if ('[' !in text) return emptyList()
     data class Line(val start: Int, val end: Int, val text: String, val definition: MatchResult?)
@@ -16,7 +18,7 @@ internal fun txtSourceFootnotes(text: String, checkActive: () -> Unit = {}): Lis
         checkActive()
         val end = text.indexOf('\n', cursor).let { if (it < 0) text.length else it }
         val line = text.substring(cursor, end).trimEnd('\r')
-        lines += Line(cursor, end, line, txtNoteDefinition.matchEntire(line))
+        lines += Line(cursor, end, line, (if (allowAttachedDefinition) attachedNoteDefinition else txtNoteDefinition).matchEntire(line))
         cursor = end + 1
     }
     val definitions = lines.mapIndexedNotNull { index, line ->

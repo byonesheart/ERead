@@ -242,7 +242,7 @@ class LazyChapterContentRobolectricTest {
         val upgraded = loadChapterContent(context, book, 0)
         assertEquals(first, upgraded)
         assertEquals("本章注释", upgraded.chapter.sourceFootnotes.single().content)
-        assertEquals(2, JSONObject(metadata.readText()).getInt("sourceFootnotesVersion"))
+        assertEquals(3, JSONObject(metadata.readText()).getInt("sourceFootnotesVersion"))
         assertTrue(File(chapter.lazySourcePath!!).delete())
         assertEquals(upgraded, loadChapterContent(context, book, 0))
     }

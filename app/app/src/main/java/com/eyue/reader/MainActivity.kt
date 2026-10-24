@@ -29,6 +29,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             ConsentGate(onExit = ::finish) {
                 LaunchedEffect(Unit) { initializeReader() }
+                LaunchedEffect(reader.state.einkMode) { requestHighRefreshRate() }
                 EReadApp(reader, volumeEvents)
             }
         }
@@ -79,6 +80,17 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         if (readerReady) reader.resumeSession()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && readerReady) requestHighRefreshRate()
+    }
+
+    private fun requestHighRefreshRate() {
+        @Suppress("DEPRECATION")
+        val currentDisplay = window.decorView.display ?: windowManager.defaultDisplay
+        requestReaderRefreshRate(window, currentDisplay, reader.state.einkMode)
     }
 
     override fun onStop() {

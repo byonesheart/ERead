@@ -51,6 +51,30 @@ class ProvidedEbookSourceNotesRobolectricTest {
         }
     }
 
+    @Test fun providedMobiPlainChapterRecoversNotesEvenWhenAllOriginalLinksAreAbsent() = runBlocking {
+        withSample("mobi") { copy ->
+            val source = MobiArchive.read(copy)
+            val section = source.sections.first { it.title.startsWith("第一回") }
+            val linked = HtmlChapterParser.readPlainWithNotes("第一回", section.html, noteTargets = section.sourceNoteTargets) { null }
+            var unlinked = section.html
+            sourceHtmlTags(unlinked).filter { it.name == "a" }.toList().asReversed().forEach { tag ->
+                unlinked = unlinked.removeRange(tag.start, tag.end)
+            }
+            val plain = HtmlChapterParser.readPlain("第一回", unlinked) { null }
+            assertEquals(linked.text, plain.text)
+            assertTrue(plain.sourceFootnotes.isEmpty())
+            val chapter = saveLazyChapter(root, 0, plain, unlinked, source.css, emptyMap())
+            val book = Book(title = "西游记", format = BookFormat.MOBI, mode = LibraryMode.NOVEL, chapters = listOf(chapter))
+            val prepared = loadChapterContent(context, book, 0)
+            assertEquals(linked.text, prepared.text)
+            assertEquals(32, prepared.chapter.sourceFootnotes.size)
+            assertEquals(linked.sourceFootnotes.first(), prepared.chapter.sourceFootnotes.first())
+            assertEquals(prepared, loadChapterContent(context, book, 0))
+            val restored = book.copy(chapters = listOf(chapter.copy(lazySourcePath = null)))
+            assertEquals(prepared.chapter.sourceFootnotes, loadChapterContent(context, restored, 0).chapter.sourceFootnotes)
+        }
+    }
+
     private suspend fun verifyFirstChapter(format: BookFormat, html: String, css: String, targets: Map<String, String>) {
         val parsed = HtmlChapterParser.readPlainWithNotes("第一回", html, noteTargets = targets) { null }
         assertEquals(32, parsed.sourceFootnotes.size)

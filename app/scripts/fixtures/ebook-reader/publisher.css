@@ -1,0 +1,8 @@
+h1 { font-size: 32px; letter-spacing: 3px; color: #194a75; text-align: center; }
+p { font-size: 22px; line-height: 1.7; margin: 0 0 22px; }
+blockquote { color: rgb(63, 93, 125); text-align: right; font-style: italic; border-left: 3px solid #194a75; margin: 16px 36px; }
+table { border-collapse: collapse; width: 100%; }
+td, th { border: 1px solid #194a75; padding: 6px; }
+rt { font-size: 10px; }
+#illustration { display: block; margin: 14px auto; }
+aside { border-top: 1px solid #555; padding-top: 10px; }

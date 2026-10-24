@@ -26,6 +26,10 @@ AndroidX Lifecycle 2.9.0：界面生命周期与状态管理；WorkManager 2.10.
 
 项目：https://android.googlesource.com/platform/frameworks/support
 
+Android 系统提供的 WebView（基于 Chromium）用于 EPUB／MOBI 的 HTML、CSS 和图文排版。E阅不额外打包 Chromium；具体组件版本和许可信息由设备上的 WebView 提供。
+
+说明：https://developer.android.com/reference/android/webkit/WebView
+
 ## Kotlin 与协程
 
 Kotlin 标准库 2.1.21（兼容层 jdk7 / jdk8 1.9.10）；kotlinx.coroutines 1.10.2；运行时引入 kotlinx.serialization 1.7.3 与 JetBrains Annotations 23.0.0。用于 Kotlin 运行时、异步工作与相关基础能力。许可证：Apache-2.0。

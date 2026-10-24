@@ -1,6 +1,6 @@
 # E阅 Windows 端开发交接
 
-最近更新：2026-10-22。当前基线：Android **1.10.2 / versionCode 41**。最初功能清单来自 1.9.8，接手前依次阅读 [1.9.9～1.10.0 增量交接](windows-handoff-1.10.0.md)、[1.10.1 增量交接](windows-handoff-1.10.1.md) 和 [1.10.2 增量交接](windows-handoff-1.10.2.md)，核对数据访问、缓存、字体、软件主题、注释、朗读与云端界面的变化及验收要求。本次验证及发布状态以 [验证记录](verification.md) 为准。
+最近更新：2026-10-24。当前开发基线：Android **1.10.3 / versionCode 42**。最初功能清单来自 1.9.8，接手前依次阅读 [1.9.9～1.10.0 增量交接](windows-handoff-1.10.0.md)、[1.10.1 增量交接](windows-handoff-1.10.1.md)、[1.10.2 增量交接](windows-handoff-1.10.2.md) 和 [1.10.3 增量交接](windows-handoff-1.10.3.md)，核对数据访问、缓存、字体、软件主题、注释、搜索、朗读与云端界面的变化及验收要求。1.10.3 的 EPUB／MOBI 已改用原 HTML／资源按章渲染，不能继续把所有小说视为原生文本分页。本次最终验证及发布状态以 [验证记录](verification.md) 为准。
 
 本文供新对话独立接手。项目分为 `app/`、`windows/`、`release/` 三个目录；本地 `windows/` 已有 Kotlin／Compose Desktop 开发内容及未提交工作，不能覆盖或当作已完成验收。下文明确区分现有行为、兼容要求和建议路线。除特别说明外，路径均相对仓库根目录。
 
@@ -8,9 +8,9 @@
 
 - 本地项目：`D:/Project/E阅`。
 - GitHub：[byonesheart/ERead](https://github.com/byonesheart/ERead)，公开发布分支为 `main`。本地工作分支应以 `git status` 为准，不要为阅读本文切换或重置已有 Windows 工作。
-- Android 1.10.2 的本次发布标签为 `v1.10.2`；是否已创建标签及发布，以验证记录为准。
+- Android 1.10.3 的本次发布标签为 `v1.10.3`；是否已创建标签及发布，以验证记录为准。
 - Android 更新入口为根目录 `update.json`，`release/update.json` 保持相同内容；文档提交不改变软件功能标签。
-- 安装包发布入口：[1.10.2 Release](https://github.com/byonesheart/ERead/releases/tag/v1.10.2)。这是 Android APK 的发布入口，不是 Windows 安装包；链接列出不代表本次已发布。
+- 安装包发布入口：[1.10.3 Release](https://github.com/byonesheart/ERead/releases/tag/v1.10.3)。这是 Android APK 的发布入口，不是 Windows 安装包；链接列出不代表本次已发布。
 - Android Gradle 工程根目录为 `app/`，其中 `:app` 应用模块位于 `app/app/`。Kotlin 2.1.21、Java 17、AGP 8.9.2、Jetpack Compose，最低 Android API 26、目标／编译 API 35。
 - Windows 工程统一放入 `windows/`；两端的安装包、说明、更新清单和共用图片放入 `release/`。
 
@@ -82,7 +82,7 @@ Windows 端应延续 E阅的定位：本地优先的小说、漫画阅读器，�
 - 模式为滚动、左右翻页、上下翻页；只有左右翻页提供覆盖／滑动／仿真三种效果。上下模式不额外展示翻页效果选择。
 - 目录全屏，默认开启可折叠二级目录。原书有效目录优先；TXT 可保存多条命名正则，但只启用一条。规则列表不直接展开详细表达式，点击或新增后编辑。注释不能误识别为标题。
 - 全文搜索与替换：结果显示章／节位置；单击不离开搜索页，双击定位原文；定位后首次手动移动清除关键词高亮。
-- 字体入口：系统、宋体、黑体、加粗、更多；更多支持其他字体和导入。背景可用色块或导入图片。
+- 字体入口：系统、宋体、黑体、加粗、更多；更多支持其他字体和导入。简繁选择在字体下方。背景可用色块或导入图片，模式在背景下一行；选项使用紧凑单行按钮，空间不足可横向滚动。
 - 界面与阅读设置位于工具栏同一层级。界面使用紧凑、需拖动才改变的滑条，并配加减微调；设置直接显示原更多设置内容。
 - 主题可新建，始终保持一个配置选中；改动自动保存至所选配置。缩略图取背景，图上直接显示配置名；长按进入删除状态，小 × 删除需确认。
 - 小说／漫画各自保存阅读设置和主题，并支持恢复默认。恢复默认保留导入字体和已保存目录规则。
@@ -90,19 +90,21 @@ Windows 端应延续 E阅的定位：本地优先的小说、漫画阅读器，�
 - 简繁转换只改变显示，不能改变原文、标注偏移和保存内容。
 - 保留墨水屏模式和宽屏双页能力的产品目标；Windows 应按窗口宽度、DPI 适配，不照搬手机固定尺寸或 Android 电量／音量键逻辑。
 
-### 3.3 1.9.8 的计页与性能约束：不要退回旧方案
+### 3.3 按章计页与性能约束
 
 1. 页脚为“百分比 · **本章 当前页 / 本章总页数**”，不汇总全书页数。
-2. 导入只准备续读章；阅读优先准备当前章，再预取前后各一章；滚动页脚只计算当前章。
+2. 阅读优先准备当前章规范正文，再预取前后各一章，当前／相邻窗口以外只保留轻量索引；滚动页脚只计算当前章。EPUB／MOBI 首次原结构索引可能读取归档，后续复用持久缓存，不能承诺首次无解析成本。
 3. 不为显示页码扫描、准备所有章节，也不在热开时恢复全书页表。`ReaderBookPageIndex.kt` 仍存在用于历史缓存相关代码，不代表阅读时应该重新接入它。
-4. 当前章分页结果持久缓存；正文、样式、字体、DPI／平台、视口、简繁、间距和四边边距参与失效。夜间和背景等不影响文字边界的改变不应无故重排。
+4. TXT 原生路径的当前章分页结果持久缓存，正文、样式、字体、DPI／平台、视口、简繁、间距和四边边距参与失效。EPUB／MOBI 原 DOM 路径持久缓存原结构／资源索引，不持久化浏览器像素页表；当前章页数由几何布局得到，不预先遍历每页字符范围。夜间和背景等不影响文字边界的改变不应无故重排。
 5. 全书百分比与拖动定位使用正文字符／插图位置；翻页页码不是稳定存储坐标。末章末页／末双页能标为读完，正文偏移仍保存原页锚点。
-6. 首次排版和改变排版仍有当前章的必要计算。切模式时保持旧页可读，后台准备目标当前章，准备好后按最新原文位置切换。取消的旧任务不能修改新模式的位置或清除新任务的恢复状态。
+6. 首次排版和改变排版仍有当前章的必要计算。TXT 切模式时保持旧页可读，后台准备目标当前章；EPUB／MOBI 由同一 DOM 重新配置并保留锚点，不能又调用原生测量排一遍。取消的旧任务不能修改新模式的位置或清除新任务的恢复状态。
 7. 当前章正文、样式、页表、目录、图片与脚注必须使用同代快照，避免 CSS 切换时旧闭包访问空文档、错范围或闪退。
-8. 手势达到阈值即翻一次，不等抬手；同次手势不能因页面状态变化重启而翻两次。Android 覆盖／滑动动画 180 ms、仿真 300 ms，仅作交互参考，不要求桌面逐毫秒照搬。
+8. 手势达到阈值即翻一次，同次手势不能因页面状态变化重启而翻两次。原生和 DOM 路径分别管理翻页及动画完成，不能重复推进逻辑页；桌面适配鼠标／滚轮，不要求照搬 Android 动画时间。
 9. 上下左右边距独立：0–64 dp；小说默认左右 24、上下 18，漫画默认 0。测量与绘制使用同一组物理边距，随主题保存；桌面需定义与 DPI 对应的逻辑单位。
 
-EPUB／MOBI 默认普通正文使用软件排版，标题、引用等特殊内容保留相对格式，字体替换为软件选择。可选“使用原书 CSS”默认关闭；开启后采用可识别的原书文字样式。当前 Android 是原生文本渲染，支持范围不是完整浏览器 CSS，不能将其描述为原样支持所有 CSS。Windows 若更换渲染器，需要重新验证选区、脚注、搜索、朗读锚点和长章性能。
+**1.10.3 的引擎边界：**有原文件引用的 EPUB／MOBI 小说使用原 HTML／资源的 WebView 路径，TXT 继续原生文本；PDF、漫画、示例按原路径处理。原 DOM 路径始终保留原结构，“使用原书 CSS”默认关闭，仅选择作者 CSS 或软件正文格式，所选字体仍由软件替换。缺失／损坏的原件显示明确错误，不静默返回空正文或切换引擎。MOBI 仍使用既有兼容段，本次不新增纯 KF8／AZW3／DRM 支持。
+
+跨端仍复用规范正文 UTF-16 锚点；浏览器选区、原文注释、搜索、编辑预览及朗读高亮均映射回原规范正文，不修改 `library.json` version 13 或 WebDAV version 1 协议。原 DOM 资源安全、桥消息、带版本字体 URL、`noteTargets`、重建锚点及缓存边界见 [1.10.3 增量交接](windows-handoff-1.10.3.md)。Windows 若选择同类渲染器，仍须验证其真实窗口、选区、长章性能和字体，不把 Android WebView 实现直接当作桌面已完成。
 
 ### 3.4 笔记、标记与编辑
 
@@ -209,6 +211,7 @@ EPUB／MOBI 默认普通正文使用软件排版，标题、引用等特殊内�
 | 导入与文件 | `DocumentImporter.kt`、`DocumentSource.kt`、`ImportBookConflict.kt` | 文件来源、引用／复制、进度、同名与分类；重写文件选择和权限 |
 | 格式与章节 | `MobiArchive.kt`、`MobiToc.kt`、`EpubArchive.kt`、`HtmlChapterParser.kt`、`HtmlTextNormalization.kt`、`TextParser.kt`、`ComicHierarchyPlanner.kt` | 格式解压、目录、字节到 UTF-16 映射、归一化、层次规则 |
 | 源样式／注释 | `SourceTextStyle.kt`、`SourceFootnote.kt`、`SourceHtmlFootnotes.kt`、`LazyChapterContent.kt` | 保持内容与样式／脚注边界一致，按章延迟准备 |
+| EPUB／MOBI 原 DOM | `data/EbookSourceDocument.kt`、`EbookHtmlStructure.kt`、`ui/EbookReaderHtml.kt`、`EbookReaderSurface.kt`、`EbookPageTurn.kt`、`assets/reader/ebook-reader.js` | 本地原结构／资源、受控 WebView、JSON 桥、规范 UTF-16 映射、按章几何页码；不重复原生分页 |
 | 阅读／分页 | `ui/ReaderScreen.kt`、`ReaderChapterStore.kt`、`ReaderPagination.kt`、`ReaderLayoutPreparation.kt`、`ReaderPageCache.kt`、`ReaderPageProgress.kt`、`ReaderScrollIndex.kt` | 保留锚点与缓存设计，替换平台文本测量；不要恢复全书计页 |
 | 阅读 UI | `ReaderPageTurn.kt`、`ReaderPageDragGestures.kt`、`ReaderSelectableText.kt`、`ReaderAnnotationBubble.kt`、`ReaderContents.kt`、`ReaderPanels.kt` | 鼠标、选区、滚轮、布局、动画和目录虚拟化 |
 | 编辑 | `data/TxtEdit.kt`、`EbookTextEdit.kt`、`EbookSourceWriteback.kt`、`MobiSourceWriter.kt`、`SourceHtmlEdit.kt`、`AnnotationRelocation.kt` | 私有预览、手动保存、原子替换、回滚与坐标重定位 |
@@ -225,6 +228,7 @@ EPUB／MOBI 默认普通正文使用软件排版，标题、引用等特殊内�
 - Android TextToSpeech、MediaPlayer、AudioManager、MediaSession、通知、前台 Service 和 WorkManager。
 - Android Keystore、Context 的数据／缓存目录和 AtomicFile；Windows 使用合适的本机凭据保护、用户数据目录和原子文件写入。
 - Android PDF 渲染、PDFBox-Android、位图／Exif／字体与原生文本测量；Windows 重新选择对应实现，不能只改 import。
+- Android WebView、JavaScriptInterface 与资源拦截；桌面重建受控本地资源路由与字体版本 URL，保留 JS 消息的 UTF-16 和生命周期语义，阻止原书脚本及任意网络访问。
 - 触屏选区与拖动需转换为合适的鼠标／键盘行为；窗口缩放、高 DPI、双页和多显示器切换要有独立测试。
 - 不把 Android 每次后台／前台切换绑定的重播逻辑搬到 Windows。窗口隐藏、托盘、最小化和真正退出须分别设计。
 
@@ -248,10 +252,13 @@ EPUB／MOBI 默认普通正文使用软件排版，标题、引用等特殊内�
 
 - 格式：`MobiArchiveTest`、`MobiTocTest`、`EpubArchiveTest`、`HtmlChapterParserRobolectricTest`、`ComicHierarchyPlannerTest`。
 - 阅读：`ReaderScreenBookPageIndexRobolectricTest`（历史类名，当前覆盖按章计页）、`ReaderPageProgressRobolectricTest`、`ReaderChapterPageCacheRobolectricTest`、`ReaderPageDragGesturesRobolectricTest`、`ReaderMargins*`。
+- 原 DOM：`EbookSourceDocumentRobolectricTest`、`EbookHtmlStructureTest`、`EbookReaderHtmlRobolectricTest`、`ReaderEbookMetadataTest`；`app/scripts/test-ebook-reader.mjs` 的完整 Edge 浏览器回归已有 26 项通过记录，涵盖私有 EPUB／MOBI 样本及实际字体。原书、导出正文及截图不提交。
 - 编辑／注释：`EbookSourceWritebackRobolectricTest`、`AnnotationRelocationTest`、`ReaderSourceFootnoteRobolectricTest`、`ReaderSearchReplaceRobolectricTest`。
 - 语音／云端：`AiSpeech*`、`ReaderNarrationInteractionRobolectricTest`、`ReaderAudioServiceRobolectricTest`、`CloudArchiveTest`、`CloudBackupServiceRobolectricTest`、`CloudParallelTransfersRobolectricTest`、`CloudRestoreConflictTest`。
 
 Android 1.10.1 基线为 **1027 项测试、140 个类、0 失败／错误／跳过**；安装包、设备测试包构建及 lint 通过，lint 0 错误。独立 Macrobenchmark 工程曾在 1.10.0 编译，本轮没有执行性能测量。未连接手机，也没有因此验证 Windows 功能。详细记录在 [verification.md](verification.md)。
+
+1.10.3 的最终完整测试与构建统计以后续验证记录为准，不能沿用上面的旧版数量。新增 `ReaderEbookIntegrationTest`／`BookshelfRenameTest` 为 Android 实际窗口测试；当前环境缺少可用模拟器硬件加速，尚未取得本轮设备运行结果，浏览器 26 项和 JVM 回归不能证明手机 WebView／选区／翻页或真机 120 fps。
 
 如需确认 Android 未被桌面改动破坏，使用现有脚本：
 
@@ -282,4 +289,4 @@ Set-Location -LiteralPath 'D:/Project/E阅/app'
 
 ## 9. 可直接发给新对话的开场说明
 
-> 请先阅读 `D:/Project/E阅/release/docs/windows-handoff.md`、`D:/Project/E阅/release/docs/windows-handoff-1.10.0.md` 和 `D:/Project/E阅/release/docs/windows-handoff-1.10.1.md`，以 Android 1.10.1（v1.10.1）为当前功能与数据基线。继续 `D:/Project/E阅/windows/` 的既有开发，先核查 Git 状态并保留未提交工作，沿用 Windows 开发对话中已确定的技术栈和范围。逐项对齐独立进度持久化、当前及相邻章节窗口、懒加载朗读、明确读取错误、布局代次保护、云端还原进度、实际下载目录、字体资源、软件主题与静默更新检查，不能把交接完成当成 Windows 实现已完成。保留按章计页、UTF-16 原文锚点、每书并发与手动保存语义；兼容现有 WebDAV 格式并以 manifest 最新记录为准。保持 Android 与 Windows 更新渠道独立，不提交私人书籍、密钥或 `app/.tools/`。
+> 请先阅读 `D:/Project/E阅/release/docs/windows-handoff.md` 及其中列出的增量交接，尤其是 `windows-handoff-1.10.3.md`，以 Android 1.10.3 / code 42 为本次开发基线，实际发布与验证状态核对 `verification.md`。继续 `D:/Project/E阅/windows/` 的既有开发，先核查 Git 状态并保留未提交工作，沿用 Windows 开发对话中已确定的技术栈和范围。特别注意 EPUB／MOBI 已改用原 HTML／资源按章渲染，TXT 仍原生分页；保持规范 UTF-16 锚点、原书注释、编辑／搜索／朗读的共用坐标，不重复排两遍、不恢复全书页表。继续对齐独立进度存储、±1 章节窗口、字体／简繁映射、每书并发、手动保存及 WebDAV version 1 互通，不能把交接完成当成 Windows 实现已完成。Android 与 Windows 更新渠道独立，不提交私人书籍、密钥或 `app/.tools/`。

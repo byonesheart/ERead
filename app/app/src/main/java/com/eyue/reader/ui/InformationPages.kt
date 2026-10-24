@@ -161,7 +161,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent() {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 放宽默认字距，校正内置字体与系统字体的显示大小和字缝。\n• 像素主题同步使用像素图标，适配深色与墨水屏。\n• 改善 TXT／EPUB／MOBI 原书注释识别与点击查看。", style = MaterialTheme.typography.bodyMedium)
+        Text("• EPUB／MOBI 按原书结构分章阅读，可切换原书 CSS 或软件格式，减少重复排版。\n• 阅读设置更紧凑，简繁切换移至字体下方。\n• 清晰像素图标，支持高刷新率，减少滚动中的重复计算。\n• 补充 EPUB／MOBI 无链接正文的数字注释识别。\n• 长按书名重命名并同步云备份，同名上传确认后后台处理。\n• 搜索双击定位，可返回原位置，手动移动后返回入口消失。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

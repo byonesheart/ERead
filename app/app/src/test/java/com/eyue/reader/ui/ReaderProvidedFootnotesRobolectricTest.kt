@@ -54,7 +54,7 @@ import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 
-/** Optional integration checks: private source books are never committed or modified. */
+/** Native cached-text fallback checks; actual source DOM is covered by browser/device tests. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], qualifiers = "w360dp-h800dp-mdpi")
 @LooperMode(LooperMode.Mode.PAUSED)
@@ -89,15 +89,19 @@ class ReaderProvidedFootnotesRobolectricTest {
         }
     }
 
-    @Test fun importedEpubFirstChapterReferenceOpensTheProvidedNoteInScrollMode() {
+    @Test fun nativeFallbackEpubFirstChapterReferenceOpensTheProvidedNoteInScrollMode() {
         verifyImportedReference(BookFormat.EPUB, ReadingMode.SCROLL, useSourceCss = false)
     }
 
-    @Test fun importedMobiFirstChapterReferenceOpensTheProvidedNoteInPagedSourceCssMode() {
+    @Test fun nativeFallbackMobiFirstChapterReferenceOpensTheProvidedNoteInPagedSourceCssMode() {
         verifyImportedReference(BookFormat.MOBI, ReadingMode.PAGED, useSourceCss = true)
     }
 
-    private fun verifyImportedReference(format: BookFormat, mode: ReadingMode, useSourceCss: Boolean) {
+    @Test fun mobiTextCacheWithoutLinkMetadataStillDisplaysAndOpensTheOriginalNote() {
+        verifyImportedReference(BookFormat.MOBI, ReadingMode.SCROLL, useSourceCss = false, textOnlyCache = true)
+    }
+
+    private fun verifyImportedReference(format: BookFormat, mode: ReadingMode, useSourceCss: Boolean, textOnlyCache: Boolean = false) {
         val original = File(sources, "西游记[lunarora.com].${format.name.lowercase()}")
         assumeTrue("The provided ${format.name} sample is not installed", original.isFile)
         originalDigests[original] = sha256(original)
@@ -117,7 +121,9 @@ class ReaderProvidedFootnotesRobolectricTest {
         val footnote = prepared.chapter.sourceFootnotes.first { it.content.contains("《西游释厄传》") }
         assertEquals("[1]", prepared.text.substring(footnote.start, footnote.end))
         assertTrue(footnote.content.contains("是较早的《西游记》传本之一"))
-        val book = reopened.copy(chapterIndex = chapterIndex, pageIndex = 0, characterOffset = 0)
+        val book = reopened.copy(chapterIndex = chapterIndex, pageIndex = 0, characterOffset = 0, sourcePath = null, sourceUri = null,
+            chapters = if (textOnlyCache) reopened.chapters.map { it.copy(lazySourcePath = null, sourceFootnotes = emptyList()) }
+                else reopened.chapters)
         val position = AtomicReference<Pair<Int, Int>>()
         val host = AtomicReference<View>()
         var noteWrites = 0
@@ -178,7 +184,7 @@ class ReaderProvidedFootnotesRobolectricTest {
                             popup.draw(canvas)
                             canvas.restore()
                         }
-                    File(directory, "provided-footnote-${format.name.lowercase()}.png").apply { parentFile?.mkdirs() }
+                    File(directory, "provided-footnote-${format.name.lowercase()}${if (textOnlyCache) "-text-cache" else ""}.png").apply { parentFile?.mkdirs() }
                         .outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
                 } finally { bitmap.recycle() }
             }

@@ -320,7 +320,7 @@ internal fun ReaderSearchPanel(book: Book, document: ReaderDocument?, raster: Bo
           catch (error: Exception) { searchFailure = error.message ?: "无法读取书籍正文" }
           finally { searching = false }
     }
-    ReaderPanelTitle("全文搜索与替换", if (raster) "搜索已导入的文字层，双击结果返回原文" else "搜索整本书，双击结果返回原文")
+    ReaderPanelTitle("全文搜索与替换", if (raster) "搜索已导入的文字层，双击进入结果位置" else "搜索整本书，双击进入结果位置")
     OutlinedTextField(query, onQuery, Modifier.fillMaxWidth().padding(horizontal = 24.dp).testTag("reader_search_query"), singleLine = true,
         enabled = !replacing, placeholder = { Text("输入关键词") }, leadingIcon = { Icon(Icons.Outlined.Search, null) },
         trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { onQuery("") }, enabled = !replacing) { Icon(Icons.Outlined.Close, "清空") } })

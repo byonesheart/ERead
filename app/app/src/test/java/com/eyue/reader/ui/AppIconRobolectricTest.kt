@@ -7,11 +7,18 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
-import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -21,6 +28,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.eyue.reader.data.AppThemeStyle
 import com.eyue.reader.data.LibraryMode
 import org.junit.Assert.*
@@ -61,6 +69,7 @@ class AppIconRobolectricTest {
         assertFalse("Pixel theme must alter the actual glyph, not just its tint", pixels(classic).contentEquals(pixels(pixel)))
         assertTrue(pixels(pixel).any { it != android.graphics.Color.WHITE })
         assertPixelCells(pixel)
+        assertSolidPixels(pixel)
         compose.runOnIdle { theme = AppThemeStyle.CLASSIC }
         val restored = capture("glyph")
         assertArrayEquals(pixels(classic), pixels(restored))
@@ -84,6 +93,8 @@ class AppIconRobolectricTest {
         assertTrue(pixels(blue).any { android.graphics.Color.blue(it) > android.graphics.Color.red(it) + 50 })
         assertTrue(pixels(blue).none { android.graphics.Color.red(it) > android.graphics.Color.blue(it) + 50 })
         assertPixelCells(blue)
+        assertSolidPixels(red, android.graphics.Color.RED)
+        assertSolidPixels(blue, android.graphics.Color.BLUE)
         red.recycle(); blue.recycle()
     }
 
@@ -136,6 +147,78 @@ class AppIconRobolectricTest {
         compose.runOnIdle { assertEquals(2, imports) }
     }
 
+    @Test fun actualFunctionIconsHaveCrispSolidPixelsAtTheirTwentyFourDpDisplaySize() {
+        val icons = listOf(
+            Icons.AutoMirrored.Outlined.MenuBook, Icons.Outlined.AutoStories, Icons.Outlined.LibraryBooks,
+            Icons.Outlined.Search, Icons.Outlined.Bookmarks, Icons.Outlined.BookmarkBorder, Icons.Outlined.Add, Icons.Outlined.Close,
+            Icons.Outlined.DarkMode, Icons.Outlined.LightMode, Icons.Outlined.Settings, Icons.Outlined.Tune,
+            Icons.Outlined.Headphones, Icons.Outlined.PlayArrow, Icons.Outlined.Pause, Icons.Outlined.Check,
+            Icons.Outlined.SkipPrevious, Icons.Outlined.SkipNext, Icons.Outlined.FastRewind, Icons.Outlined.FastForward,
+            Icons.Outlined.Cloud, Icons.Outlined.CloudUpload, Icons.Outlined.CloudDownload, Icons.Outlined.CloudSync, Icons.Outlined.CloudDone,
+            Icons.AutoMirrored.Outlined.ArrowBack, Icons.AutoMirrored.Outlined.ArrowForward, Icons.Outlined.ChevronRight,
+            Icons.Outlined.ExpandMore, Icons.Outlined.ExpandLess, Icons.Outlined.SwapHoriz, Icons.Outlined.SwapVert,
+            Icons.Outlined.UnfoldMore, Icons.Outlined.MoreHoriz, Icons.Outlined.MoreVert, Icons.Outlined.DeleteOutline,
+            Icons.Outlined.Description, Icons.Outlined.Feedback, Icons.Outlined.Edit, Icons.Outlined.EditNote,
+            Icons.Outlined.BorderColor, Icons.Outlined.FormatUnderlined, Icons.Outlined.Palette, Icons.Outlined.BrightnessAuto,
+            Icons.Outlined.GridView, Icons.Outlined.ViewList, Icons.Outlined.Checklist, Icons.Outlined.Sort,
+            Icons.Outlined.Info, Icons.Outlined.ErrorOutline, Icons.Outlined.CheckCircle, Icons.Outlined.OpenInNew,
+            Icons.Outlined.FolderOpen, Icons.Outlined.SearchOff, Icons.Outlined.History, Icons.Outlined.RecordVoiceOver,
+            Icons.Outlined.FavoriteBorder, Icons.Outlined.CleaningServices
+        )
+        compose.setContent {
+            host.set(LocalView.current)
+            EReadTheme(false, false, AppThemeStyle.PIXEL) {
+                Column(Modifier.width(352.dp).background(Color.White).testTag("catalog")) {
+                    icons.withIndex().toList().chunked(8).forEach { row ->
+                        Row {
+                            row.forEach { (index, vector) ->
+                                Column(Modifier.size(44.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    AppIcon(vector, vector.name, Modifier.size(24.dp).testTag("glyph_$index"), Color.Black)
+                                    Text(vector.name.substringAfterLast('.').take(8), color = Color.Black, fontSize = 6.sp, maxLines = 1)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        icons.indices.forEach { index ->
+            val bitmap = capture("glyph_$index")
+            try {
+                assertEquals(24, bitmap.width)
+                assertEquals(24, bitmap.height)
+                assertSolidPixels(bitmap)
+                assertTrue("${icons[index].name} must remain recognizable rather than empty", pixels(bitmap).count { it == android.graphics.Color.BLACK } > 8)
+            } finally { bitmap.recycle() }
+        }
+        capture("catalog", "pixel-icons-24dp").recycle()
+    }
+
+    @Test fun unlistedVectorFallbackAlsoRemovesAntialiasedGrayEdges() {
+        val curved = ImageVector.Builder("UnlistedCurvedIcon", 24.dp, 24.dp, 24f, 24f).apply {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(12f, 2f)
+                curveTo(25f, 3f, 24f, 20f, 12f, 22f)
+                curveTo(0f, 20f, -1f, 3f, 12f, 2f)
+                close()
+            }
+        }.build()
+        compose.setContent {
+            host.set(LocalView.current)
+            EReadTheme(false, false, AppThemeStyle.PIXEL) {
+                Box(Modifier.background(Color.White)) {
+                    AppIcon(curved, "未列出图标", Modifier.size(96.dp).testTag("glyph"), Color.Black)
+                }
+            }
+        }
+        val bitmap = capture("glyph", "pixel-fallback")
+        try {
+            assertSolidPixels(bitmap)
+            assertPixelCells(bitmap)
+            assertTrue(pixels(bitmap).any { it == android.graphics.Color.BLACK })
+        } finally { bitmap.recycle() }
+    }
+
     private fun capture(tag: String, artifact: String? = null): Bitmap {
         compose.waitForIdle()
         val bounds = compose.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
@@ -155,6 +238,11 @@ class AppIconRobolectricTest {
 
     private fun pixels(bitmap: Bitmap) = IntArray(bitmap.width * bitmap.height).also {
         bitmap.getPixels(it, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+    }
+
+    private fun assertSolidPixels(bitmap: Bitmap, foreground: Int = android.graphics.Color.BLACK) {
+        assertTrue("Pixel icons must contain only the chosen foreground and background, without gray antialiasing fringes",
+            pixels(bitmap).all { it == foreground || it == android.graphics.Color.WHITE })
     }
 
     private fun assertPixelCells(bitmap: Bitmap) {

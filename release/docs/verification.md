@@ -2,6 +2,24 @@
 
 > 目录迁移说明（2026-10-20）：下文保留各版本验证当时的路径与结果。整理后，Android 工程位于 `app/`，原 `.tools/...` 对应 `app/.tools/...`，原 `artifacts/ERead-*` 发布文件对应 `release/android/ERead-*`，原 `docs/...` 对应 `release/docs/...`。私人测试资料移入 `app/.tools/artifacts/`，其中导入样本位于 `import-fixtures/`。此次目录整理未重新执行下文的测试或设备验证。
 
+## 1.10.3 的变更与验证
+
+日期：2026-10-24。安装包为 `release/android/ERead-1.10.3-debug.apk`，versionCode 42，包名 `com.eyue.reader`，最低 API 26、目标 API 35。大小 47,687,530 字节，SHA-256 为 `ABA78564C2F3FF79C4F4E7B14082F1ABB6F465AA9635063CDCBE31E42DB82BAC`。签名校验通过，证书 SHA-256 为 `8f7811588790d1be580102e0dee4089be519104936f1f6d57815df173254ca07`，与旧版一致，可覆盖安装。
+
+最终 `testDebugUnitTest`、`assembleDebug`、`assembleDebugAndroidTest`、`lintDebug` 全部通过，日志 `app/.tools/build-1.10.3-source-final-3.log`，`BUILD SUCCESSFUL in 7m 59s`。1115 项 JVM／Robolectric 测试、149 个类，0 失败、0 错误、0 跳过；lint 为 0 错误、65 警告、4 信息。阅读页 DEX 静态类别检查为 434 个寄存器、18,245 条指令、0 错误；它只检查普通分支中的寄存器类别，不代替 ART 校验。
+
+有原文件引用的 EPUB／MOBI 小说改用当前章原 HTML／资源渲染，原生文本分页不再为这一路径准备第二份页表；首次建立来源索引，可信未变来源热开复用持久缓存。ReaderScreen 和来源存储均只持有当前及相邻章节的重型数据，浏览器只建立当前章。普通文件／可定位描述符直接读取；仅顺序流来源使用阅读会话临时文件，多资源并发读取不重复打开、复制原件，关闭书籍后清除，回归核对了实际字节、并发计数、流关闭及原件不变。未保存文本修改继续投影到原结构，包括仅空格、换行的编辑；未编辑导入允许规范化的空白差。
+
+实际 Edge 浏览器回归为 26 项通过、0 失败、0 页面脚本异常，报告 `app/.tools/ebook-dom-complete-final/report.json`。涵盖源 CSS／软件正文与特殊格式比例、三种模式、双页、选区及简繁 UTF-16 映射、实际字体切换、图片、注释、搜索／朗读高亮及翻页消息。增加严格末行可见字、隐藏尾注下的几何末页、滚动先到本章边界再跨章，以及系统取消触摸后释放手动状态和图片长按的回归。脚本 SHA-256 为 `b79da31a8a190e34ba551addcb8258c72a5bb96dfb7c835020a633aa337f5216`，与最终 APK 的脚本完全一致。
+
+软件正文模式覆盖普通正文的字号、行距、段距、字距、首缩进及加粗；标题、引用、表格和强调保留特殊格式。合成源正文 28 px 切换软件 19 px 后，32 px 标题约为 21.71 px，24 px 引用约为 16.29 px；切回源 CSS 恢复原值。真实《西游记》EPUB／MOBI 第一回保持 8509 个 UTF-16 字符、32 个有效注释目标，浏览器点击可读到对应释文。两格式原结构、规范正文和资源映射均经过只读验证；私人原书、导出 HTML／释文及截图不纳入源码。
+
+设置栏实际绘制截图确认短按钮统一、常规 360 dp 宽度下五个字体选项同排，简繁紧随字体；系统文字放大后可横向滚动，字符不裁切。清晰像素字模、支持模式中的 120 Hz 优先请求、书架长按改名及云端名称保留、同名上传确认后后台执行、搜索双击定位和临时返回均有回归。没有更改本地 `library.json` version 13 或 WebDAV version 1；Windows 增量交接见 [1.10.3 交接](windows-handoff-1.10.3.md)，既有 Windows 工作未修改、提交或验收。
+
+Android 设备测试包已编译，新增实际窗口／WebView／翻页截图用例尚未运行：本机无连接手机，现有模拟器缺少硬件加速，两版 Emulator 均在 Android 启动前发生 Windows `0xC0000005`，临时映射和进程已清理。桌面浏览器验证不等于 Android WebView／原生选区或仿真翻页视觉验收，也未测量真机 120 fps。MOBI 仍使用既有兼容段，本版没有新增纯 KF8／AZW3／DRM 支持。
+
+APK 共 315 个 ZIP 条目，含 15 个法律／许可证资产和两份字体资源；未发现私人书籍、日志文档、私钥或嵌入 API 密钥模式。提供样本原件 SHA-256 保持不变：TXT `6A4838EAA8AD814A9C53AE240705DF86360D61766FCD23F922AE9A9FEC936A68`；MOBI `E63A0953D0AE0A3577846EFF39CC5E0F3CF22A1E717D92D7E013332DC7A117C2`；EPUB `71E21D911D2B21960E53144BA7F63BBBBFCC1433A244829E3AA75822E5BF1655`；《龙族》MOBI `202ABFC82510484F665351DF46EABA9422B404614AE61B47E53049B2B3F551A5`。
+
 ## 1.10.2 的变更与验证
 
 日期：2026-10-22。安装包为 `release/android/ERead-1.10.2-debug.apk`，versionCode 41，包名 `com.eyue.reader`，最低 API 26、目标 API 35。大小 47,477,056 字节，SHA-256 为 `761767D9393CC35CC749DEEBAE07408517F6C308FAA54C7B52E485EFBF11A8A7`。签名校验通过，证书与旧版一致，可覆盖安装。

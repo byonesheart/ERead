@@ -65,6 +65,16 @@ class TxtSourceFootnotesTest {
         assertEquals(listOf("第一条释文。", "第二条释文。"), rediscovered.map { it.content })
     }
 
+    @Test fun ebookDefinitionsMayTouchTheirNumberWhilePlainTxtKeepsItsStricterRule() {
+        val text = "原文[1]和[2]。\n\n[1]第一条释文。\n\n[2]第二条释文。"
+        assertTrue(txtSourceFootnotes(text).isEmpty())
+        val notes = txtSourceFootnotes(text, allowAttachedDefinition = true)
+        assertEquals(listOf("第一条释文。", "第二条释文。"), notes.map { it.content })
+        assertEquals(listOf(text.indexOf("[1]"), text.indexOf("[2]")), notes.map { it.start })
+        assertTrue(txtSourceFootnotes("[1]列表项。\n[2]列表项。", allowAttachedDefinition = true).isEmpty())
+        assertTrue(txtSourceFootnotes("原文[1]。\n\n[1]解释一。\n\n[1]解释二。", allowAttachedDefinition = true).isEmpty())
+    }
+
     @Test(expected = CancellationException::class)
     fun cancellationPropagatesInsteadOfReturningAnEmptyResult() {
         txtSourceFootnotes("正文[1]。\n\n[1] 释文。") { throw CancellationException("cancelled") }

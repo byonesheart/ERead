@@ -2,6 +2,8 @@ package com.eyue.reader.ui
 
 import com.eyue.reader.ui.AppIcon as Icon
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -14,7 +16,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.eyue.reader.data.ChineseConversion
@@ -67,41 +76,30 @@ internal fun ReaderPreferencesPanel(settings: ReaderSettings, onSettings: (Reade
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, onSettings: (ReaderSettings) -> Unit,
     onImportBackground: () -> Unit, onFonts: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("背景", Modifier.width(34.dp), fontSize = 12.sp)
-        FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf(ReaderBackground.PAPER to "纸白", ReaderBackground.WHITE to "纯白", ReaderBackground.GREEN to "护眼").forEach { (value, name) ->
-                FilterChip(!settings.nightMode && settings.background == value,
-                    { onSettings(settings.copy(background = value, nightMode = false)) }, { Text(name, fontSize = 12.sp) }, Modifier.height(32.dp))
-            }
-            if (settings.backgroundImagePath != null) FilterChip(settings.background == ReaderBackground.IMAGE,
-                { onSettings(settings.copy(background = ReaderBackground.IMAGE)) }, { Text("图片", fontSize = 12.sp) }, Modifier.height(32.dp))
-            TextButton(onClick = onImportBackground, contentPadding = PaddingValues(horizontal = 4.dp)) { Text("导入图片", fontSize = 12.sp) }
+    ReaderInterfaceOptions("背景") {
+        listOf(ReaderBackground.PAPER to "纸白", ReaderBackground.WHITE to "纯白", ReaderBackground.GREEN to "护眼").forEach { (value, name) ->
+            ReaderInterfaceOption(name, !settings.nightMode && settings.background == value,
+                { onSettings(settings.copy(background = value, nightMode = false)) })
+        }
+        if (settings.backgroundImagePath != null) ReaderInterfaceOption("图片", settings.background == ReaderBackground.IMAGE,
+            { onSettings(settings.copy(background = ReaderBackground.IMAGE)) })
+        ReaderInterfaceOption("导入图片", false, onImportBackground, role = Role.Button)
+    }
+    ReaderInterfaceOptions("模式") {
+        listOf(Triple(ReadingMode.SCROLL, "滚动", Icons.Outlined.UnfoldMore),
+            Triple(ReadingMode.PAGED, "翻页", Icons.Outlined.SwapHoriz),
+            Triple(ReadingMode.VERTICAL_PAGED, "上下", Icons.Outlined.SwapVert)).forEach { (mode, label, icon) ->
+            ReaderInterfaceOption(label, settings.readingMode == mode, { onSettings(settings.copy(readingMode = mode)) },
+                Modifier.testTag("reader_mode_${mode.name.lowercase()}"), leadingIcon = { Icon(icon, null, Modifier.size(15.dp)) })
         }
     }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("模式", Modifier.width(34.dp), fontSize = 12.sp)
-        FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf(Triple(ReadingMode.SCROLL, "滚动", Icons.Outlined.UnfoldMore),
-                Triple(ReadingMode.PAGED, "翻页", Icons.Outlined.SwapHoriz),
-                Triple(ReadingMode.VERTICAL_PAGED, "上下", Icons.Outlined.SwapVert)).forEach { (mode, label, icon) ->
-                FilterChip(settings.readingMode == mode, { onSettings(settings.copy(readingMode = mode)) },
-                    { Text(label, fontSize = 12.sp) }, Modifier.height(32.dp).testTag("reader_mode_${mode.name.lowercase()}"),
-                    leadingIcon = { Icon(icon, null, Modifier.size(15.dp)) })
-            }
-        }
-    }
-    if (settings.readingMode == ReadingMode.PAGED) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("翻页", Modifier.width(34.dp), fontSize = 12.sp)
-        FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf(PageTurnStyle.COVER to "覆盖", PageTurnStyle.SLIDE to "滑动", PageTurnStyle.CURL to "仿真").forEach { (style, label) ->
-                FilterChip(settings.pageTurnStyle == style, { onSettings(settings.copy(pageTurnStyle = style)) },
-                    { Text(label, fontSize = 12.sp) }, Modifier.height(32.dp).testTag("reader_turn_${style.name.lowercase()}"))
-            }
+    if (settings.readingMode == ReadingMode.PAGED) ReaderInterfaceOptions("翻页") {
+        listOf(PageTurnStyle.COVER to "覆盖", PageTurnStyle.SLIDE to "滑动", PageTurnStyle.CURL to "仿真").forEach { (style, label) ->
+            ReaderInterfaceOption(label, settings.pageTurnStyle == style, { onSettings(settings.copy(pageTurnStyle = style)) },
+                Modifier.testTag("reader_turn_${style.name.lowercase()}"))
         }
     }
     ReaderAdjustableSlider("亮度", "阅读亮度", if (settings.brightness < 0f) .5f else settings.brightness, .01f..1f, .01f,
@@ -114,16 +112,18 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
     if (!raster) {
         ReaderAdjustableSlider("字号", "阅读字号", settings.fontSize, 12f..36f, 1f,
             { onSettings(settings.copy(fontSize = it)) }, { it.roundToInt().toString() })
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("字体", Modifier.width(34.dp), fontSize = 12.sp)
-            FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf("跟随系统" to "系统", "系统宋体" to "宋体", "系统黑体" to "黑体").forEach { (name, label) ->
-                    FilterChip(settings.fontPath == null && settings.fontName == name,
-                        { onSettings(settings.copy(fontName = name, fontPath = null)) }, { Text(label, fontSize = 12.sp) }, Modifier.height(32.dp))
-                }
-                FilterChip(settings.bold, { onSettings(settings.copy(bold = !settings.bold)) }, { Text("加粗", fontSize = 12.sp) }, Modifier.height(32.dp))
-                TextButton(onClick = onFonts, contentPadding = PaddingValues(horizontal = 4.dp),
-                    modifier = Modifier.testTag("reader_more_fonts")) { Text("更多", fontSize = 12.sp) }
+        ReaderInterfaceOptions("字体") {
+            listOf("跟随系统" to "系统", "系统宋体" to "宋体", "系统黑体" to "黑体").forEach { (name, label) ->
+                ReaderInterfaceOption(label, settings.fontPath == null && settings.fontName == name,
+                    { onSettings(settings.copy(fontName = name, fontPath = null)) })
+            }
+            ReaderInterfaceOption("加粗", settings.bold, { onSettings(settings.copy(bold = !settings.bold)) }, role = Role.Checkbox)
+            ReaderInterfaceOption("更多", false, onFonts, Modifier.testTag("reader_more_fonts"), role = Role.Button)
+        }
+        ReaderInterfaceOptions("简繁") {
+            listOf(ChineseConversion.ORIGINAL to "原文", ChineseConversion.SIMPLIFIED to "简体", ChineseConversion.TRADITIONAL to "繁体").forEach { (value, label) ->
+                ReaderInterfaceOption(label, settings.chineseConversion == value,
+                    { onSettings(settings.copy(chineseConversion = value)) }, Modifier.testTag("reader_conversion_${value.name.lowercase()}"))
             }
         }
         ReaderAdjustableSlider("行距", "阅读行间距", settings.lineHeight, 1.2f..2.4f, .05f,
@@ -132,13 +132,6 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
             { onSettings(settings.copy(paragraphSpacing = it)) }, { String.format(Locale.getDefault(), "%.1f", it) })
         ReaderAdjustableSlider("字距", "阅读字间距", settings.letterSpacing, -.2f..3f, .1f,
             { onSettings(settings.copy(letterSpacing = it)) }, { String.format(Locale.getDefault(), "%.1f", it) })
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("简繁", Modifier.width(34.dp), fontSize = 12.sp)
-            listOf(ChineseConversion.ORIGINAL to "原文", ChineseConversion.SIMPLIFIED to "简体", ChineseConversion.TRADITIONAL to "繁体").forEach { (value, label) ->
-                FilterChip(settings.chineseConversion == value, { onSettings(settings.copy(chineseConversion = value)) },
-                    { Text(label, fontSize = 12.sp) }, Modifier.padding(end = 4.dp).height(32.dp).testTag("reader_conversion_${value.name.lowercase()}"))
-            }
-        }
     } else Text("保持原页排版，双指可缩放", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     ReaderAdjustableSlider("左距", "阅读左边距", settings.marginLeft, 0f..64f, 1f,
         { onSettings(settings.copy(marginLeft = it)) }, { "${it.roundToInt()}dp" })
@@ -148,4 +141,32 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
         { onSettings(settings.copy(marginTop = it)) }, { "${it.roundToInt()}dp" })
     ReaderAdjustableSlider("下距", "阅读下边距", settings.marginBottom, 0f..64f, 1f,
         { onSettings(settings.copy(marginBottom = it)) }, { "${it.roundToInt()}dp" })
+}
+
+@Composable
+private fun ReaderInterfaceOptions(label: String, content: @Composable RowScope.() -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.widthIn(min = 34.dp), fontSize = 12.sp, maxLines = 1)
+        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp), content = content)
+    }
+}
+
+@Composable
+private fun ReaderInterfaceOption(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier,
+    role: Role = Role.RadioButton, leadingIcon: (@Composable () -> Unit)? = null) {
+    val colors = MaterialTheme.colorScheme
+    val height = with(LocalDensity.current) { (16.sp.toDp() + 12.dp).coerceAtLeast(36.dp) }
+    OutlinedButton(onClick = onClick, modifier = modifier.heightIn(min = height).widthIn(min = 52.dp).semantics {
+        this.role = role
+        if (role == Role.Checkbox) toggleableState = ToggleableState(selected)
+        else if (role == Role.RadioButton) this.selected = selected
+    },
+        shape = appShape(8.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+        border = BorderStroke(1.dp, if (selected) colors.primary else colors.outline),
+        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) colors.secondaryContainer else colors.surface,
+            contentColor = if (selected) colors.onSecondaryContainer else colors.onSurface)) {
+        if (leadingIcon != null) { leadingIcon(); Spacer(Modifier.width(4.dp)) }
+        Text(label, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 1)
+    }
 }

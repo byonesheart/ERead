@@ -6,6 +6,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -131,14 +132,18 @@ import java.util.Locale
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable fun HistoryRow(book: Book, onOpen: () -> Unit, onCloud: (() -> Unit)? = null, cloudBusy: Boolean = false,
     cloudInProgress: Boolean = false, cloudTaskLabel: String = "", cloudFraction: Float? = null,
-    onCancelCloud: (() -> Unit)? = null, cloudCanCancel: Boolean = false, cloudDirty: Boolean = false) {
+    onCancelCloud: (() -> Unit)? = null, cloudCanCancel: Boolean = false, cloudDirty: Boolean = false,
+    onRename: (() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth().clickable(enabled = !book.cloudOnly, onClick = onOpen), verticalAlignment = Alignment.CenterVertically) {
         BookCover(book, Modifier.width(53.dp).height(74.dp), onCloud, cloudBusy, cloudInProgress, cloudTaskLabel, cloudFraction,
             onCancelCloud, cloudCanCancel, cloudDirty)
         Column(Modifier.weight(1f).padding(start = 15.dp)) {
-            Text(book.title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(book.title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("shelf_book_title_${book.id}").then(if (onRename == null) Modifier else
+                    Modifier.combinedClickable(onClick = { if (!book.cloudOnly) onOpen() }, onLongClick = onRename)))
             Text(listOf(book.displayAuthor, chapterLabel(book)).filter { it.isNotBlank() }.joinToString(" · "),
                 color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text("${relativeTime(book.lastReadAt)} · 第 ${book.chapterIndex + 1}/${book.chapters.size} 章 · ${(book.progress * 100).toInt()}%",
@@ -151,6 +156,7 @@ import java.util.Locale
 
 private const val UNGROUPED_FILTER = "@ungrouped"
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable fun Bookshelf(books: List<Book>, query: String, onQuery: (String) -> Unit, onOpen: (Book) -> Unit,
     onDelete: (Book) -> Unit, onImport: () -> Unit, groups: List<ShelfGroup> = emptyList(),
     onCreateGroup: (String) -> Unit = {}, onRenameGroup: (String, String) -> Unit = { _, _ -> },
@@ -167,7 +173,8 @@ private const val UNGROUPED_FILTER = "@ungrouped"
     cloudDirtyBookIds: Set<String> = emptySet(),
     pendingImports: List<PendingImport> = listOfNotNull(pending),
     onRemoveBatch: ((List<Book>, Boolean) -> Unit)? = null,
-    restoreProgress: CloudOperationProgress? = null) {
+    restoreProgress: CloudOperationProgress? = null,
+    onRenameBook: ((String, String) -> Boolean)? = null) {
     fun transfer(book: Book) = cloudTransfers[book.id] ?: if (cloudBookId == book.id)
         CloudTransferProgress(cloudTaskLabel, cloudFraction, cloudCanCancel) else null
     var selectingBackup by remember { mutableStateOf(false) }
@@ -189,6 +196,9 @@ private const val UNGROUPED_FILTER = "@ungrouped"
     var groupName by remember { mutableStateOf("") }
     var deletingGroup by remember { mutableStateOf<ShelfGroup?>(null) }
     var moving by remember { mutableStateOf<Book?>(null) }
+    var renaming by remember { mutableStateOf<Book?>(null) }
+    var renamedTitle by remember { mutableStateOf("") }
+    fun rename(book: Book) { renaming = book; renamedTitle = book.title }
     val groupCounts = remember(books) { books.groupingBy { it.groupId }.eachCount() }
     val displayed = books.filter {
         (it.title.contains(query, true) || it.displayAuthor.contains(query, true)) &&
@@ -312,9 +322,10 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                                 onVoiceRoles = onVoiceRoles?.let { { it(book.id) } })
                         }
                         Text(book.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1,
-                            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 11.dp).testTag("shelf_book_title_${book.id}").clickable(enabled = selectingBackup || !book.cloudOnly) {
-                                if (selectingBackup) selectBackup(book) else onOpen(book)
-                            })
+                            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 11.dp).testTag("shelf_book_title_${book.id}").combinedClickable(
+                                enabled = selectingBackup || !book.cloudOnly || onRenameBook != null,
+                                onClick = { if (selectingBackup) selectBackup(book) else if (!book.cloudOnly) onOpen(book) },
+                                onLongClick = if (!selectingBackup && onRenameBook != null) { { rename(book) } } else null))
                         Text(book.displayAuthor, fontSize = 10.sp, color = Muted,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp).testTag("shelf_book_author_${book.id}"))
                         Text("第 ${book.chapterIndex + 1} / ${book.chapters.size} 章 · ${(book.progress * 100).toInt()}%", fontSize = 10.sp,
@@ -338,7 +349,8 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                         }
                         HistoryRow(book, { if (selectingBackup) selectBackup(book) else onOpen(book) }, onCloud?.let { { it(book) } }, cloudBusy || transfer(book) != null,
                             transfer(book) != null, transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
-                            onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds)
+                            onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds,
+                            onRename = if (!selectingBackup && onRenameBook != null) { { rename(book) } } else null)
                         Row(Modifier.fillMaxWidth().padding(start = 68.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("最新 · ${book.chapters.lastOrNull()?.title.orEmpty()}", modifier = Modifier.weight(1f),
                                 color = Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -352,6 +364,17 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 }
             }
         }
+    }
+    renaming?.let { book ->
+        AlertDialog(onDismissRequest = { renaming = null }, modifier = Modifier.testTag("shelf_rename_dialog"),
+            title = { Text("重命名书籍") }, text = {
+                OutlinedTextField(renamedTitle, { renamedTitle = it }, label = { Text("书籍名称") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("shelf_rename_title"))
+            }, confirmButton = {
+                TextButton(enabled = renamedTitle.isNotBlank(), onClick = {
+                    if (onRenameBook?.invoke(book.id, renamedTitle.trim()) == true) renaming = null
+                }, modifier = Modifier.testTag("shelf_rename_save")) { Text("保存") }
+            }, dismissButton = { TextButton(onClick = { renaming = null }) { Text("取消") } })
     }
     deletingBatch?.let { selected ->
         BatchRemoveBooksDialog(selected, speechCacheRevision, cloudConfigured && onRemoveBatch != null, meteredNetwork,

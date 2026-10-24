@@ -48,6 +48,8 @@ class ReaderSearchHighlightNavigationRobolectricTest {
 
     @Test fun automaticSearchScrollRetainsHighlightAndManualScrollingClearsIt() = verify(ReadingMode.SCROLL)
     @Test fun automaticSearchPageLocationRetainsHighlightAndManualPagingClearsIt() = verify(ReadingMode.PAGED)
+    @Test fun searchReturnRestoresTheOriginalScrolledPosition() = verifyReturn(ReadingMode.SCROLL)
+    @Test fun searchReturnRestoresTheOriginalPagedPosition() = verifyReturn(ReadingMode.PAGED)
 
     private fun verify(mode: ReadingMode) {
         val chapters = listOf("Unrelated first chapter.", "Before needle and more text follow.\n".repeat(120)).mapIndexed { index, text ->
@@ -72,11 +74,44 @@ class ReaderSearchHighlightNavigationRobolectricTest {
         Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
         compose.waitForIdle()
         assertTrue("Automatic search restoration must preserve the highlight", hasHighlight())
+        compose.onNodeWithTag("reader_search_return").assertIsDisplayed()
+        compose.onNodeWithTag("reader_jump_return").assertDoesNotExist()
         if (mode == ReadingMode.SCROLL) compose.onNodeWithTag("reader_scroll").performTouchInput {
             swipeUp(startY = height * .8f, endY = height * .6f)
         } else compose.onNodeWithTag("reader_body").performTouchInput { swipeLeft() }
         await { layouts().any { it.layoutInput.text.text.contains("needle") } && !hasHighlight() }
+        compose.onNodeWithTag("reader_search_return").assertDoesNotExist()
         compose.runOnIdle { assertEquals(1, chapter.get()) }
+    }
+
+    private fun verifyReturn(mode: ReadingMode) {
+        val chapters = listOf((0 until 160).joinToString("\n") { "Original reading paragraph $it continues here." },
+            "Before needle and more text follow.\n".repeat(120)).mapIndexed { index, text ->
+            Chapter(title = "第${index + 1}章", textPath = File(root, "return-$index.txt").apply { writeText(text) }.absolutePath)
+        }
+        val book = Book(title = "搜索返回", format = BookFormat.EPUB, mode = LibraryMode.NOVEL,
+            chapters = chapters, characterOffset = 1800)
+        val position = AtomicReference<Pair<Int, Int>>()
+        compose.setContent {
+            CompositionLocalProvider(LocalReaderSpeechFactory provides { SilentSpeech() }) { MaterialTheme {
+                ReaderScreen(book, ReaderSettings(readingMode = mode, showTime = false, showBattery = false), emptyList(), {},
+                    { chapter, _, offset, _, _ -> position.set(chapter to offset) }, {}, {}, {}, {}, emptyFlow(),
+                    resumeSearch = ReaderSearchDraft("needle", ""))
+            } }
+        }
+        await { position.get()?.first == 0 &&
+            compose.onAllNodesWithTag("reader_search_result_1_0_7").fetchSemanticsNodes().isNotEmpty() }
+        compose.mainClock.advanceTimeBy(500)
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500))
+        compose.waitForIdle()
+        val original = requireNotNull(position.get())
+        assertTrue("The saved origin should exercise a nonzero text offset", original.second > 0)
+        compose.onNodeWithTag("reader_search_result_1_0_7").performTouchInput { doubleClick() }
+        await { position.get()?.first == 1 && compose.onAllNodesWithTag("reader_search_return").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("reader_search_return").assertIsDisplayed().performClick()
+        await({ "origin=$original actual=${position.get()}" }) { position.get() == original }
+        compose.onNodeWithTag("reader_search_return").assertDoesNotExist()
+        assertFalse("Returning should clear the search-only highlight", hasHighlight())
     }
 
     private fun hasHighlight() = layouts().any { layout -> layout.layoutInput.text.spanStyles.any { it.item.background != Color.Unspecified } }
