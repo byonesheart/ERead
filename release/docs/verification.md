@@ -1,5 +1,16 @@
 # 构建与验证记录
 
+## 1.11.6 发布（2026-10-26）
+
+作者在完成上述本地验证后要求上传 GitHub 并分享网盘。已发布 [E阅 1.11.6](https://github.com/byonesheart/ERead/releases/tag/v1.11.6)，安装包及源码包在 GitHub 返回的大小与 SHA-256 均匹配本地文件。安装包仍沿用调试签名，未追加手机安装或运行测试。
+
+源码提交：`7b6e595a642eaaf73f08d8ce38c894b24f0260c6`；源码包 **23,168,709 字节**，SHA-256 `78943a9556ac083cb0230fcca9b161a369ce29d29f7b17d1f06d60cf491f8153`。归档只包含已提交文件，没有本地工具、个人书籍、签名私钥或 Windows 端未完成的修改。
+
+百度网盘与夸克网盘均保存于 `/项目/E阅/ERead-1.11.6-debug.apk`。夸克首轮上传后的校验未通过，随后读取云端副本确认 SHA-256 与安装包一致，再创建分享；没有重复上传。下载链接见 [软件介绍](../README.md)。
+
+根目录与共用目录更新清单在 Release 公开、附件校验通过后同步为 versionCode **49**；版本记录见 [update-1.11.6.json](releases/update-1.11.6.json)。下文各节保留开发验证当时的发布状态。
+
+
 > 目录迁移说明（2026-10-20）：下文保留各版本验证当时的路径与结果。整理后，Android 工程位于 `app/`，原 `.tools/...` 对应 `app/.tools/...`，原 `artifacts/ERead-*` 发布文件对应 `release/android/ERead-*`，原 `docs/...` 对应 `release/docs/...`。私人测试资料移入 `app/.tools/artifacts/`，其中导入样本位于 `import-fixtures/`。此次目录整理未重新执行下文的测试或设备验证。
 
 ## 1.11.6 返回位置、页面预加载与 EPUB 打开
