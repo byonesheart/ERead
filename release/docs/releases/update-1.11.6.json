@@ -1,0 +1,26 @@
+{
+  "versionCode": 49,
+  "versionName": "1.11.6",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.6",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.6/ERead-1.11.6-debug.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1K568KZaEIoNvSN7xntU43A?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/ef420b658cdc",
+      "extractionCode": "HC1G"
+    }
+  ],
+  "changelog": [
+    "EPUB／MOBI 统一使用兼容引擎显示原书 HTML／CSS，保留图片、注释、笔记与朗读定位。",
+    "默认开启连贯滚动，跨章阅读更连贯，也可恢复逐章滚动。",
+    "翻页预加载相邻章节的页面、字体与图片，减少切章等待和画面重叠。",
+    "优化 EPUB 首次打开与重复导入检查，从外部打开文件后直接进入对应书籍。",
+    "修复快速连续跳转时返回位置与章节名称不一致。",
+    "更多功能请自行体验。"
+  ]
+}
