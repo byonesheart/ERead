@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -64,6 +65,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -114,6 +116,11 @@ internal fun ReaderPreferenceSettings(settings: ReaderSettings, onSettings: (Rea
     var confirmReset by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         if (sourceCssAvailable) {
+            ReaderToggle("连贯滚动", settings.continuousEbookScroll, Modifier.testTag("reader_continuous_scroll")) {
+                onSettings(settings.copy(continuousEbookScroll = it))
+            }
+            Text("EPUB／MOBI 滚动时自然衔接相邻章节；关闭后使用逐章滚动。", fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             ReaderToggle("使用原书 CSS", settings.useSourceCss, Modifier.testTag("reader_use_source_css")) {
                 onSettings(settings.copy(useSourceCss = it))
             }
@@ -168,13 +175,13 @@ internal fun ReaderSpacingSettings(settings: ReaderSettings, onSettings: (Reader
     var paragraphSpacingDraft by remember(settings.paragraphSpacing) { mutableFloatStateOf(settings.paragraphSpacing) }
     var letterSpacingDraft by remember(settings.letterSpacing) { mutableFloatStateOf(settings.letterSpacing) }
     ReaderDialogFrame("间距", settings, onClose) {
-        ReaderSettingLabel("行间距", String.format(Locale.getDefault(), "%.2f", lineHeightDraft))
+        ReaderSettingLabel("行间距", String.format(LocalLocale.current.platformLocale, "%.2f", lineHeightDraft))
         Slider(lineHeightDraft, { lineHeightDraft = it }, Modifier.semantics { contentDescription = "阅读行间距" }, valueRange = 1.2f..2.4f,
             onValueChangeFinished = { if (lineHeightDraft != settings.lineHeight) onSettings(settings.copy(lineHeight = lineHeightDraft)) })
-        ReaderSettingLabel("段间距", String.format(Locale.getDefault(), "%.1f", paragraphSpacingDraft))
+        ReaderSettingLabel("段间距", String.format(LocalLocale.current.platformLocale, "%.1f", paragraphSpacingDraft))
         Slider(paragraphSpacingDraft, { paragraphSpacingDraft = it }, Modifier.semantics { contentDescription = "阅读段间距" }, valueRange = 0f..2f,
             onValueChangeFinished = { if (paragraphSpacingDraft != settings.paragraphSpacing) onSettings(settings.copy(paragraphSpacing = paragraphSpacingDraft)) })
-        ReaderSettingLabel("字间距", String.format(Locale.getDefault(), "%.1f", letterSpacingDraft))
+        ReaderSettingLabel("字间距", String.format(LocalLocale.current.platformLocale, "%.1f", letterSpacingDraft))
         Slider(letterSpacingDraft, { letterSpacingDraft = it }, Modifier.semantics { contentDescription = "阅读字间距" }, valueRange = -0.2f..3f,
             onValueChangeFinished = { if (letterSpacingDraft != settings.letterSpacing) onSettings(settings.copy(letterSpacing = letterSpacingDraft)) })
     }

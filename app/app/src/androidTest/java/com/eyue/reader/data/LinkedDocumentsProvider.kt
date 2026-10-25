@@ -71,7 +71,7 @@ class LinkedDocumentsProvider : DocumentsProvider() {
             DocumentsContract.Root.COLUMN_TITLE -> "引用测试"
             DocumentsContract.Root.COLUMN_FLAGS -> DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD
             else -> null
-        } }.toTypedArray()) }
+        } }.toTypedArray<Any?>()) }
     }
 
     override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor =
@@ -129,7 +129,7 @@ class LinkedDocumentsProvider : DocumentsProvider() {
             DocumentsContract.Document.COLUMN_SIZE -> node.file?.length() ?: 0L
             DocumentsContract.Document.COLUMN_LAST_MODIFIED -> node.file?.lastModified() ?: 0L
             else -> null
-        } }.toTypedArray()) } }
+        } }.toTypedArray<Any?>()) } }
     }
 
     companion object { const val AUTHORITY = "com.eyue.reader.test.linkedfixture" }

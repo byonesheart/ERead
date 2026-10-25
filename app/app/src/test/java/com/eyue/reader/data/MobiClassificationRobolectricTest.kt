@@ -45,7 +45,12 @@ class MobiClassificationRobolectricTest {
 
     @After fun tearDown() {
         check(root.canonicalFile.parentFile == File("build").canonicalFile)
-        check(root.deleteRecursively())
+        // Windows may briefly retain a native image decoder's temporary file handle.
+        repeat(5) {
+            if (root.deleteRecursively()) return
+            Thread.sleep(50)
+        }
+        check(!root.exists())
     }
 
     @Test fun imageOnlyMobiUsesReadingOrderRepeatedPagesAndFirstPageCover() = runBlocking {

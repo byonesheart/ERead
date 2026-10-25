@@ -7,7 +7,7 @@ $toolsRoot = Join-Path $projectRoot '.tools'
 $downloadsRoot = Join-Path $toolsRoot 'downloads'
 $jdkRoot = Join-Path $toolsRoot 'jdk'
 $sdkRoot = Join-Path $toolsRoot 'android-sdk'
-$gradleRoot = Join-Path $toolsRoot 'gradle-8.11.1'
+$gradleRoot = Join-Path $toolsRoot 'gradle-9.7.0'
 
 # All tools stay in the project. Environment variables apply to this process only.
 foreach ($directory in @($toolsRoot, $downloadsRoot, $jdkRoot, $sdkRoot)) {
@@ -65,8 +65,8 @@ if (-not (Test-Path -LiteralPath (Join-Path $jdkRoot 'bin\java.exe'))) {
 
 if (-not (Test-Path -LiteralPath (Join-Path $gradleRoot 'bin\gradle.bat'))) {
     $gradleArchive = Get-VerifiedArchive `
-        'https://downloads.gradle.org/distributions/gradle-8.11.1-bin.zip' `
-        'gradle-8.11.1-bin.zip' 'f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6'
+        'https://downloads.gradle.org/distributions/gradle-9.7.0-bin.zip' `
+        'gradle-9.7.0-bin.zip' '84fbba45c7f4c64abc77460e1c00f541e9f960e3c7ed2538f1ede19eacd873ae'
     Expand-ToolArchive $gradleArchive $toolsRoot
 }
 
@@ -93,13 +93,13 @@ $env:ANDROID_SDK_ROOT = $sdkRoot
 $env:GRADLE_USER_HOME = Join-Path $toolsRoot 'gradle-home'
 $env:PATH = "$jdkRoot\bin;$sdkRoot\platform-tools;$gradleRoot\bin;$env:PATH"
 
-$sdkFiles = @('platforms\android-35\android.jar', 'build-tools\35.0.0\aapt2.exe', 'platform-tools\adb.exe')
+$sdkFiles = @('platforms\android-37.0\android.jar', 'build-tools\36.0.0\aapt2.exe', 'platform-tools\adb.exe')
 $missingSdkFiles = $sdkFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $sdkRoot $_)) }
 if ($missingSdkFiles) {
     1..20 | ForEach-Object { 'y' } | & $sdkManager "--sdk_root=$sdkRoot" --licenses |
         Out-File -LiteralPath (Join-Path $toolsRoot 'sdk-licenses.log') -Encoding utf8
     if ($LASTEXITCODE -ne 0) { throw 'Android SDK license setup failed; see .tools/sdk-licenses.log.' }
-    & $sdkManager "--sdk_root=$sdkRoot" 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
+    & $sdkManager "--sdk_root=$sdkRoot" 'platforms;android-37.0' 'build-tools;36.0.0' 'platform-tools'
     if ($LASTEXITCODE -ne 0) { throw 'Android SDK installation failed.' }
 }
 

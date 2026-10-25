@@ -157,7 +157,8 @@ internal fun ReaderScreen(
     tabletDualPage: Boolean = false,
     hasUnsavedText: Boolean = false,
     saveProgress: com.eyue.reader.data.BookSaveProgress? = null,
-    onSaveText: () -> Unit = {}
+    onSaveText: () -> Unit = {},
+    ebookSession: EbookReaderSession? = null
 ) {
     val context = LocalContext.current
     val requestedSettings = settings
@@ -178,8 +179,10 @@ internal fun ReaderScreen(
         if (sourceEbook) EbookSourceStore(context, importedBook) else null
     }
     DisposableEffect(ebookStore) { onDispose { ebookStore?.close() } }
-    val ebookController = remember(importedBook.id, ebookStore) { EbookReaderController() }
+    val ebookController = remember(importedBook.id, ebookStore, settings.continuousEbookScroll,
+        settings.readingMode == ReadingMode.SCROLL) { EbookReaderController() }
     var ebookViewport by remember(importedBook.id) { mutableStateOf(EbookViewportState()) }
+    var ebookNavigationChapter by remember(importedBook.id) { mutableStateOf<Int?>(null) }
     var ebookPageCounts by remember(importedBook.id, importedBook.chapters.size) { mutableStateOf(List(importedBook.chapters.size) { 1 }) }
     val layoutState = remember(book.id) { ReaderLayoutSession() }
     var document by remember(book.id) { mutableStateOf<ReaderDocument?>(null) }
@@ -228,8 +231,8 @@ internal fun ReaderScreen(
     val latestNightMode by rememberUpdatedState(settings.nightMode)
     val latestTtsSpeed by rememberUpdatedState(settings.ttsSpeed)
     val latestTtsFollowPage by rememberUpdatedState(settings.ttsFollowPage)
-    val raster = book.format == BookFormat.IMAGES || book.format == BookFormat.PDF ||
-        book.mode == LibraryMode.COMIC && book.format in setOf(BookFormat.EPUB, BookFormat.MOBI)
+    val raster = (book.format == BookFormat.IMAGES || book.format == BookFormat.PDF ||
+        book.mode == LibraryMode.COMIC && book.format in setOf(BookFormat.EPUB, BookFormat.MOBI))
     val directScroll = !raster && settings.readingMode == ReadingMode.SCROLL
     val editable = !raster && !book.cloudOnly && book.mode == LibraryMode.NOVEL &&
         book.format in setOf(BookFormat.TXT, BookFormat.EPUB, BookFormat.MOBI)
@@ -436,6 +439,7 @@ internal fun ReaderScreen(
         initialPositionPending = false
         chapterIndex = chapterNumber.coerceIn(0, (book.chapters.size - 1).coerceAtLeast(0))
         if (sourceEbook) {
+            ebookNavigationChapter = chapterIndex
             manualDrag = false
             characterOffset = offset.coerceAtLeast(0)
             positionImagePath = imagePath
@@ -513,16 +517,22 @@ internal fun ReaderScreen(
         }
     }
     fun seekProgress(fraction: Float) {
-        val previousImage = currentPageRange?.imageIndex?.takeIf { it >= 0 }
+        val previousImage = textPages.getOrNull(chapterIndex)?.getOrNull(pageIndex)?.imageIndex?.takeIf { it >= 0 }
+        val previousGlobal = chapterStarts.getOrElse(chapterIndex) { 0 } + pageIndex
         fun rememberReturn(forward: Boolean) {
+            // Slider callbacks can run again before Compose has rebuilt derived labels/progress.
+            val title = book.chapters.getOrNull(chapterIndex)?.let { readerChapterTitle(it, pageIndex) }.orEmpty()
+            val previousProgress = if (raster) if (totalPages > 0) (chapterStarts.getOrElse(chapterIndex) { 0 } +
+                readerVisiblePageEnd(pageIndex, pageCounts.getOrElse(chapterIndex) { 0 }, dualPage)).toFloat() / totalPages else 0f
+                else document?.scrollIndex?.progress(chapterIndex, characterOffset, previousImage) ?: progress
             returnPosition = ReaderReturnPosition(chapterIndex, pageIndex, characterOffset, positionImagePath,
-                previousImage, chapterTitle, progress, forward)
+                previousImage, title, previousProgress, forward)
         }
         if (raster) {
             if (totalPages == 0) return
             val target = (fraction * (totalPages - 1)).roundToInt()
-            if (target == globalPage - 1) return
-            rememberReturn(target < globalPage - 1)
+            if (target == previousGlobal) return
+            rememberReturn(target < previousGlobal)
             seekGlobal(target)
         } else {
             val target = document?.scrollIndex?.location(fraction) ?: return
@@ -1252,7 +1262,7 @@ internal fun ReaderScreen(
             .onGloballyPositioned { bodyCoordinates = it }.testTag("reader_body").then(if (sourceEbook) Modifier else tapObserver)) {
             when {
                 book.chapters.isEmpty() -> Text("这本书没有可阅读的章节", Modifier.align(Alignment.Center), color = muted)
-                layoutState.error != null || documentReadError != null || renderDocument == null || (!raster && (!conversionReady || chapterIndex !in renderDocument.readyChapters ||
+                layoutState.error != null || documentReadError != null || renderDocument == null || (!raster && (!conversionReady || !sourceEbook && chapterIndex !in renderDocument.readyChapters ||
                     !sourceEbook && (!directScroll && chapterIndex !in paginatedChapters || textPages.isEmpty()) || layoutState.preparing)) -> {
                     Column(Modifier.align(Alignment.Center).padding(24.dp).testTag("reader_loading"),
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -1273,20 +1283,30 @@ internal fun ReaderScreen(
                 }
                 sourceEbook -> {
                     val sourceChapter = chapterIndex
+                    Box(Modifier.fillMaxSize()) {
                     EbookReaderSurface(requireNotNull(ebookStore), sourceChapter, renderChapters[sourceChapter], currentText,
                         settings, annotations, ebookController, Modifier.fillMaxSize().testTag("reader_ebook"),
+                        session = ebookSession, contentReady = sourceChapter in renderDocument.readyChapters,
+                        initialOffset = characterOffset, initialImagePath = positionImagePath,
+                        continuousChapters = importedBook.chapters, readContinuousText = chapterStore::readText,
                         dualPage = dualPage, einkMode = einkMode, foreground = foreground, selectionReset = selectionReset,
                         selectionMenuEnabled = selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() &&
                             tappedSourceFootnote == null && panel == null,
                         searchQuery = highlightQuery, spokenRange = spokenRange(sourceChapter), chineseConverter = chineseConverter,
                         onViewport = { state ->
-                            if (sourceChapter == chapterIndex && latestChapterStore === renderStore) {
+                            val visibleChapter = state.chapterIndex.takeIf { it in book.chapters.indices } ?: sourceChapter
+                            if ((state.chapterIndex >= 0 || sourceChapter == chapterIndex) && latestChapterStore === renderStore &&
+                                (ebookNavigationChapter == null || visibleChapter == ebookNavigationChapter)) {
                                 ebookViewport = state
                                 if (state.error != null) layoutState.failed(layoutState.generation, state.error)
                                 else if (state.ready) {
-                                    ebookPageCounts = ebookPageCounts.toMutableList().apply { this[sourceChapter] = state.pageCount.coerceAtLeast(1) }
+                                    ebookNavigationChapter = null
+                                    ebookPageCounts = ebookPageCounts.toMutableList().apply { this[visibleChapter] = state.pageCount.coerceAtLeast(1) }
+                                    chapterIndex = visibleChapter
                                     pageIndex = state.pageIndex.coerceIn(0, state.pageCount.coerceAtLeast(1) - 1)
-                                    if (!speechOwnsPosition || initialPositionPending) characterOffset = state.offset.coerceIn(0, currentText.length)
+                                    if (!speechOwnsPosition || initialPositionPending) characterOffset = state.offset.coerceIn(0,
+                                        if (visibleChapter == sourceChapter && sourceChapter in renderDocument.readyChapters) currentText.length
+                                        else importedBook.chapters[visibleChapter].characterCount.takeIf { it >= 0 } ?: Int.MAX_VALUE)
                                     positionImagePath = if (state.endOffset <= state.offset) state.visibleImagePaths.firstOrNull()
                                         else positionImagePath?.takeIf { it in state.visibleImagePaths }
                                     initialPositionPending = false
@@ -1311,6 +1331,10 @@ internal fun ReaderScreen(
                             selectedPassage = null; tappedNoteIds = emptyList(); selectionReset++
                             annotationAnchor = anchor; tappedSourceFootnote = note; chromeVisible = false
                         })
+                    if (ebookViewport.ready) EbookChapterPreloads(requireNotNull(ebookStore), renderChapters,
+                        renderDocument.text, renderDocument.readyChapters, chapterIndex, settings, annotations, foreground,
+                        dualPage, einkMode, chineseConverter, ebookSession)
+                    }
                 }
                 chapterPageCount == 0 -> Text("这一章没有可阅读的内容", Modifier.align(Alignment.Center), color = muted)
                 settings.readingMode == ReadingMode.SCROLL -> {
@@ -1506,7 +1530,7 @@ internal fun ReaderScreen(
                         Slider(speechSpeedDraft, { speechSpeedDraft = it }, Modifier.weight(1f).semantics { contentDescription = "悬浮栏朗读语速" },
                             valueRange = .5f..2f, steps = 14, onValueChangeFinished = {
                                 if (speechSpeedDraft != settings.ttsSpeed) onSettings(requestedSettings.copy(ttsSpeed = speechSpeedDraft)) })
-                        Text(String.format(Locale.getDefault(), "%.1f×", speechSpeedDraft), fontSize = 11.sp, modifier = Modifier.padding(end = 6.dp))
+                        Text(String.format(LocalLocale.current.platformLocale, "%.1f×", speechSpeedDraft), fontSize = 11.sp, modifier = Modifier.padding(end = 6.dp))
                     }
                 }
             }

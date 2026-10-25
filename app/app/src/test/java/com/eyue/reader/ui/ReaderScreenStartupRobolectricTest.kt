@@ -48,7 +48,7 @@ import kotlin.math.abs
 
 /** Executes the actual reader composition and startup effects, including system TTS setup. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [28], shadows = [ReaderNarrationInteractionRobolectricTest.NoSurfaceMagnifier::class])
 @LooperMode(LooperMode.Mode.PAUSED)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ReaderScreenStartupRobolectricTest {

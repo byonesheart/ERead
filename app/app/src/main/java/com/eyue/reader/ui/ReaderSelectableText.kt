@@ -3,6 +3,10 @@ package com.eyue.reader.ui
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.contextmenu.provider.LocalTextContextMenuDropdownProvider
+import androidx.compose.foundation.text.contextmenu.provider.LocalTextContextMenuToolbarProvider
+import androidx.compose.foundation.text.contextmenu.provider.TextContextMenuDataProvider
+import androidx.compose.foundation.text.contextmenu.provider.TextContextMenuProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -36,6 +40,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import com.eyue.reader.data.AnnotationKind
 import com.eyue.reader.data.ChineseTextConverter
+import kotlinx.coroutines.CompletableDeferred
 
 internal data class ReaderSelectedPassage(
     val chapter: Int,
@@ -74,6 +79,8 @@ internal fun ReaderSelectableText(
     var toolbarHandedOff by remember(chapter, pageStart, text.text) { mutableStateOf(false) }
     var toolbarRect by remember { mutableStateOf(Rect.Zero) }
     var copyAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var contextMenuData by remember(chapter, pageStart) { mutableStateOf<TextContextMenuDataProvider?>(null) }
+    var contextMenuSession by remember(chapter, pageStart) { mutableStateOf<CompletableDeferred<Unit>?>(null) }
     val latestValue by rememberUpdatedState(value)
     val latestAction by rememberUpdatedState(onAction)
     val latestTap by rememberUpdatedState(onTextTap)
@@ -94,12 +101,19 @@ internal fun ReaderSelectableText(
                 .also { previous = input to it }
         }
     }
+    fun hideSelectionMenu() {
+        toolbarVisible = false
+        val session = contextMenuSession
+        contextMenuSession = null
+        contextMenuData = null
+        session?.complete(Unit)
+    }
     LaunchedEffect(value.selection.collapsed, selectionMenuEnabled) {
         latestSelectionActive(!value.selection.collapsed && selectionMenuEnabled)
     }
     DisposableEffect(Unit) { onDispose { latestSelectionActive(false) } }
     LaunchedEffect(selectionReset) {
-        toolbarVisible = false
+        hideSelectionMenu()
         if (!value.selection.collapsed) {
             value = value.copy(selection = TextRange(value.selection.min))
             focus.clearFocus()
@@ -121,15 +135,38 @@ internal fun ReaderSelectableText(
                 // The native selection manager may request its toolbar again after losing
                 // focus. An annotation/editor owns this selection until its parent resets it.
                 if (toolbarHandedOff || !latestMenuEnabled) return
+                hideSelectionMenu()
                 toolbarRect = rect
                 copyAction = onCopyRequested
                 toolbarVisible = true
             }
 
-            override fun hide() { toolbarVisible = false }
+            override fun hide() { hideSelectionMenu() }
         }
     }
-    CompositionLocalProvider(LocalTextToolbar provides toolbar) {
+    val contextMenu = remember(chapter, pageStart) {
+        object : TextContextMenuProvider {
+            override suspend fun showTextContextMenu(dataProvider: TextContextMenuDataProvider) {
+                if (toolbarHandedOff || !latestMenuEnabled) return
+                val session = CompletableDeferred<Unit>()
+                contextMenuSession?.complete(Unit)
+                contextMenuSession = session
+                contextMenuData = dataProvider
+                copyAction = null
+                toolbarVisible = true
+                try {
+                    session.await()
+                } finally {
+                    if (contextMenuSession === session) hideSelectionMenu()
+                }
+            }
+        }
+    }
+    CompositionLocalProvider(
+        LocalTextToolbar provides toolbar,
+        LocalTextContextMenuToolbarProvider provides contextMenu,
+        LocalTextContextMenuDropdownProvider provides contextMenu,
+    ) {
         BasicTextField(
             value = value.copy(annotatedString = text),
             onValueChange = { newValue -> value = newValue.copy(annotatedString = text) },
@@ -150,7 +187,7 @@ internal fun ReaderSelectableText(
                         val event = awaitPointerEvent(PointerEventPass.Main)
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         if ((change.position - down.position).getDistance() > pointerConfiguration.touchSlop) {
-                            moved = true; toolbarVisible = false
+                            moved = true; hideSelectionMenu()
                         }
                         upTime = change.uptimeMillis
                         released = !change.pressed
@@ -170,8 +207,11 @@ internal fun ReaderSelectableText(
     }
     if (toolbarVisible && !toolbarHandedOff && selectionMenuEnabled && !value.selection.collapsed) {
         val location = IntArray(2).also(view::getLocationInWindow)
-        val anchor = toolbarRect.translate(location[0].toFloat(), location[1].toFloat())
-        ReaderAnnotationPopup(anchor, onDismiss = { toolbarVisible = false }) {
+        val anchor = contextMenuData?.let { provider -> coordinates?.takeIf { it.isAttached }?.let { place ->
+            val bounds = provider.contentBounds(place)
+            Rect(place.localToWindow(bounds.topLeft), place.localToWindow(bounds.bottomRight))
+        } } ?: toolbarRect.translate(location[0].toFloat(), location[1].toFloat())
+        ReaderAnnotationPopup(anchor, onDismiss = { hideSelectionMenu() }) {
                 fun selectedPassage(): ReaderSelectedPassage? {
                     val selected = latestValue.selection
                     val start = selected.min.coerceIn(0, text.length)
@@ -182,7 +222,7 @@ internal fun ReaderSelectableText(
                 fun action(kind: AnnotationKind) {
                     val passage = selectedPassage() ?: return
                     toolbarHandedOff = true
-                    toolbarVisible = false
+                    hideSelectionMenu()
                     latestAction(passage, kind)
                 }
                 val actions = listOf(
@@ -191,18 +231,18 @@ internal fun ReaderSelectableText(
                     ReaderCompactAction("underline", "划线") { action(AnnotationKind.UNDERLINE) }
                 ) + listOfNotNull(if (onRole != null) ReaderCompactAction("role", "角色") {
                     selectedPassage()?.let { passage ->
-                        toolbarHandedOff = true; toolbarVisible = false
+                        toolbarHandedOff = true; hideSelectionMenu()
                         latestRole?.invoke(passage)
                     }
                 } else null) + listOfNotNull(if (onEdit != null) ReaderCompactAction("edit", "编辑") {
                     val passage = selectedPassage()
                     if (passage != null) {
-                        toolbarHandedOff = true; toolbarVisible = false
+                        toolbarHandedOff = true; hideSelectionMenu()
                         latestEdit?.invoke(passage)
                     }
                 } else null) + ReaderCompactAction("copy", "复制") {
                     copyAction?.invoke() ?: clipboard.setText(AnnotatedString(value.annotatedString.text.substring(value.selection.min, value.selection.max)))
-                    toolbarVisible = false
+                    hideSelectionMenu()
                     value = value.copy(selection = TextRange(value.selection.max))
                     focus.clearFocus()
                 }

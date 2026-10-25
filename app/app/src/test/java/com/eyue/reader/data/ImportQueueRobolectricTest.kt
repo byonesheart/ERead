@@ -79,7 +79,7 @@ class ImportQueueRobolectricTest {
             }
             override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor =
                 MatrixCursor(arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)).apply {
-                    addRow(arrayOf(uri.lastPathSegment, File(root, uri.pathSegments.joinToString("/")).length()))
+                    addRow(arrayOf<Any?>(uri.lastPathSegment, File(root, uri.pathSegments.joinToString("/")).length()))
                 }
             override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
                 val name = requireNotNull(uri.lastPathSegment)
@@ -440,6 +440,57 @@ class ImportQueueRobolectricTest {
     }
 
     private fun sourceUri(file: File): Uri = Uri.parse("content://$authority/${file.relativeTo(root).invariantSeparatorsPath}")
+
+    @Test fun externalExistingBookOpensWithoutReopeningOrReparsingItsProviderStream() {
+        val source = sourceUri(EpubFixtures.create(app, root, "external-fast"))
+        openLibrary()
+        vm.importFiles(listOf(source), LibraryMode.NOVEL)
+        await { !vm.importing && vm.state.books.size == 1 }
+        val book = vm.state.books.single()
+        opened.clear()
+        assertFalse(book.sourceLinked)
+        gates["external-fast.epub"] = CountDownLatch(1)
+        vm.openExternalFiles(listOf(source), "application/epub+zip", "existing-fast")
+        await { vm.activeBookId == book.id && !vm.importing }
+        assertEquals(1, vm.state.books.size)
+        assertFalse("The existing private copy should open before any provider stream is read", "external-fast.epub" in opened)
+    }
+
+    @Test fun externalOpeningIsVisibleImmediatelyAndBackKeepsImportWithoutAnUnexpectedJump() {
+        val source = source("external-held.txt", held = true)
+        openLibrary()
+        vm.openExternalFiles(listOf(source), "text/plain", "held-external")
+        assertNotNull(vm.openingExternalImport)
+        await { "external-held.txt" in opened }
+        vm.dismissExternalOpening()
+        assertNull(vm.openingExternalImport)
+        assertEquals(1, vm.pendingImports.size)
+        gates.getValue("external-held.txt").countDown()
+        await { !vm.importing && vm.state.books.size == 1 }
+        assertNull(vm.activeBookId)
+    }
+
+    @Test fun selectingAnExistingBookForImportDoesNotReadOrParseItsFileAgain() {
+        val source = sourceUri(EpubFixtures.create(app, root, "already-imported"))
+        openLibrary()
+        vm.importFiles(listOf(source), LibraryMode.NOVEL)
+        await { !vm.importing && vm.state.books.size == 1 }
+        val id = vm.state.books.single().id
+        opened.clear()
+        gates["already-imported.epub"] = CountDownLatch(1)
+        vm.importFiles(listOf(source), LibraryMode.NOVEL)
+        await { !vm.importing && vm.pendingImports.isEmpty() }
+        assertEquals(listOf(id), vm.state.books.map { it.id })
+        assertFalse("Identity metadata must be checked before copying or parsing the file", "already-imported.epub" in opened)
+    }
+
+    @Test fun externalTextDoesNotWaitForReaderViewportOrImportPagination() {
+        openLibrary()
+        vm.settings(ReaderSettings(readingMode = ReadingMode.PAGED))
+        vm.openExternalFiles(listOf(source("external-paged.txt")), "text/plain", "external-no-layout")
+        await { !vm.importing && vm.activeBookId != null }
+        assertNull(vm.message)
+    }
 
     private fun source(name: String, held: Boolean = false): Uri {
         File(root, name).writeText("第一章 开始\n这是一段用于真实导入回归的正文。\n\n第二章 后续\n正文内容继续。")

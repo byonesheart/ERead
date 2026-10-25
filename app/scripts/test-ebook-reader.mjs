@@ -26,6 +26,8 @@ const manifestsDir = manifestsArgument >= 0 ? path.resolve(process.argv[manifest
 const resourcesArgument = process.argv.indexOf('--source-resources');
 const resourcesDir = resourcesArgument >= 0 ? path.resolve(process.argv[resourcesArgument + 1]) : null;
 const screenshots = process.argv.includes('--screenshots');
+const startupArgument = process.argv.indexOf('--startup-manifest');
+const startupManifest = startupArgument >= 0 ? path.resolve(process.argv[startupArgument + 1]) : null;
 await fs.mkdir(outputDir, { recursive: true });
 const fixtureDir = path.join(scriptDir, 'fixtures/ebook-reader');
 const readerScript = await fs.readFile(path.join(scriptDir, '../app/src/main/assets/reader/ebook-reader.js'), 'utf8');
@@ -102,20 +104,23 @@ async function open(config = {}, options = {}) {
     return route.fulfill({ status: 404, body: '' });
   });
   await page.goto(options.source?.baseUrl || 'https://eread.local/book/archive/chapter.html');
-  await page.evaluate(options => window.ERead.init(options), {
+  await page.evaluate(options => { window.readerInitOptions = options; return window.ERead.init(options); }, {
     canonical: options.source?.canonicalText ?? canonical, config: { ...baseConfig, ...config },
     decorations: { annotations: [], search: '', spokenStart: -1, spokenEnd: -1 },
     images: options.source?.images || [{ offset: canonical.indexOf('图片前的内容。') + '图片前的内容。'.length, path: imageIdentity }],
-    noteTargets: options.source ? Object.keys(options.source.noteTargets) : ['#note-1']
+    noteTargets: options.source ? Object.keys(options.source.noteTargets) : ['#note-1'],
+    initialNavigation: options.initialNavigation
   });
   await page.waitForFunction(() => window.events.some(event => event.type === 'ready' || event.type === 'error'));
   const errors = await page.evaluate(() => window.events.filter(event => event.type === 'error'));
   assert.deepEqual(errors, [], `Initialisation errors: ${JSON.stringify(errors)}`);
-  await command({ type: 'report' });
+  if (!options.noInitialReport) await command({ type: 'report' });
 }
 
 async function command(value) {
   await page.evaluate(value => window.ERead.command(value), value);
+    await page.evaluate(() => Promise.all(document.getAnimations().filter(animation => animation.id === 'eread-page-turn')
+      .map(animation => animation.finished.catch(() => {}))));
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 
@@ -150,6 +155,95 @@ async function test(name, callback) {
 }
 
 try {
+  for (const mode of ['SCROLL', 'PAGED', 'VERTICAL_PAGED']) {
+    for (const chapter of [
+      { name: 'blank', body: '', text: '', images: [] },
+      { name: 'cover', body: '<img src="illustration.svg" alt=""/>', text: '',
+        images: [{ offset: 0, path: imageIdentity }] },
+      { name: 'text', body: '<p>正文初始化后应主动报告当前页面。</p>', text: '正文初始化后应主动报告当前页面。', images: [] }
+    ]) await test(`initial-viewport-without-native-command-${mode.toLowerCase()}-${chapter.name}`, async () => {
+      const source = { baseUrl: 'https://eread.local/book/archive/chapter.html',
+        html: `<html><head></head><body>${chapter.body}</body></html>`, canonicalText: chapter.text,
+        noteTargets: {}, images: chapter.images };
+      await open({ mode }, { source, noInitialReport: true });
+      // Only init/ready have run: a native controller has not issued report or
+      // navigation. Blank and cover chapters have no text observer to rescue it.
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const events = await page.evaluate(() => window.events);
+      const ready = events.findIndex(event => event.type === 'ready');
+      const viewport = events.findIndex(event => event.type === 'viewport');
+      assert.ok(ready >= 0, 'The reader must acknowledge initialisation');
+      assert.ok(viewport > ready, 'Initialisation must report its viewport without a second native command');
+      const state = events[viewport];
+      assert.ok(Number.isInteger(state.page) && state.page >= 0);
+      assert.ok(Number.isInteger(state.pages) && state.pages > state.page);
+      assert.ok(state.offset >= 0 && state.endOffset >= state.offset && state.endOffset <= chapter.text.length);
+      if (chapter.name === 'cover') assert.deepEqual(state.images, [imageIdentity]);
+      if (chapter.name === 'text') assert.ok(state.endOffset > state.offset);
+      return { mode, chapter: chapter.name, state };
+    });
+  }
+
+  for (const mode of ['SCROLL', 'PAGED', 'VERTICAL_PAGED']) {
+    for (const anchor of ['offset', 'last-page', 'image']) {
+      await test(`initial-navigation-without-native-command-${mode.toLowerCase()}-${anchor}`, async () => {
+        const text = lines.join('\n\n');
+        const imageOffset = text.indexOf(lines[20]);
+        const target = text.indexOf(lines[30]);
+        const source = { baseUrl: 'https://eread.local/book/archive/chapter.html', canonicalText: text,
+          html: '<html><head></head><body>' + lines.map((line, index) =>
+            `${index === 20 ? '<img src="illustration.svg" alt=""/>' : ''}<p>${line}</p>`).join('') + '</body></html>',
+          noteTargets: {}, images: [{ offset: imageOffset, path: imageIdentity }] };
+        const initialNavigation = anchor === 'offset' ? { type: 'navigate', offset: target } :
+          anchor === 'last-page' ? { type: 'navigate', offset: 0, lastPage: true } :
+          { type: 'navigate', offset: imageOffset, image: imageIdentity };
+        await open({ mode }, { source, noInitialReport: true, initialNavigation });
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const events = await page.evaluate(() => window.events);
+        const ready = events.findIndex(event => event.type === 'ready');
+        const firstViewport = events.findIndex(event => event.type === 'viewport');
+        assert.ok(firstViewport > ready, 'The first viewport must follow ready and the initial anchor');
+        const state = events[firstViewport];
+        assert.ok(state.offset > 0, 'Restoring a later anchor must never publish the chapter start');
+        if (anchor === 'offset') assert.ok(state.offset <= target + 2 && state.endOffset > target,
+          'The restored canonical anchor must be in the first reported viewport');
+        if (anchor === 'last-page') {
+          assert.equal(state.atEnd, true); assert.equal(state.page, state.pages - 1);
+        }
+        if (anchor === 'image') assert.ok(state.images.includes(imageIdentity), 'The restored illustration must be visible');
+        await page.evaluate(() => window.ERead.init(window.readerInitOptions));
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(await page.evaluate(() => window.events.filter(event => event.type === 'ready').length), 1,
+          'A repeated bootstrap must not initialise the chapter twice');
+        return { mode, anchor, target: initialNavigation, state };
+      });
+    }
+  }
+
+  for (const mode of ['SCROLL', 'PAGED', 'VERTICAL_PAGED']) {
+    for (const preserveViewport of [true, false]) {
+      await test(`resume-cached-dom-${mode.toLowerCase()}-${preserveViewport ? 'retain' : 'navigate'}`, async () => {
+        await open({ mode });
+        const target = canonical.indexOf(lines[30]);
+        await command({ type: 'navigate', offset: canonical.indexOf(lines[20]) });
+        const before = await viewport();
+        await page.evaluate(() => { window.originalParagraph = document.getElementById('paragraph-20'); });
+        await command({ type: 'resume', options: {
+          config: { ...baseConfig, mode }, preserveViewport,
+          initialNavigation: { offset: target }, notes: [],
+          decorations: { annotations: [], search: '', spokenStart: -1, spokenEnd: -1 }
+        } });
+        const after = await viewport();
+        assert.equal(await page.evaluate(() => document.getElementById('paragraph-20') === window.originalParagraph), true);
+        assert.equal(await page.evaluate(() => window.events.filter(event => event.type === 'ready').length), 2);
+        if (preserveViewport) {
+          assert.equal(after.offset, before.offset); assert.equal(after.page, before.page);
+        } else assert.ok(after.offset <= target + 2 && after.endOffset > target);
+        return { mode, preserveViewport, before, after };
+      });
+    }
+  }
+
   await test('publisher-css-structure', async () => {
     await open();
     const source = await page.evaluate(() => {
@@ -264,6 +358,16 @@ try {
   });
 
   for (const mode of ['PAGED', 'VERTICAL_PAGED']) {
+    await test(`${mode.toLowerCase()}-partial-last-page-keeps-margins`, async () => {
+      await open({ mode, authorCss: false, left: 31, right: 47, top: 23, bottom: 37 });
+      await command({ type: 'navigate', lastPage: true });
+      const state = await viewport();
+      const geometry = await page.evaluate(() => ({ x: scrollX, y: scrollY, width: innerWidth, height: innerHeight }));
+      const actual = mode === 'PAGED' ? geometry.x : geometry.y;
+      const expected = state.page * (mode === 'PAGED' ? geometry.width : geometry.height);
+      assert.ok(Math.abs(actual - expected) < 1, `Last page must remain on its page grid: ${JSON.stringify({state,geometry,expected})}`);
+      return { state, geometry };
+    });
     await test(`${mode.toLowerCase()}-geometry-and-offset`, async () => {
       await open({ mode });
       const initial = await viewport(); assert.ok(initial.pages > 3, `${mode} must have actual multiple pages`);
@@ -460,7 +564,7 @@ try {
       assert.equal((await viewport()).page, 0);
       const turns = await page.evaluate(() => window.events.filter(event => event.type === 'turn'));
       assert.deepEqual(turns.map(event => ({ style: event.style, direction: event.direction, page: event.page })),
-        [{ style, direction: 1, page: 1 }, { style, direction: -1, page: 0 }]);
+        style === 'SLIDE' ? [] : [{ style, direction: 1, page: 1 }, { style, direction: -1, page: 0 }]);
       evidence.push({ style, turns });
     }
     for (const config of [{ mode: 'PAGED', eink: true }, { mode: 'VERTICAL_PAGED' }]) {
@@ -469,6 +573,29 @@ try {
       assert.deepEqual(await page.evaluate(() => window.events.filter(event => event.type === 'turn')), []);
     }
     return evidence;
+  });
+
+  await test('slide-starts-without-native-ack-and-rapid-turns-retire-the-old-animation', async () => {
+    await open({ mode:'PAGED', turn:'SLIDE' });
+    const start = await page.evaluate(() => {
+      ERead.command({type:'move',direction:1});
+      const animation = document.getAnimations().find(a => a.id === 'eread-page-turn');
+      return {scroll:scrollX,width:innerWidth,animation:animation?.playState,turns:events.filter(e=>e.type==='turn').length};
+    });
+    assert.equal(start.scroll,start.width); assert.equal(start.animation,'running'); assert.equal(start.turns,0);
+    await page.waitForTimeout(60);
+    const midway = await page.evaluate(() => new DOMMatrix(getComputedStyle(document.body).transform).m41);
+    assert.ok(midway>0&&midway<start.width);
+    await page.evaluate(() => { ERead.command({type:'move',direction:1}); ERead.command({type:'move',direction:1}); });
+    assert.equal(await page.evaluate(()=>document.getAnimations().filter(a=>a.id==='eread-page-turn').length),1);
+    await page.waitForFunction(()=>!document.getAnimations().some(a=>a.id==='eread-page-turn'));
+    assert.equal((await viewport()).page,3);
+    assert.equal(await page.evaluate(()=>getComputedStyle(document.body).transform),'none');
+    await page.evaluate(() => ERead.command({type:'move',direction:-1}));
+    await command({type:'configure',config:{...baseConfig,mode:'SCROLL'}});
+    assert.equal(await page.evaluate(()=>document.getAnimations().filter(a=>a.id==='eread-page-turn').length),0);
+    assert.equal(await page.evaluate(()=>getComputedStyle(document.body).transform),'none');
+    return {start,midway,finalPageBeforeModeChange:3};
   });
 
   await test('canonical-note-metadata-without-link', async () => {
@@ -596,6 +723,34 @@ try {
     await page.waitForTimeout(600);
     assert.deepEqual(await page.evaluate(() => window.events.filter(event => event.type === 'selection')), []);
     return { cancelledManual: true, cancelledImageSelection: true };
+  });
+
+  if (startupManifest) await test('provided-actual-import-trusted-document-startup', async () => {
+    const source = JSON.parse(await fs.readFile(startupManifest, 'utf8'));
+    if (page) await page.close();
+    page = await browser.newPage({ viewport: { width: 392, height: 760 }, hasTouch: true });
+    page.on('pageerror', error => consoleErrors.push(error.message));
+    await page.addInitScript(() => {
+      window.events = [];
+      window.__ERead = { event: json => window.events.push(JSON.parse(json)), convert: text => JSON.stringify({ text }) };
+    });
+    await page.route('https://eread.local/**', route => route.request().isNavigationRequest()
+      ? route.fulfill({ contentType: 'text/html; charset=utf-8', body: source.trustedHtml })
+      : route.fulfill({ status: 404, body: '' }));
+    const started = performance.now();
+    await page.goto(source.baseUrl);
+    await page.waitForFunction(() => window.events.some(event => event.type === 'viewport' || event.type === 'error'), null, { timeout: 10_000 });
+    const events = await page.evaluate(() => window.events);
+    assert.deepEqual(events.filter(event => event.type === 'error'), []);
+    assert.ok(events.some(event => event.type === 'ready'));
+    assert.ok(events.some(event => event.type === 'viewport'));
+    const first = events.find(event => event.type === 'viewport');
+    const anchor = Math.floor(source.canonicalText.length / 2);
+    if (anchor > 0) assert.ok(first.offset <= anchor + 2 && first.endOffset > anchor,
+      'The production envelope must restore the saved anchor before publishing a viewport');
+    assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-eread-loading')), false);
+    assert.notEqual(await page.locator('body').evaluate(node => getComputedStyle(node).opacity), '0');
+    return { elapsedMs: Math.round(performance.now() - started), canonicalLength: source.canonicalText.length, events };
   });
 
   if (manifestsDir) for (const format of ['epub', 'mobi']) {

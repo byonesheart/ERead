@@ -79,19 +79,25 @@ private fun chapterTextFootnotes(format: BookFormat, chapter: Chapter, text: Str
 
 /** Used by imports after lightweight text/image extraction; no source styling is evaluated here. */
 internal fun saveLazyChapter(directory: File, index: Int, parsed: ParsedTextChapter, html: String, css: String,
-                             images: Map<String, String>, noteTargets: Map<String, String> = emptyMap()): Chapter {
+                             images: Map<String, String>, noteTargets: Map<String, String> = emptyMap(), archivePath: String? = null): Chapter {
     val text = File(directory, "chapter-$index.txt")
     val manifest = File(directory, "chapter-$index.source.json")
     val cssBytes = css.toByteArray(Charsets.UTF_8)
     val cssHash = MessageDigest.getInstance("SHA-256").digest(cssBytes).joinToString("") { "%02x".format(it) }
     val cssFile = File(directory, "styles-$cssHash.css")
-    if (!cssFile.isFile) writeChapterAtomic(AtomicFile(cssFile), css)
-    writeChapterAtomic(AtomicFile(text), parsed.text)
-    writeChapterAtomic(AtomicFile(manifest), JSONObject().put("version", 3).put("html", html).put("cssPath", cssFile.absolutePath)
-        .put("images", JSONObject(images)).put("noteTargets", JSONObject(noteTargets)).toString())
+    if (!cssFile.isFile) writeImportChapter(cssFile, css)
+    writeImportChapter(text, parsed.text)
+    writeImportChapter(manifest, JSONObject().put("version", 3).put("html", html).put("cssPath", cssFile.absolutePath)
+        .put("images", JSONObject(images)).put("noteTargets", JSONObject(noteTargets)).put("archivePath", archivePath).toString())
     return Chapter(title = parsed.title, textPath = text.absolutePath, inlineImages = parsed.inlineImages,
         characterCount = parsed.text.length, lazySourcePath = manifest.absolutePath, tocParentTitle = parsed.tocParentTitle,
         sourceFootnotes = parsed.sourceFootnotes, sourceCssStyles = parsed.sourceCssStyles)
+}
+
+/** New import files are private until the book's atomic library commit; do not fsync every chapter. */
+private fun writeImportChapter(file: File, text: String) {
+    if (file.exists()) writeChapterAtomic(AtomicFile(file), text)
+    else file.bufferedWriter(Charsets.UTF_8).use { it.write(text) }
 }
 
 private fun chapterTextHash(file: File, checkActive: () -> Unit): String {

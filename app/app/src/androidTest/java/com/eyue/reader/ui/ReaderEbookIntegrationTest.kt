@@ -39,7 +39,8 @@ class ReaderEbookIntegrationTest {
     private lateinit var root: File
     private lateinit var context: Context
     private lateinit var host: View
-    private var settings by mutableStateOf(ReaderSettings(readingMode = ReadingMode.PAGED, showTime = false, showBattery = false))
+    private var settings by mutableStateOf(ReaderSettings(readingMode = ReadingMode.PAGED,
+        showTime = false, showBattery = false))
     private var shown by mutableStateOf(true)
     private data class Position(val chapter: Int, val page: Int, val offset: Int)
     private val position = AtomicReference<Position?>()
@@ -70,6 +71,10 @@ class ReaderEbookIntegrationTest {
         show(imported.copy(characterOffset = anchor, pageIndex = 20))
         compose.waitUntil(30_000) { position.get()?.let { it.chapter == 0 && it.offset in 1..anchor } == true }
         compose.onNodeWithTag("reader_ebook").assertIsDisplayed()
+        compose.runOnIdle {
+            assertTrue("The local document must not be loaded through a data: envelope",
+                findWebView(host.rootView)?.url?.startsWith("https://eread.local/") == true)
+        }
         val restored = requireNotNull(position.get()).offset
         assertTrue(anchor - restored < text.length / 2)
         val reportsBeforeModeChange = positionReports.get()
@@ -119,15 +124,16 @@ class ReaderEbookIntegrationTest {
 
     private fun waitForSourceText(phrase: String) {
         val rendered = AtomicReference<String?>()
-        fun webView(view: View): WebView? = if (view is WebView) view else (view as? ViewGroup)?.let { group ->
-            (0 until group.childCount).firstNotNullOfOrNull { webView(group.getChildAt(it)) }
-        }
         compose.waitUntil(30_000) {
             InstrumentationRegistry.getInstrumentation().runOnMainSync {
-                webView(host.rootView)?.evaluateJavascript("document.body.innerText") { rendered.set(it) }
+                findWebView(host.rootView)?.evaluateJavascript("document.body.innerText") { rendered.set(it) }
             }
             rendered.get()?.contains(phrase) == true
         }
+    }
+
+    private fun findWebView(view: View): WebView? = if (view is WebView) view else (view as? ViewGroup)?.let { group ->
+        (0 until group.childCount).firstNotNullOfOrNull { findWebView(group.getChildAt(it)) }
     }
 
     private fun fixture(): Book {

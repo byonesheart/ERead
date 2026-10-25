@@ -16,6 +16,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -30,6 +31,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
@@ -37,6 +40,32 @@ import org.robolectric.annotation.LooperMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ReaderSelectionMenuRobolectricTest {
     @get:Rule val compose = createComposeRule()
+
+    @Config(shadows = [NoSurfaceMagnifier::class])
+    @Test fun aRealLongPressShowsAnnotationActionsWithTheNewContextMenuAndSourceOffsets() {
+        var selected: ReaderSelectedPassage? = null
+        var selectedKind: AnnotationKind? = null
+        compose.setContent { MaterialTheme {
+            ReaderSelectableText(AnnotatedString("A selected passage with more words."), TextStyle(fontSize = 18.sp),
+                2, 3, 200, 0, onAction = { passage, kind -> selected = passage; selectedKind = kind },
+                modifier = Modifier.width(280.dp))
+        } }
+        val layouts = mutableListOf<TextLayoutResult>()
+        val text = compose.onNodeWithContentDescription("阅读正文")
+        text.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val word = layouts.single().getBoundingBox(4).center
+        text.performTouchInput { longClick(word) }
+        compose.onNodeWithTag("reader_action_note").assertIsDisplayed().performClick()
+        compose.runOnIdle {
+            assertEquals(AnnotationKind.NOTE, selectedKind)
+            assertEquals("selected", selected?.quote)
+            assertEquals(202, selected?.start)
+            assertEquals(210, selected?.end)
+            assertEquals(2, selected?.chapter)
+            assertEquals(3, selected?.page)
+        }
+        compose.onNodeWithTag("reader_selection_menu").assertDoesNotExist()
+    }
 
     @Test fun repeatedNativeToolbarRequestsCannotCoverAnAnnotationEditor() {
         var toolbar: TextToolbar? = null
@@ -128,5 +157,11 @@ class ReaderSelectionMenuRobolectricTest {
         assertEquals(3, readerVisibleMenuCount(listOf(40, 40, 40), 120, 32))
         assertEquals(2, readerVisibleMenuCount(listOf(40, 40, 40, 40), 112, 32))
         assertEquals(0, readerVisibleMenuCount(listOf(160, 40), 100, 32))
+    }
+
+    /** Selection gestures remain real; Android 28's magnifier alone requires a device Surface. */
+    @Implements(android.widget.Magnifier::class)
+    class NoSurfaceMagnifier {
+        @Implementation fun show(sourceCenterX: Float, sourceCenterY: Float) = Unit
     }
 }

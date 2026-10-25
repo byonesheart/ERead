@@ -6,7 +6,7 @@ E阅使用 Kotlin 与 Android Jetpack Compose 开发。项目源码遵循仓库�
 
 ## 简繁转换词库
 
-OpenCC 1.1.9 的 STCharacters、STPhrases、TSCharacters、TSPhrases 词库用于离线简繁体阅读显示转换。词库原样随软件分发，许可证：Apache-2.0，原许可证保留在软件内。该功能不修改源书籍。
+OpenCC 1.1.9 的 STCharacters、STPhrases、TSCharacters、TSPhrases 词库用于离线简繁体阅读显示转换。词库原样随软件分发，许可证：Apache-2.0，原许可证保留在下方。该功能不修改源书籍。
 
 项目：https://github.com/BYVoid/OpenCC
 
@@ -18,11 +18,15 @@ OpenCC 1.1.9 的 STCharacters、STPhrases、TSCharacters、TSPhrases 词库用�
 
 思源黑体：https://github.com/adobe-fonts/source-han-sans
 
+## EPUB／MOBI 阅读
+
+EPUB 与未加密 MOBI 由本地兼容引擎读取，使用 Android 系统 WebView 显示原书 HTML、CSS、图片和字体。阅读索引用于目录、搜索、标注及朗读定位；保留完整原始文件。E阅不再打包 Readium Toolkit、Readium CSS 或其字体资源。
+
 ## 界面与 Android 基础组件
 
-AndroidX Activity 1.10.1、Compose UI / Foundation / Runtime 1.8.2、Material 3 1.3.2、Material Icons 1.7.8：用于页面、排版、手势和图标。Compose BOM 2025.05.01 管理对应版本。许可证：Apache-2.0。
+AndroidX Activity、Compose UI / Foundation / Runtime、Material 3、Material Icons：用于页面、手势和图标。项目以 Compose BOM 管理对应版本，最终运行时版本由 Gradle 依赖解析确定。许可证：Apache-2.0。
 
-AndroidX Lifecycle 2.9.0：界面生命周期与状态管理；WorkManager 2.10.1：后台任务；ExifInterface 1.4.1：图片方向信息。以及 AndroidX Core、SavedState、Room、SQLite、DocumentFile 等运行时依赖。许可证：Apache-2.0。
+AndroidX Lifecycle：界面生命周期与状态管理；WorkManager：后台任务；ExifInterface：图片方向信息。以及 AndroidX Core、SavedState、Room、SQLite、DocumentFile 等运行时依赖。许可证：Apache-2.0。
 
 项目：https://android.googlesource.com/platform/frameworks/support
 
@@ -32,11 +36,13 @@ Android 系统提供的 WebView（基于 Chromium）用于 EPUB／MOBI 的 HTML�
 
 ## Kotlin 与协程
 
-Kotlin 标准库 2.1.21（兼容层 jdk7 / jdk8 1.9.10）；kotlinx.coroutines 1.10.2；运行时引入 kotlinx.serialization 1.7.3 与 JetBrains Annotations 23.0.0。用于 Kotlin 运行时、异步工作与相关基础能力。许可证：Apache-2.0。
+Android 构建工具链使用 Kotlin／Compose Compiler 2.4.20。Kotlin 标准库、kotlinx.coroutines、kotlinx.serialization 与 JetBrains Annotations 用于运行时、异步工作及数据处理，其最终运行时版本由 Gradle 依赖解析确定。许可证：Apache-2.0。
 
 项目：https://github.com/JetBrains/kotlin
 
 协程：https://github.com/Kotlin/kotlinx.coroutines
+
+序列化：[kotlinx.serialization](https://github.com/Kotlin/kotlinx.serialization)，许可证为 Apache-2.0。
 
 ## 网络与数据流
 
@@ -45,6 +51,10 @@ OkHttp 4.12.0 与 Okio 3.6.0：WebDAV、在线语音及更新检查网络请求�
 项目：https://github.com/square/okhttp
 
 Okio：https://github.com/square/okio
+
+## 辅助依赖
+
+JSpecify 空值规范注解和 Guava ListenableFuture 冲突规避占位模块适用 Apache-2.0。精确版本、Maven 坐标、POM 和许可地址见 `runtime-dependencies.txt`，原文见 `Apache-2.0.txt`。
 
 ## PDF 与密码学依赖
 
@@ -62,7 +72,7 @@ PDFBox 内置 Liberation Sans Regular 2.1.5 字体，版权归 Google Corporatio
 
 ## 清单与声明
 
-下方运行时依赖清单依据 1.9.0 releaseRuntimeClasspath 解析生成，列出 111 个依赖坐标及对应版本、POM 许可证和项目地址（其中含依赖版本管理 BOM，不代表每项均包含二进制代码）。JSpecify 1.0.0 与 Guava ListenableFuture 1.0 等基础依赖也列于其中。
+随附 `runtime-dependencies.txt` 依据 E阅 1.11.4 本轮 `releaseRuntimeClasspath` 实际解析结果生成，共 130 个唯一 Maven 坐标，其中含 3 个版本管理 BOM。清单列出每项的版本、POM、许可证及项目地址；必要时许可按父 POM 继承，未确认的字段会标记为 unknown。坐标数量不代表安装包内二进制文件数量，依赖解析也不代表功能已经通过设备验证。
 
 Gradle / Android Gradle Plugin、JUnit、Robolectric、Espresso 等仅用于构建或测试的工具，不作为正式安装包内的功能组件列出。Android 平台提供的 PDF 渲染、系统 TTS、媒体控制与 Keystore 能力由系统实现，不单独随本软件分发系统引擎。
 

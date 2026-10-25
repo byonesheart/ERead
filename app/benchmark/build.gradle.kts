@@ -1,11 +1,10 @@
 plugins {
     id("com.android.test")
-    id("org.jetbrains.kotlin.android")
 }
 
 android {
     namespace = "com.eyue.reader.macrobenchmark"
-    compileSdk = 35
+    compileSdk = 37
     defaultConfig {
         // Android 14+ preserves the standalone fixture while compilation state is reset.
         minSdk = 34
@@ -25,8 +24,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
 }
+kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 
 androidComponents { beforeVariants(selector().all()) { it.enable = it.buildType == "benchmark" } }
 

@@ -11,11 +11,24 @@
     let lastBridgeReport = 0;
     const readerStyle = document.createElement('style');
     readerStyle.id = 'eread-reader-style';
+    const pageBoundary = document.createElement('i');
+    pageBoundary.id = 'eread-page-boundary';
+    let contentPages = 1;
     const nodeEntries = new WeakMap();
     const sourceFontRatios = new Set();
     const textByParent = new Map(), visibleTextParents = new Set();
     let paragraphObserver;
-    const bridge = window.__ERead;
+    let pageAnimation = null;
+    const continuousHost = window.parent !== window ? window.parent.EReadContinuous : null;
+    const frameChapter = continuousHost ? Number(window.frameElement.dataset.chapter) : -1;
+    const bridge = continuousHost ? {
+        event:json => continuousHost.event(frameChapter, JSON.parse(json), window.frameElement),
+        convert:text => window.parent.__ERead.convert(text)
+    } : window.__ERead;
+    function viewBounds() { return continuousHost ? continuousHost.bounds(frameChapter) : {top:0, bottom:innerHeight, height:innerHeight}; }
+    function measureChapter() {
+        if (continuousHost) continuousHost.height(frameChapter, Math.max(document.body.offsetHeight, document.body.scrollHeight));
+    }
     function send(type, values) { bridge.event(JSON.stringify(Object.assign({type: type}, values || {}))); }
     function fail(error) { send('error', {message: '原书排版失败：' + (error.message || String(error))}); }
     function whitespace(c) { return /[\s\u00a0\u200b\ufeff]/.test(c); }
@@ -66,14 +79,30 @@
         while (low < high) { const mid = (low + high) >>> 1; if (array[mid] < value) low = mid + 1; else high = mid; }
         return low;
     }
-    function pageStride() { return config.mode === 'PAGED' ? innerWidth / (config.dual ? 2 : 1) : innerHeight; }
+    function pageStride() { return config.mode === 'PAGED' ? innerWidth / (config.dual ? 2 : 1) : viewBounds().height; }
     function pageIndex() { return Math.max(0, Math.round((config.mode === 'PAGED' ? scrollX : scrollY) / pageStride())); }
     function pageCount() {
+        if (continuousHost) return Math.max(1, Math.ceil(document.body.scrollHeight / pageStride()));
+        if (config.mode !== 'SCROLL') return contentPages;
         const size = config.mode === 'PAGED' ? document.documentElement.scrollWidth : document.documentElement.scrollHeight;
         return Math.max(1, Math.ceil((size - 1) / pageStride()));
     }
+    function fitPageBoundary() {
+        pageBoundary.style.display = 'none';
+        if (config.mode === 'SCROLL') return;
+        const horizontal = config.mode === 'PAGED', stride = pageStride();
+        const size = horizontal ? document.documentElement.scrollWidth : document.documentElement.scrollHeight;
+        contentPages = Math.max(1, Math.ceil((size - 1) / stride));
+        const span = horizontal && config.dual ? 2 : 1;
+        const end = Math.ceil(contentPages / span) * span * stride - 1;
+        // A partial final column has no trailing column gap. Give the scrollable
+        // document its full last viewport, keeping the publisher DOM unchanged.
+        pageBoundary.style.cssText = `position:absolute!important;display:block!important;visibility:hidden!important;pointer-events:none!important;` +
+            `width:1px!important;height:1px!important;left:${horizontal ? end : 0}px!important;top:${horizontal ? 0 : end}px!important;`;
+        if (!pageBoundary.isConnected) document.documentElement.appendChild(pageBoundary);
+    }
     function bounds(rect) { return {left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom}; }
-    function visible(rect) { return rect.right > 0 && rect.left < innerWidth && rect.bottom > 0 && rect.top < innerHeight; }
+    function visible(rect) { const view = viewBounds(); return rect.right > 0 && rect.left < innerWidth && rect.bottom > view.top && rect.top < view.bottom; }
     function domPoint(offset, end) {
         if (!characters.length) return {node: document.body, offset: 0};
         let index = lowerBound(characters, Math.max(0, Math.min(canonical.length, offset)));
@@ -131,10 +160,11 @@
     }
     function viewport() {
         const points = [], shownImages = [], nodes = new Set();
-        visibleTextParents.forEach(parent => textByParent.get(parent).forEach(node => nodes.add(node)));
+        if (!continuousHost) visibleTextParents.forEach(parent => textByParent.get(parent).forEach(node => nodes.add(node)));
         // A bounded sample of the visible viewport, never a scan of every page or glyph.
         const left = Math.max(2, config.left || 0), right = innerWidth - Math.max(2, config.right || 0);
-        const top = Math.max(2, config.top || 0), bottom = innerHeight - Math.max(2, config.bottom || 0);
+        const view = viewBounds();
+        const top = Math.max(view.top + 2, config.top || 0), bottom = Math.min(view.bottom - 2, innerHeight - (config.bottom || 0));
         for (let row = 0; row <= 8; row++) for (let column = 0; column <= 4; column++) {
             const x = left + (right - left) * column / 4, y = top + (bottom - top) * row / 8;
             const at = caret(x, y, false, true, nodes), end = caret(x, y, true, true, nodes);
@@ -146,7 +176,7 @@
         nodes.forEach(node => {
             const range = document.createRange(); range.selectNodeContents(node);
             Array.from(range.getClientRects()).filter(visible).forEach(rect => {
-                const y = Math.max(1, Math.min(innerHeight - 1, (rect.top + rect.bottom) / 2));
+                const y = Math.max(view.top + 1, Math.min(view.bottom - 1, (rect.top + rect.bottom) / 2));
                 const start = caret(Math.max(1, rect.left + .5), y, false, true);
                 const end = caret(Math.min(innerWidth - 1, rect.right - .5), y, true, true);
                 if (start !== null) points.push(start);
@@ -163,13 +193,13 @@
         let end = points.length ? Math.max.apply(null, points) : canonical.length;
         while (start > 0 && whitespace(canonical[start - 1])) start--;
         while (end < canonical.length && whitespace(canonical[end])) end++;
-        const horizontal = config.mode === 'PAGED', position = horizontal ? scrollX : scrollY;
+        const horizontal = config.mode === 'PAGED', position = horizontal ? scrollX : continuousHost ? view.top : scrollY;
         const extent = horizontal ? document.documentElement.scrollWidth : document.documentElement.scrollHeight;
-        return {offset: start, endOffset: end, page: pageIndex(), pages: pageCount(), images: shownImages, scrolling: manual,
-            atStart: position <= 1, atEnd: position + (horizontal ? innerWidth : innerHeight) >= extent - 1};
+        return {offset: start, endOffset: end, page: continuousHost ? Math.floor(position / pageStride()) : pageIndex(), pages: pageCount(), images: shownImages, scrolling: manual,
+            atStart: position <= 1, atEnd: position + (horizontal ? innerWidth : view.height) >= extent - 1};
     }
     function report(force) {
-        if (!started) return;
+        if (!started || pageAnimation) return;
         const now = performance.now();
         if (!force && now - lastBridgeReport < 80) { drawDecorations(); return; }
         lastBridgeReport = now;
@@ -191,6 +221,7 @@
         endTimer = setTimeout(function () { manual = false; send('manualEnd'); report(true); }, 140);
     }
     function moveToPage(page) {
+        finishPageAnimation();
         const span = config.mode === 'PAGED' && config.dual ? 2 : 1;
         const target = Math.floor(Math.max(0, Math.min(pageCount() - 1, page)) / span) * span * pageStride();
         automatic = true;
@@ -198,10 +229,16 @@
         requestAnimationFrame(function () { automatic = false; report(true); });
     }
     function navigate(command) {
+        finishPageAnimation();
         const targetImage = command.image && images.find(image => image.path === command.image);
         const range = targetImage ? null : rangeFor(command.offset || 0, Math.min(canonical.length, (command.offset || 0) + 1));
         const rect = targetImage ? targetImage.node.getBoundingClientRect() : range.getBoundingClientRect();
         navigationAnchor = {offset: command.offset || 0, image: command.image};
+        if (continuousHost) {
+            measureChapter();
+            const y = command.lastPage ? Math.max(0, document.body.scrollHeight - viewBounds().height) : rect.top + scrollY - (config.top || 0);
+            continuousHost.navigateLocal(frameChapter, y, command.ensureVisible); return;
+        }
         if (command.ensureVisible && visible(rect)) { report(true); return; }
         if (command.lastPage) { moveToPage(pageCount() - 1); return; }
         if (config.mode === 'SCROLL') {
@@ -227,11 +264,39 @@
         beginManual();
         if (target < 0 || target >= pageCount()) send('chapterStep', {direction: direction});
         else if (config.eink || config.mode === 'VERTICAL_PAGED') moveToPage(target);
+        else if (config.turn === 'SLIDE') animatePage(target);
         else send('turn', {page:target, direction:direction, style:config.turn});
         endManual();
     }
+    function finishPageAnimation() {
+        if (!pageAnimation) return;
+        const previous = pageAnimation; pageAnimation = null; previous.cancel();
+        automatic = false;
+        if (overlay) overlay.style.visibility = '';
+    }
+    function animatePage(page) {
+        finishPageAnimation();
+        const before = scrollX, span = config.dual ? 2 : 1;
+        const target = Math.floor(Math.max(0, Math.min(pageCount() - 1, page)) / span) * span * pageStride();
+        automatic = true;
+        scrollTo(target, 0);
+        // One existing column flow, composited by Chromium. No bitmap readback,
+        // JavaScript-interface roundtrip, or wait for an Android drawing callback.
+        const animation = document.body.animate([
+            {transform:'translateX(' + (target - before) + 'px)'}, {transform:'translateX(0)'}
+        ], {duration:180, easing:'cubic-bezier(.2,.65,.3,1)'});
+        animation.id = 'eread-page-turn'; pageAnimation = animation;
+        if (overlay) overlay.style.visibility = 'hidden';
+        animation.onfinish = function () {
+            if (pageAnimation !== animation) return;
+            pageAnimation = null; automatic = false;
+            if (overlay) overlay.style.visibility = '';
+            report(true);
+        };
+    }
     function configure(next, preserve, force) {
         if (!force && started && JSON.stringify(next) === JSON.stringify(config)) return;
+        finishPageAnimation();
         const old = preserve && started ? viewport() : null;
         const anchor = old && navigationAnchor && (navigationAnchor.image || Array.from(rangeFor(navigationAnchor.offset,
             Math.min(canonical.length, navigationAnchor.offset + 1)).getClientRects()).some(visible)) ? navigationAnchor : old;
@@ -240,7 +305,7 @@
         const horizontal = config.mode === 'PAGED', scrolling = config.mode === 'SCROLL';
         const column = innerWidth / (config.dual && horizontal ? 2 : 1);
         const width = Math.max(32, column - config.left - config.right);
-        const height = Math.max(32, innerHeight - config.top - config.bottom);
+        const height = Math.max(32, viewBounds().height - config.top - config.bottom);
         const family = config.font === 'eread-selected' ? 'eread-selected' : config.font;
         const software = !config.authorCss ? `
             ${Array.from(sourceFontRatios).map(ratio => `[data-eread-scale="${ratio}"] { font-size:${config.fontSize * Number(ratio)}px!important; }`).join('\n')}
@@ -252,7 +317,7 @@
         ` : '';
         readerStyle.textContent = `
             @font-face { font-family:eread-selected; src:url('${config.fontUrl}'); }
-            html { margin:0!important; padding:0!important; width:100%!important; height:100%!important; scroll-behavior:auto!important; overflow:${scrolling ? 'auto' : 'hidden'}!important; background:transparent!important; }
+            html { margin:0!important; padding:0!important; width:100%!important; height:${continuousHost ? 'auto' : '100%'}!important; scroll-behavior:auto!important; overflow:${scrolling && !continuousHost ? 'auto' : 'hidden'}!important; background:transparent!important; }
             body { box-sizing:content-box!important; margin:0!important; padding:${config.top}px ${config.right}px ${config.bottom}px ${config.left}px!important;
                 width:${horizontal ? width : Math.max(32, innerWidth - config.left - config.right)}px!important; min-width:0!important;
                 height:${horizontal ? height + 'px' : 'auto'}!important; min-height:${horizontal ? '0' : height + 'px'}!important;
@@ -264,12 +329,15 @@
             ${config.night || config.eink ? `body * { color:${config.color}!important; background-color:transparent!important; }` : ''}
             img,svg,image,video { max-width:100%!important; max-height:${height}px; object-fit:contain; break-inside:avoid; }
             table { max-width:100%; } a { color:inherit; } a[href] { text-decoration:underline; }
-            #eread-overlays { position:fixed!important; inset:0!important; padding:0!important; margin:0!important; pointer-events:none!important;
+            #eread-overlays { position:${continuousHost ? 'absolute' : 'fixed'}!important; inset:0!important; padding:0!important; margin:0!important; pointer-events:none!important;
                 z-index:2147483646!important; width:100vw!important; height:100vh!important; columns:auto!important; }
             #eread-overlays > i { position:absolute!important; margin:0!important; padding:0!important; pointer-events:none!important; }
             ::selection { background:rgba(104,120,68,.35); }
         `;
-        if (anchor) requestAnimationFrame(function () { navigate({offset: anchor.offset, image: anchor.image}); });
+        fitPageBoundary();
+        measureChapter();
+        if (anchor && (!continuousHost || continuousHost.isActive(frameChapter)))
+            requestAnimationFrame(function () { navigate({offset: anchor.offset, image: anchor.image}); });
     }
     function rectsFor(start, end) {
         if (end <= start || start < 0 || !characters.length) return [];
@@ -425,6 +493,8 @@
             const resourceReady = function () {
                 if (!started) return;
                 rangeGeometry.clear();
+                if (continuousHost) { measureChapter(); report(true); return; }
+                fitPageBoundary();
                 navigate(navigationAnchor || {offset:stableOffset});
             };
             nodes.forEach(node => node.addEventListener('load', resourceReady));
@@ -435,14 +505,31 @@
             await Promise.all(nodes.map(node => node.complete || node.tagName !== 'IMG' ? Promise.resolve() : new Promise(resolve => {
                 node.addEventListener('load', resolve, {once:true}); node.addEventListener('error', resolve, {once:true}); setTimeout(resolve, 1000);
             })));
-            started = true;
-            requestAnimationFrame(function () { send('ready'); });
+            requestAnimationFrame(function () {
+                try {
+                    fitPageBoundary();
+                    measureChapter();
+                    if (options.initialNavigation) navigate(options.initialNavigation);
+                    document.documentElement.removeAttribute('data-eread-loading');
+                    started = true;
+                    send('ready'); report(true);
+                }
+                catch (error) { fail(error); }
+            });
         } catch (error) { fail(error); }
     }
     function command(value) {
         if (!started) return;
         try {
             if (value.type === 'navigate') navigate(value);
+            else if (value.type === 'resume') {
+                const options = value.options;
+                sourceNotes = options.notes || [];
+                decorations = options.decorations;
+                configure(options.config, false);
+                if (!options.preserveViewport) navigate(options.initialNavigation || {offset:0});
+                requestAnimationFrame(function () { send('ready'); report(true); });
+            }
             else if (value.type === 'move') step(value.direction);
             else if (value.type === 'page') moveToPage(value.page);
             else if (value.type === 'clearSelection') getSelection().removeAllRanges();
@@ -450,6 +537,8 @@
             else if (value.type === 'decorate') { decorations = value.decorations; drawDecorations(); }
             else if (value.type === 'notes') { sourceNotes = value.notes; drawDecorations(); }
             else if (value.type === 'report') report(true);
+            else if (value.type === 'hostViewport') report(true);
+            else if (value.type === 'hostResize') configure(config, true, true);
         } catch (error) { fail(error); }
     }
     document.addEventListener('selectionchange', selection);
@@ -458,9 +547,13 @@
         visibleTextParents.clear(); textByParent.clear();
     });
     window.addEventListener('scroll', function () { if (!automatic && touch) beginManual(); schedule(); if (manual) endManual(); }, {passive:true});
-    window.addEventListener('resize', function () { clearTimeout(resizeTimer); resizeTimer = setTimeout(function () { configure(config, true, true); }, 80); });
+    window.addEventListener('resize', function () {
+        if (continuousHost) return;
+        clearTimeout(resizeTimer); resizeTimer = setTimeout(function () { configure(config, true, true); }, 80);
+    });
     document.addEventListener('touchstart', function (event) {
         if (!started || event.touches.length !== 1) return;
+        finishPageAnimation();
         touch = {x:event.touches[0].clientX, y:event.touches[0].clientY, time:Date.now(), moved:false, image:event.target.closest('img,svg'),
             startAtStart: scrollY <= 1, startAtEnd: scrollY + innerHeight >= document.documentElement.scrollHeight - 1};
         clearTimeout(selectionTimer);
@@ -481,7 +574,7 @@
         if (previous.moved && config.mode !== 'SCROLL' && getSelection().isCollapsed) {
             const point = event.changedTouches[0], delta = config.mode === 'PAGED' ? point.clientX - previous.x : point.clientY - previous.y;
             if (Math.abs(delta) > 24) step(delta < 0 ? 1 : -1);
-        } else if (previous.moved && config.mode === 'SCROLL') {
+        } else if (previous.moved && config.mode === 'SCROLL' && !continuousHost) {
             const delta = event.changedTouches[0].clientY - previous.y;
             if (previous.startAtStart && scrollY <= 1 && delta > 70) send('chapterStep', {direction:-1});
             else if (previous.startAtEnd && scrollY + innerHeight >= document.documentElement.scrollHeight - 1 && delta < -70) send('chapterStep', {direction:1});
@@ -527,4 +620,5 @@
         else send('tap');
     });
     window.ERead = {init:init, command:command};
+    if (continuousHost) new ResizeObserver(measureChapter).observe(document.body);
 })();

@@ -17,5 +17,6 @@ data class PendingImport(
     val id: String = java.util.UUID.randomUUID().toString(),
     val queued: Boolean = false,
     val completed: Int = 0,
-    val total: Int = 1
+    val total: Int = 1,
+    val external: Boolean = false
 )

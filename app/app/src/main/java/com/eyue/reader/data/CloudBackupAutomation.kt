@@ -108,7 +108,7 @@ internal fun cloudBackupFingerprintTail(repository: LibraryRepository, state: Li
     val settings = if (book.mode == LibraryMode.COMIC) state.comicSettings else state.settings
     parts += repository.writeSettings(settings).toString()
     state.groups.find { it.id == book.groupId }?.let { parts += "${it.id}\n${it.name}\n${it.mode}" }
-    val files = listOfNotNull(book.sourcePath, book.coverPath) + book.chapters.flatMap { chapter ->
+    val files = listOfNotNull(book.sourcePath, book.coverPath, repository.epubIndexFile(book)?.absolutePath) + book.chapters.flatMap { chapter ->
         listOfNotNull(chapter.textPath) + chapter.inlineImages.map { it.path } +
             chapter.pages.flatMap { listOfNotNull(it.path, it.textPath) }
     } + settings.fonts.map { it.path } + listOfNotNull(settings.fontPath, settings.backgroundImagePath) +

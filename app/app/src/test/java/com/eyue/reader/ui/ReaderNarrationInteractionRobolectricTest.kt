@@ -56,7 +56,9 @@ import java.util.concurrent.atomic.AtomicReference
 
 /** Real text layouts and gestures, with the audio engine held at explicit source offsets. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+// API 28's simulated window has no native SurfaceSession for the system magnifier.
+// Selection, gestures, menus and speech assertions still run against the real Compose UI.
+@Config(sdk = [28], shadows = [ReaderNarrationInteractionRobolectricTest.NoSurfaceMagnifier::class])
 @LooperMode(LooperMode.Mode.PAUSED)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ReaderNarrationInteractionRobolectricTest {
@@ -757,5 +759,8 @@ class ReaderNarrationInteractionRobolectricTest {
     @Implements(android.widget.Magnifier::class)
     class NoSurfaceMagnifier {
         @Implementation fun show(sourceCenterX: Float, sourceCenterY: Float) = Unit
+        @Implementation fun show(sourceCenterX: Float, sourceCenterY: Float, magnifierCenterX: Float, magnifierCenterY: Float) = Unit
+        @Implementation fun dismiss() = Unit
+        @Implementation fun update() = Unit
     }
 }

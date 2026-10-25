@@ -108,7 +108,8 @@ class ReaderScreenPreparedReadShadow {
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w360dp-h800dp-mdpi",
-    shadows = [ReaderScreenIndexLinuxShadow::class, ReaderScreenPreparedReadShadow::class])
+    shadows = [ReaderScreenIndexLinuxShadow::class, ReaderScreenPreparedReadShadow::class,
+        ReaderNarrationInteractionRobolectricTest.NoSurfaceMagnifier::class])
 @LooperMode(LooperMode.Mode.PAUSED)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ReaderScreenBookPageIndexRobolectricTest {

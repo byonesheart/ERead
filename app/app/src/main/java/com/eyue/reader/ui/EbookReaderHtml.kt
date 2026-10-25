@@ -5,6 +5,7 @@ import com.eyue.reader.data.EbookSourceDocument
 import com.eyue.reader.data.SourceHtmlTag
 import com.eyue.reader.data.sourceHtmlAttribute
 import com.eyue.reader.data.sourceHtmlTags
+import org.json.JSONObject
 
 private val ebookBlockedContainers = setOf("script", "iframe", "frameset", "object", "applet", "portal")
 private val ebookBlockedTags = setOf("base", "frame", "embed", "param")
@@ -12,13 +13,15 @@ private val ebookUrlAttributes = setOf("href", "xlink:href", "src", "action", "f
 private val ebookAttributes = Regex("\\s+([A-Za-z_:][\\w:.-]*)(?:\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+))?")
 
 /** An ebook supplies markup and CSS; scripts and the application bridge belong only to the reader. */
-internal fun ebookReaderHtml(source: EbookSourceDocument, script: String, nonce: String): String {
+internal fun ebookReaderHtml(source: EbookSourceDocument, script: String, nonce: String, initialOptions: JSONObject? = null,
+    allowReaderFrames: Boolean = false): String {
     require(nonce.matches(Regex("[A-Za-z0-9_-]+"))) { "Invalid reader script nonce" }
     val policy = "default-src 'none'; img-src https://eread.local data:; style-src https://eread.local 'unsafe-inline'; " +
-        "font-src https://eread.local data:; script-src 'nonce-$nonce'; connect-src 'none'; frame-src 'none'; " +
+        "font-src https://eread.local data:; script-src 'nonce-$nonce'; connect-src 'none'; frame-src ${if (allowReaderFrames) "https://eread.local" else "'none'"}; " +
         "object-src 'none'; form-action 'none'; base-uri 'none'"
     val trustedHead = "<meta charset=\"UTF-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"$policy\">" +
-        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no\">" +
+        "<style>html[data-eread-loading] body{opacity:0!important}</style>"
     val clean = ebookSanitizePublisherHtml(source.html)
     val tags = sourceHtmlTags(clean).toList()
     val html = tags.firstOrNull { !it.closing && it.name == "html" }
@@ -42,12 +45,19 @@ internal fun ebookReaderHtml(source: EbookSourceDocument, script: String, nonce:
     // including when comments/styles contain fake heads or content precedes the head.
     return buildString(clean.length + trustedHead.length + script.length + 128) {
         append("<!doctype html>")
-        append(html?.let { clean.substring(it.start, it.end) } ?: "<html>")
+        append(html?.let { clean.substring(it.start, it.end - 1) + " data-eread-loading>" } ?: "<html data-eread-loading>")
         append(head?.let { clean.substring(it.start, it.end) } ?: "<head>")
         append(trustedHead).append(publisherHead).append("</head>")
         append(body?.let { clean.substring(it.start, it.end) } ?: "<body>")
         append(content)
-        append("<script nonce=\"").append(nonce).append("\">").append(script).append("</script>")
+        append("<script nonce=\"").append(nonce).append("\">").append(script)
+        // Start from the trusted document itself. Waiting for onPageFinished can
+        // leave a locally served chapter waiting on unrelated resource callbacks.
+        initialOptions?.let {
+            val options = it.toString().replace("<", "\\u003c").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+            append("\n;window.ERead.init(").append(options).append(");")
+        }
+        append("</script>")
         append("</body></html>")
     }
 }

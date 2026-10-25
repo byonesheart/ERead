@@ -137,6 +137,11 @@ class CloudBackupService(
             val annotations = state.annotations.filter { it.bookId == book.id }.map { it.copy(imagePath = path(it.imagePath)) }
             val settings = remapSettings(if (book.mode == LibraryMode.COMIC) state.comicSettings else state.settings, ::path)
             val group = state.groups.firstOrNull { it.id == book.groupId && it.mode == book.mode }
+            repository.epubIndexFile(book)?.takeIf { book.format == BookFormat.EPUB }?.let { sidecar ->
+                assets["assets/readium-publication.json"] = CloudAsset("assets/readium-publication.json", sidecar.absolutePath) {
+                    AtomicFile(sidecar).openRead()
+                }
+            }
             val directory = "books/${book.id}/"
             val assetList = assets.values.toList()
             val inspected = CloudArchive.inspect(assetList, check, resourceHashes)

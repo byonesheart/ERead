@@ -11,6 +11,7 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Shader
+import android.graphics.PorterDuff
 import android.view.animation.DecelerateInterpolator
 import android.webkit.WebView
 import com.eyue.reader.data.PageTurnStyle
@@ -22,6 +23,7 @@ internal open class EbookPageTurnWebView(context: Context) : WebView(context) {
     private var snapshot: Bitmap? = null
     private var turn: ValueAnimator? = null
     private var fraction = 1f
+    private var holding = false
     private var direction = 1
     private var style = PageTurnStyle.SLIDE
     var paperColor: Int = android.graphics.Color.WHITE
@@ -39,23 +41,41 @@ internal open class EbookPageTurnWebView(context: Context) : WebView(context) {
         val old = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val capture = Canvas(old).apply { translate(-scrollX.toFloat(), -scrollY.toFloat()) }
         draw(capture)
-        snapshot = old; direction = if (forward < 0) -1 else 1; style = animation; fraction = 0f
+        snapshot = old; direction = if (forward < 0) -1 else 1; style = animation; fraction = 0f; holding = true
         evaluateJavascript("ERead.command({type:'page',page:$page})") {
             if (snapshot !== old) return@evaluateJavascript
-            turn = ValueAnimator.ofFloat(0f, 1f).apply {
-                duration = if (style == PageTurnStyle.CURL) 280 else 180
-                interpolator = DecelerateInterpolator()
-                addUpdateListener { fraction = it.animatedValue as Float; invalidate() }
-                addListener(object : AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: Animator) { if (snapshot === old) releaseSnapshot() }
-                })
-                start()
-            }
+            // JS completion precedes Chromium's display-list commit. Starting the
+            // animation there draws the old page twice for its first few frames.
+            postVisualStateCallback(0, object : VisualStateCallback() {
+                override fun onComplete(requestId: Long) {
+                    if (snapshot !== old) return
+                    holding = false
+                    turn = ValueAnimator.ofFloat(0f, 1f).apply {
+                        duration = if (style == PageTurnStyle.CURL) 280 else 180
+                        interpolator = DecelerateInterpolator()
+                        addUpdateListener { fraction = it.animatedValue as Float; invalidate() }
+                        addListener(object : AnimatorListenerAdapter() {
+                            override fun onAnimationEnd(animation: Animator) { if (snapshot === old) releaseSnapshot() }
+                        })
+                        start()
+                    }
+                }
+            })
         }
         invalidate()
     }
 
-    fun finishTurn() { turn?.cancel(); turn = null; releaseSnapshot() }
+    fun holdPage() {
+        finishTurn()
+        if (width <= 0 || height <= 0) return
+        val old = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        draw(Canvas(old).apply { translate(-scrollX.toFloat(), -scrollY.toFloat()) })
+        snapshot = old
+        holding = true
+        invalidate()
+    }
+
+    fun finishTurn() { holding = false; turn?.cancel(); turn = null; releaseSnapshot() }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         if (w != oldw || h != oldh) finishTurn()
@@ -68,26 +88,42 @@ internal open class EbookPageTurnWebView(context: Context) : WebView(context) {
 
     override fun onDraw(canvas: Canvas) {
         val old = snapshot
+        if (holding && old != null) {
+            // Chromium must still draw to acknowledge postVisualStateCallback.
+            // Keep that draw offscreen, otherwise waiting on it while returning
+            // early from onDraw can leave the old snapshot on screen indefinitely.
+            val layer = canvas.saveLayer(null, null)
+            super.onDraw(canvas)
+            canvas.drawColor(android.graphics.Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+            canvas.save(); canvas.translate(scrollX.toFloat(), scrollY.toFloat())
+            canvas.drawBitmap(old, 0f, 0f, bitmapPaint); canvas.restore()
+            canvas.restoreToCount(layer)
+            return
+        }
         if (old == null || fraction >= 1f) { super.onDraw(canvas); return }
         val distance = width.toFloat()
-        fun oldAt(x: Float) {
-            canvas.save(); canvas.translate(scrollX + x, scrollY.toFloat()); canvas.drawBitmap(old, 0f, 0f, bitmapPaint); canvas.restore()
+        fun oldAt(x: Float, left: Float = 0f, right: Float = distance) {
+            canvas.save(); canvas.clipRect(scrollX + left, scrollY.toFloat(), scrollX + right, scrollY + height.toFloat())
+            canvas.translate(scrollX + x, scrollY.toFloat()); canvas.drawBitmap(old, 0f, 0f, bitmapPaint); canvas.restore()
         }
-        fun currentAt(x: Float) {
-            canvas.save(); canvas.translate(x, 0f); super.onDraw(canvas); canvas.restore()
+        fun currentAt(x: Float, left: Float, right: Float) {
+            canvas.save(); canvas.clipRect(scrollX + left, scrollY.toFloat(), scrollX + right, scrollY + height.toFloat())
+            canvas.translate(x, 0f); super.onDraw(canvas); canvas.restore()
         }
         when (style) {
             PageTurnStyle.SLIDE -> {
-                oldAt(-direction * distance * fraction)
-                currentAt(direction * distance * (1f - fraction))
+                val cut = if (direction > 0) distance * (1f - fraction) else distance * fraction
+                oldAt(-direction * distance * fraction, if (direction > 0) 0f else cut, if (direction > 0) cut else distance)
+                currentAt(direction * distance * (1f - fraction), if (direction > 0) cut else 0f, if (direction > 0) distance else cut)
             }
             PageTurnStyle.COVER -> if (direction > 0) {
-                super.onDraw(canvas); oldAt(-distance * fraction)
+                val cut = distance * (1f - fraction)
+                currentAt(0f, cut, distance); oldAt(-distance * fraction, 0f, cut)
             } else {
-                oldAt(0f); currentAt(-distance * (1f - fraction))
+                val cut = distance * fraction
+                oldAt(0f, cut, distance); currentAt(-distance * (1f - fraction), 0f, cut)
             }
             PageTurnStyle.CURL -> {
-                super.onDraw(canvas)
                 canvas.save()
                 canvas.translate(scrollX.toFloat(), scrollY.toFloat())
                 if (direction < 0) { canvas.translate(distance, 0f); canvas.scale(-1f, 1f) }
@@ -98,6 +134,10 @@ internal open class EbookPageTurnWebView(context: Context) : WebView(context) {
                 front.apply {
                     moveTo(0f, 0f); lineTo(cut + curve * .5f, 0f); lineTo(cut - curve * .5f, bottom); lineTo(0f, bottom); close()
                 }
+                canvas.save(); canvas.clipOutPath(front)
+                if (direction < 0) { canvas.scale(-1f, 1f); canvas.translate(-distance, 0f) }
+                canvas.translate(-scrollX.toFloat(), -scrollY.toFloat())
+                super.onDraw(canvas); canvas.restore()
                 fun printOld() {
                     canvas.save()
                     if (direction < 0) { canvas.translate(distance, 0f); canvas.scale(-1f, 1f) }

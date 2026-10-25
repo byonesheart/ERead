@@ -84,7 +84,11 @@ internal class EbookSourceWriteback private constructor(
     }
 
     companion object {
-        fun source(book: Book): String = book.sourceUri ?: book.sourcePath ?: throw IOException("原文件不存在，请重新选择")
+        fun source(book: Book): String =
+            (if (book.format == BookFormat.EPUB && !book.sourceLinked && book.sourcePath != null &&
+                File(File(book.sourcePath).parentFile, "readium-publication.json").let { it.isFile || File(it.path + ".bak").isFile })
+                book.sourcePath else book.sourceUri ?: book.sourcePath)
+                ?: throw IOException("原文件不存在，请重新选择")
 
         fun requireWritable(context: Context, source: String) {
             try {
@@ -121,7 +125,7 @@ internal class EbookSourceWriteback private constructor(
             val prepared = File(directory, "prepared.${before.format.name.lowercase()}")
             when (before.format) {
                 BookFormat.TXT -> txt(prepared, edited, progress, checkActive)
-                BookFormat.EPUB -> epub(backup, prepared, before, edited, progress, checkActive)
+                BookFormat.EPUB -> epub(context, backup, prepared, before, edited, progress, checkActive)
                 BookFormat.MOBI -> mobi(backup, prepared, before, edited, progress, checkActive)
                 else -> error("不支持覆盖此格式")
             }
@@ -147,8 +151,9 @@ internal class EbookSourceWriteback private constructor(
             }
         }
 
-        private fun epub(source: File, destination: File, before: Book, edited: Book, progress: Progress, checkActive: () -> Unit) {
-            val parsed = EpubArchive.read(source, onProgress = {
+        private fun epub(context: Context, source: File, destination: File, before: Book, edited: Book, progress: Progress, checkActive: () -> Unit) {
+            val legacyIndex = LegacyEpubIndex.read(context, before)
+            val parsed = legacyIndex?.snapshot(source, before, checkActive) ?: EpubArchive.read(source, onProgress = {
                 checkActive(); progress.report("读取 EPUB 正文", .1f + .15f * it)
             })
             require(parsed.sections.size == edited.chapters.size) { "源文件目录与书架记录不一致，修改未保存，请重新导入" }
@@ -169,7 +174,9 @@ internal class EbookSourceWriteback private constructor(
                     require(before.hasTextEdits || old == cached) { "源文件正文已变化，修改未保存，请重新导入" }
                     val result = SourceHtmlEdit.replace(section.html, expected[index], checkActive, image(section.path))
                     if (result.changes.isNotEmpty()) {
-                        val raw = zip.getInputStream(zip.getEntry(section.path)).use { decodeMarkup(it.readBytes()) }
+                        val raw = zip.getInputStream(zip.getEntry(section.path)).use {
+                            if (legacyIndex != null) decodeEpubMarkup(it.readBytes()) else decodeMarkup(it.readBytes())
+                        }
                         val piece = raw.substring(section.sourceStart, section.sourceEnd)
                         val prefix = section.html.indexOf(piece)
                         require(prefix >= 0) { "EPUB 章节定位失败，修改未保存" }
@@ -186,7 +193,8 @@ internal class EbookSourceWriteback private constructor(
                         val path = EpubArchive.safePath(entry.name)
                         val edits = changes[path]
                         val bytes = if (edits == null) null else zip.getInputStream(entry).use {
-                            val html = decodeMarkup(it.readBytes())
+                            val bytes = it.readBytes()
+                            val html = if (legacyIndex != null) decodeEpubMarkup(bytes) else decodeMarkup(bytes)
                             SourceHtmlEdit.apply(html, edits).html.replace(Regex("(?i)(encoding\\s*=\\s*['\"])[^'\"]+"), "$1UTF-8")
                                 .replace(Regex("(?i)(charset\\s*=\\s*['\"]?)[A-Za-z0-9_-]+"), "$1UTF-8").toByteArray(Charsets.UTF_8)
                         }
@@ -199,7 +207,7 @@ internal class EbookSourceWriteback private constructor(
                     }
                 }
             }
-            val verified = EpubArchive.read(destination, onProgress = {
+            val verified = legacyIndex?.snapshot(destination, before, checkActive) ?: EpubArchive.read(destination, onProgress = {
                 checkActive(); progress.report("校验 EPUB 文件", .8f + .1f * it)
             })
             check(verified.title == parsed.title && verified.author == parsed.author && verified.sections.size == parsed.sections.size &&

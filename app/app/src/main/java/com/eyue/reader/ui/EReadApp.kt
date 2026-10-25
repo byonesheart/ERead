@@ -57,6 +57,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
         val settings = vm.readerSettings.copy(nightMode = dark)
         val density = LocalDensity.current
         val context = LocalContext.current
+        val ebookSession = remember(context) { EbookReaderSession(context) }
+        DisposableEffect(ebookSession) { onDispose { ebookSession.close() } }
         val direction = LocalLayoutDirection.current
         var safeViewport by remember { mutableStateOf(IntSize.Zero) }
         Box(Modifier.fillMaxSize().safeDrawingPadding().onSizeChanged { safeViewport = it })
@@ -182,7 +184,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                 }
                 CompositionLocalProvider(LocalReaderSpeechFactory provides speechFactory) {
                 ReaderScreen(book, settings, vm.readerAnnotations(book.id),
-                    onClose = ::closeReader,
+                    onClose = ::closeReader, ebookSession = ebookSession,
                     onProgress = { chapter, page, offset, progress, imagePath -> vm.progress(chapter, page, offset, progress, book.id, imagePath) },
                     onSettings = vm::settings,
                     onAddAnnotation = vm::annotate, onDeleteAnnotation = vm::deleteAnnotation,
@@ -218,6 +220,21 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                 onBookRoles = { selectedRoleText = null; voiceRolesBookId = book.id; showSpeechSettings = false })
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
                 SnackbarHost(snack, Modifier.navigationBarsPadding().padding(12.dp))
+            }
+        } else if (vm.openingExternalImport != null) {
+            val opening = requireNotNull(vm.openingExternalImport)
+            BackHandler { vm.dismissExternalOpening() }
+            Column(Modifier.fillMaxSize().padding(32.dp).testTag("external_reader_opening"),
+                verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(opening.title, style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.height(20.dp))
+                CircularProgressIndicator()
+                Spacer(Modifier.height(16.dp))
+                Text(opening.progress?.stage ?: if (opening.queued) "等待打开书籍" else "正在打开书籍")
+                opening.progress?.fraction?.let { fraction ->
+                    Spacer(Modifier.height(12.dp))
+                    LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+                }
             }
         } else {
             Scaffold(containerColor = Paper, snackbarHost = { SnackbarHost(snack) }, bottomBar = {

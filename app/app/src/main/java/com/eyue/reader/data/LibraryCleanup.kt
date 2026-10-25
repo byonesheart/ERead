@@ -1,6 +1,7 @@
 package com.eyue.reader.data
 
 import android.content.Context
+import com.eyue.reader.data.LegacyLocatorFiles
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -39,7 +40,10 @@ internal suspend fun measureLibraryCleanup(context: Context, state: LibraryState
     val roles = state.books.flatMap { book -> book.voiceRoles.map { it.toJson().put("bookId", book.id) } } +
         state.commonVoiceRoles.map { it.toJson().put("scope", "common") }
     fun size(items: List<JSONObject>) = if (items.isEmpty()) 0L else JSONArray(items).toString().toByteArray(Charsets.UTF_8).size.toLong()
-    LibraryCleanupUsage(size(histories), state.books.sumOf { AiSpeechCache(context).bytes(it.id) }, size(notes), size(roles))
+    val locators = LegacyLocatorFiles(File(context.filesDir, "readium-locators"))
+    val noteSidecars = state.annotations.filter { it.kind != AnnotationKind.BOOKMARK }
+        .sumOf { locators.annotationBytes(it.bookId, it.id) }
+    LibraryCleanupUsage(size(histories), state.books.sumOf { AiSpeechCache(context).bytes(it.id) }, size(notes) + noteSidecars, size(roles))
 }
 
 internal suspend fun localBookStorageBytes(context: Context, book: Book): Long = withContext(Dispatchers.IO) {
@@ -55,5 +59,6 @@ internal suspend fun localBookStorageBytes(context: Context, book: Book): Long =
             }.sumOf { it.length() }
         }
     }
-    owned + pages + AiSpeechCache(context).bytes(book.id)
+    owned + pages + AiSpeechCache(context).bytes(book.id) +
+        LegacyLocatorFiles(File(context.filesDir, "readium-locators")).bytes(book.id)
 }

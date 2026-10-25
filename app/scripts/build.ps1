@@ -68,9 +68,9 @@ try {
     Push-Location -LiteralPath $buildRoot
     $locationPushed = $true
     & (Join-Path $buildRoot 'scripts\setup-android.ps1')
-    $sdkProperty = 'sdk.dir=' + $env:ANDROID_HOME.Replace('\', '/')
-    [IO.File]::WriteAllText($localPropertiesPath, $sdkProperty + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
-    & (Join-Path $buildRoot '.tools\gradle-8.11.1\bin\gradle.bat') @Tasks `
+    $sdkProperty = 'sdk.dir=' + $env:ANDROID_HOME.Replace('\', '/').Replace(':', '\:')
+    [IO.File]::WriteAllText($localPropertiesPath, $sdkProperty + "`n", [Text.UTF8Encoding]::new($false))
+    & (Join-Path $buildRoot '.tools\gradle-9.7.0\bin\gradle.bat') @Tasks `
         --no-daemon --console=plain --max-workers=2 `
         --project-prop 'org.gradle.jvmargs=-Xmx1536m -Dfile.encoding=UTF-8' `
         --project-prop 'kotlin.compiler.execution.strategy=in-process'

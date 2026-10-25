@@ -94,7 +94,7 @@ class ComicFixtureDocumentsProvider : DocumentsProvider() {
                 DocumentsContract.Root.COLUMN_TITLE -> "漫画测试"
                 DocumentsContract.Root.COLUMN_FLAGS -> DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD
                 else -> null
-            } }.toTypedArray())
+            } }.toTypedArray<Any?>())
         }
     }
 
@@ -140,7 +140,7 @@ class ComicFixtureDocumentsProvider : DocumentsProvider() {
                     DocumentsContract.Document.COLUMN_FLAGS -> if (node.file == null && node.mime !in setOf("inode/directory", "resource/folder")) DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE else 0
                     DocumentsContract.Document.COLUMN_SIZE -> node.file?.length() ?: 0L
                     else -> null
-                } }.toTypedArray())
+                } }.toTypedArray<Any?>())
             }
         }
     }

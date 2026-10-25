@@ -16,6 +16,7 @@ import androidx.work.WorkInfo
 import com.eyue.reader.data.*
 import com.eyue.reader.data.Annotation
 import com.eyue.reader.data.cloud.CloudBackupService
+import com.eyue.reader.data.LegacyLocatorFiles
 import com.eyue.reader.ui.prepaginateBook
 import com.eyue.reader.ui.readerLayoutSpec
 import com.eyue.reader.ui.removeReaderPageCaches
@@ -39,6 +40,7 @@ import java.io.File
 
 class ReaderViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = LibraryRepository(application)
+    private val legacyLocatorFiles = LegacyLocatorFiles(File(application.filesDir, "readium-locators"))
     private val importer = DocumentImporter(application)
     private val aiSpeechStore = AiSpeechConfigStore(application)
     private val aiSpeechSubmissionJobs = mutableMapOf<String, Job>()
@@ -87,6 +89,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val importRequests = Channel<ImportRequest>(Channel.UNLIMITED)
     private var activeImportId: String? = null
     private val externalRequestIds = mutableSetOf<String>()
+    private var dismissedExternalOpens by mutableStateOf<Set<String>>(emptySet())
     private var storageReady = false
     private data class ReaderViewport(val size: IntSize, val density: Density, val direction: LayoutDirection)
     private var readerViewport: ReaderViewport? = null
@@ -122,6 +125,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     var pendingImports by mutableStateOf<List<PendingImport>>(emptyList())
         private set
     val pendingImport: PendingImport? get() = pendingImports.firstOrNull()
+    val openingExternalImport: PendingImport? get() = pendingImports.firstOrNull { it.external && it.id !in dismissedExternalOpens }
+    fun dismissExternalOpening() { openingExternalImport?.let { dismissedExternalOpens += it.id } }
     var pendingImportConflict by mutableStateOf<ImportBookConflict?>(null)
         private set
     private var importConflictAnswer: CompletableDeferred<Set<String>>? = null
@@ -325,6 +330,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     updateImportProgress(null)
                     pendingImports = pendingImports.filterNot { it.id == request.id }
                     activeImportId = null
+                    dismissedExternalOpens -= request.id
                 }
             }
         }
@@ -358,7 +364,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val title = if (sources.size == 1) sources.single().lastPathSegment?.substringAfterLast('/')
             ?.substringAfterLast(':')?.substringBeforeLast('.')?.ifBlank { null } ?: "正在读取文件"
             else "导入 ${sources.size} 个文件"
-        pendingImports = pendingImports + PendingImport(title, selectedMode, id = id, queued = true, total = sources.size)
+        pendingImports = pendingImports + PendingImport(title, selectedMode, id = id, queued = true, total = sources.size, external = external)
         if (importRequests.trySend(ImportRequest(id, sources, selectedMode, folder, external, mimeType, requestId)).isFailure)
             pendingImports = pendingImports.filterNot { it.id == id }
     }
@@ -384,6 +390,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             if (prefs.getString("request_id", null) == requestId) prefs.getString("book_id", null) else null
         } }
         state.books.find { it.id == completedBookId }?.let { open(it); return }
+        if (request.external && request.uris.size == 1) {
+            val known = withContext(Dispatchers.IO) {
+                val info = documentSourceFileInfo(application, request.uris.single().toString())
+                state.books.firstOrNull { book -> !book.cloudOnly && info?.bytes != null &&
+                    book.sourceFileName == info.name && book.sourceFileBytes == info.bytes }
+            }
+            if (known != null) {
+                if (request.id !in dismissedExternalOpens) open(state.books.firstOrNull { it.id == known.id } ?: known)
+                return
+            }
+        }
         beginImport(request.uris)
         // A fresh importer keeps errors, warnings and progress scoped to this batch, including during font/metadata work.
         val taskImporter = DocumentImporter(application)
@@ -394,12 +411,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         var completed = 0
         suspend fun acceptBook(imported: Book) = withContext(Dispatchers.Main) {
             val incoming = if (imported.format == BookFormat.IMAGES) imported.copy(mode = LibraryMode.COMIC) else imported
-            val book = acceptImportedBook(incoming, notices)
+            val book = acceptImportedBook(incoming, notices, prepareLayout = !request.external)
             completed++
             pendingImports = pendingImports.map { if (it.id == request.id) it.copy(mode = book?.mode ?: incoming.mode, completed = completed) else it }
             if (completed == 1 && book != null) {
                 if (activeBookId == null && mode == request.mode) mode = book.mode
-                if (request.external) {
+                if (request.external && request.id !in dismissedExternalOpens) {
                     request.requestId?.let { requestId -> withContext(Dispatchers.IO) {
                         application.getSharedPreferences("external_open", 0).edit()
                             .putString("request_id", requestId).putString("book_id", book.id).commit()
@@ -410,7 +427,16 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
         try {
             if (request.folder) acceptBook(taskImporter.importFolder(request.uris.single(), state.settings.chapterRule))
-            else taskImporter.importFiles(request.uris, request.mode, state.settings.chapterRule, request.mimeType, ::acceptBook)
+            else {
+                // Preserve multi-file ordering and the importer's image grouping.
+                val info = request.uris.singleOrNull()?.let { uri -> withContext(Dispatchers.IO) {
+                    documentSourceFileInfo(application, uri.toString())
+                } }
+                val existing = state.books.firstOrNull { !it.cloudOnly && info?.bytes != null &&
+                    it.sourceFileName == info.name && it.sourceFileBytes == info.bytes }
+                if (existing != null) acceptBook(existing)
+                else taskImporter.importFiles(request.uris, request.mode, state.settings.chapterRule, request.mimeType, ::acceptBook)
+            }
             notices += taskImporter.lastImportErrors + taskImporter.lastImportWarnings
             message = notices.takeIf { it.isNotEmpty() }?.joinToString("\n")
         } finally { progressJob.cancelAndJoin() }
@@ -422,10 +448,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (keepIds.isNotEmpty() && allowed.containsAll(keepIds)) importConflictAnswer?.complete(keepIds)
     }
 
-    private suspend fun acceptImportedBook(incoming: Book, notices: MutableList<String>): Book? {
+    private suspend fun acceptImportedBook(incoming: Book, notices: MutableList<String>, prepareLayout: Boolean = true): Book? {
         try {
             val identified = withContext(Dispatchers.IO) {
-                state.books.map { hydrateBookSourceIdentity(getApplication(), it) }
+                state.books.map { if (it.sourceFileName != null && it.sourceFileName != incoming.sourceFileName) it
+                    else hydrateBookSourceIdentity(getApplication(), it) }
             }.filter { known -> state.books.any { it.id == known.id } }
             val same = identified.firstOrNull { !it.cloudOnly && cloudBookSourceMatch(it, incoming) == CloudBookMatch.SAME }
             if (same != null) return state.books.find { it.id == same.id }
@@ -444,7 +471,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             val discardedIds = candidates.filterNot { it.id in selected }.map { it.id }
             require(discardedIds.none(::hasBookDraft)) { "同名书籍有未保存修改，请先保存或放弃后再重新导入" }
             if (!keepIncoming && discardedIds.isEmpty()) return state.books.firstOrNull { it.id in selected && !it.cloudOnly }
-            if (keepIncoming) notices += prepareImportedBooks(listOf(incoming))
+            if (keepIncoming && prepareLayout) notices += prepareImportedBooks(listOf(incoming))
             for (id in discardedIds) {
                 stopAiSpeechConversion(id)
                 stopCloudUploadSubmission(id)
@@ -670,9 +697,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun deleteAnnotation(id: String) {
+        val saved = state.annotations.firstOrNull { it.id == id }
         val draft = bookDrafts.values.find { pending -> pending.annotations.any { it.id == id } }
         if (draft != null) bookDrafts = bookDrafts + (draft.baseBook.id to draft.copy(annotations = draft.annotations.filterNot { it.id == id }))
-        else changed(state.copy(annotations = state.annotations.filterNot { it.id == id }))
+        else {
+            changed(state.copy(annotations = state.annotations.filterNot { it.id == id }))
+            if (saved != null) viewModelScope.launch {
+                try { legacyLocatorFiles.removeAnnotation(saved.bookId, id) }
+                catch (error: CancellationException) { throw error }
+                catch (error: Exception) { message = "EPUB 批注位置清理失败：${error.message ?: "请重试"}" }
+            }
+        }
     }
 
     fun createGroup(name: String) {
@@ -1168,6 +1203,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     if (kind == LibraryCleanupKind.AI_AUDIO) withContext(Dispatchers.IO) {
                         val cache = AiSpeechCache(getApplication()); ids.forEach(cache::clear)
+                    }
+                    if (kind == LibraryCleanupKind.ANNOTATIONS) {
+                        state.annotations.filter { it.bookId in ids && it.kind != AnnotationKind.BOOKMARK }.forEach {
+                            legacyLocatorFiles.removeAnnotation(it.bookId, it.id)
+                        }
                     }
                     state = cleanLibraryRecords(state, kind, ids)
                     saves.cancelPending()

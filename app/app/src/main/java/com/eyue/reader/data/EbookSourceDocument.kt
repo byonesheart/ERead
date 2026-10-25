@@ -40,6 +40,8 @@ internal class EbookSourceStore(private val context: Context, private val book: 
         ?: throw IOException("原文件不存在，请重新选择这本书")
     private val bookKey = digest(book.id).take(24)
     private val origin = "https://eread.local/$bookKey/"
+    val continuousKey: String get() = "$bookKey:${book.contentVersion}:continuous"
+    val continuousUrl: String get() = origin + "continuous.html"
     private val sourceLock = Any()
     private val temporarySource = File(context.cacheDir, "document-sources/ebook-$bookKey-${UUID.randomUUID()}.tmp")
 
@@ -61,10 +63,31 @@ internal class EbookSourceStore(private val context: Context, private val book: 
             val rows = catalog.getJSONArray("chapters")
             val row = rows.getJSONObject(chapterIndex)
             val folder = requireNotNull(directory)
+            val savedSource = row.optString("sourceManifest").takeIf(String::isNotEmpty)?.let {
+                JSONObject(AtomicFile(File(it)).readFully().toString(Charsets.UTF_8))
+            }
             if (row.optBoolean("dynamic") && !File(folder, row.getString("html")).isFile)
                 prepareCustomMobiChapter(folder, chapterIndex, row, canonicalText) { worker.ensureActive() }
-            var html = File(folder, row.getString("html")).readText()
-            val notes = JSONObject(File(folder, row.getString("notes")).readText()).toStringMap()
+            if (row.optBoolean("deferred") && !File(folder, row.getString("html")).isFile) {
+                val raw = File(folder, "mobi-expanded.html").readText()
+                val resources = catalog.getJSONObject("resources")
+                val html = ebookRewriteMobiResources(ebookHtmlFragment(raw, row.getInt("start"), row.getInt("end"))) { recIndex ->
+                    resources.keys().asSequence().firstOrNull { it.substringAfterLast('/').substringBefore('.').toIntOrNull() == recIndex }
+                        ?.let { origin + "archive/$it" }
+                }
+                write(AtomicFile(File(folder, row.getString("html"))), withCss(html, File(folder, "mobi-css.css").readText()))
+            }
+            var html = if (savedSource == null) File(folder, row.getString("html")).readText()
+            else if (book.format == BookFormat.EPUB) savedSource.getString("html") else {
+                val resources = catalog.getJSONObject("resources")
+                val urls = resources.keys().asSequence().associateBy { it.substringAfterLast('/').substringBefore('.').toInt() }
+                withCss(ebookRewriteMobiResources(savedSource.getString("html")) { recIndex ->
+                    urls[recIndex]?.let { origin + "archive/$it" }
+                }, savedSource.optString("cssPath").takeIf(String::isNotBlank)?.let { File(it).readText() } ?: savedSource.optString("css"))
+            }
+            val notes = if (savedSource == null) JSONObject(File(folder, row.getString("notes")).readText()).toStringMap()
+                else if (book.format == BookFormat.EPUB) savedSource.optJSONObject("noteTargets")?.toStringMap().orEmpty()
+                else mobiNoteAliases(savedSource.getString("html"), savedSource.optJSONObject("noteTargets")?.toStringMap().orEmpty()) { worker.ensureActive() }
             val original = SourceHtmlEdit.plain(html, { worker.ensureActive() }, ::sourceImage)
             if (original != canonicalText) {
                 if (book.hasTextEdits) {
@@ -75,8 +98,9 @@ internal class EbookSourceStore(private val context: Context, private val book: 
             }
             worker.ensureActive()
             check(!closed) { "原书阅读资源已经关闭" }
+            val path = savedSource?.optString("archivePath")?.takeIf(String::isNotBlank) ?: row.getString("path")
             val document = EbookSourceDocument("$bookKey:${book.contentVersion}:$chapterIndex:${digest(canonicalText)}", html,
-                origin + "archive/" + row.getString("path").split('/').joinToString("/") { encodeSegment(it) }, canonicalText, notes)
+                origin + "archive/" + EpubArchive.safePath(path).split('/').joinToString("/") { encodeSegment(it) }, canonicalText, notes)
             synchronized(documents) {
                 if (window?.contains(chapterIndex) != false) documents[chapterIndex] = document
                 while (documents.size > 3) documents.remove(documents.keys.first())
@@ -144,8 +168,24 @@ internal class EbookSourceStore(private val context: Context, private val book: 
 
     private fun prepare(checkActive: () -> Unit): JSONObject {
         require(book.format in setOf(BookFormat.EPUB, BookFormat.MOBI)) { "此格式不使用原书排版" }
+        if ((book.format == BookFormat.MOBI || book.format == BookFormat.EPUB && book.contentVersion >= 9) && book.chapters.all {
+                it.lazySourcePath?.let { path -> File(path).isFile } == true }) {
+            // New imports already saved the exact chapter DOM. Only the requested
+            // chapter manifest is read; EPUB resources stay in the original archive.
+            directory = File(context.cacheDir, "ebook-source/$bookKey").apply { mkdirs() }
+            val resources = JSONObject()
+            book.chapters.flatMap { it.inlineImages }.distinctBy { it.path }.forEach { image ->
+                val file = File(image.path)
+                val name = file.name.removePrefix("mobi-inline-")
+                if (name.substringBefore('.').toIntOrNull() != null) resources.put("images/$name", file.absolutePath)
+            }
+            return JSONObject().put("format", book.format.name).put("resources", resources)
+                .put("chapters", JSONArray(book.chapters.map {
+                    JSONObject().put("sourceManifest", it.lazySourcePath).put("path", "book.html")
+                }))
+        }
         requireBookSourceAvailable(context, book)
-        val identity = documentSourceIdentity(context, source) + ":source-dom-1:" + book.format + ":" +
+        val identity = documentSourceIdentity(context, source) + ":source-dom-${if (book.format == BookFormat.MOBI) 2 else 1}:" + book.format + ":" +
             book.chapters.joinToString("|") { "${it.id}:${it.title}" }
         val folder = File(context.cacheDir, "ebook-source/$bookKey/${digest(identity)}").apply { mkdirs() }
         directory = folder
@@ -153,7 +193,8 @@ internal class EbookSourceStore(private val context: Context, private val book: 
         val cached = runCatching { JSONObject(manifest.readFully().toString(Charsets.UTF_8)) }.getOrNull()
         if (cached?.optString("identity") == identity && cached.optJSONArray("chapters")?.length() == book.chapters.size &&
             (0 until book.chapters.size).all { i -> val row = cached.getJSONArray("chapters").getJSONObject(i)
-                row.optBoolean("dynamic") || File(folder, row.getString("html")).isFile && File(folder, row.getString("notes")).isFile }) return cached
+                row.optBoolean("dynamic") || (row.optBoolean("deferred") && File(folder, "mobi-expanded.html").isFile ||
+                    File(folder, row.getString("html")).isFile) && File(folder, row.getString("notes")).isFile }) return cached
         val result = sourceDocument { file ->
             if (book.format == BookFormat.EPUB) prepareEpub(file, folder, checkActive) else prepareMobi(file, folder, checkActive)
         }.put("identity", identity).put("format", book.format.name)
@@ -163,7 +204,8 @@ internal class EbookSourceStore(private val context: Context, private val book: 
     }
 
     private fun prepareEpub(source: File, folder: File, checkActive: () -> Unit): JSONObject {
-        val parsed = EpubArchive.read(source) { checkActive() }
+        val legacyIndex = LegacyEpubIndex.read(context, book)
+        val parsed = legacyIndex?.snapshot(source, book, checkActive) ?: EpubArchive.read(source) { checkActive() }
         require(parsed.sections.size == book.chapters.size) { "原书目录与书架章节不一致，请重新导入后使用原书排版" }
         val rows = JSONArray()
         ZipFile(source).use { zip ->
@@ -172,7 +214,9 @@ internal class EbookSourceStore(private val context: Context, private val book: 
             parsed.sections.forEachIndexed { index, section ->
                 checkActive()
                 if (previousPath != section.path) {
-                    raw = zip.getInputStream(zip.getEntry(section.path)).use { decodeMarkup(it.readBytes()) }
+                    raw = zip.getInputStream(zip.getEntry(section.path)).use {
+                        if (legacyIndex != null) decodeEpubMarkup(it.readBytes()) else decodeMarkup(it.readBytes())
+                    }
                     previousPath = section.path
                 }
                 val html = ebookHtmlFragment(raw, section.sourceStart, section.sourceEnd)
@@ -187,7 +231,7 @@ internal class EbookSourceStore(private val context: Context, private val book: 
         val parsed = MobiArchive.read(source, checkActive = checkActive, captureHtml = { raw = it })
         val resources = JSONObject()
         val existingImages = book.chapters.flatMap { it.inlineImages }.map { File(it.path) }.associateBy { it.name }
-        val imageUrls = parsed.images.associate { image ->
+        parsed.images.forEach { image ->
             checkActive()
             val name = "images/${image.recIndex}.${image.extension}"
             val existing = existingImages["mobi-inline-${image.recIndex}.${image.extension}"]?.takeIf { it.isFile }
@@ -195,7 +239,6 @@ internal class EbookSourceStore(private val context: Context, private val book: 
                 MobiArchive.copyImage(source, image, File(folder, name))
                 resources.put(name, name)
             }
-            image.recIndex to (origin + "archive/$name")
         }
         val filepositions = sourceHtmlTags(raw, checkActive).mapNotNull { tag ->
             if (tag.name == "a" && !tag.closing) sourceHtmlAttribute(tag.attributes, "filepos")?.toIntOrNull() else null
@@ -220,11 +263,15 @@ internal class EbookSourceStore(private val context: Context, private val book: 
             at?.let { nextSection = it + 1; parsed.sections[it] }
         }
         if (matchedSections.size == book.chapters.size) {
+            write(AtomicFile(File(folder, "mobi-expanded.html")), expanded)
+            write(AtomicFile(File(folder, "mobi-css.css")), parsed.css)
             matchedSections.forEachIndexed { index, section ->
                 checkActive()
-                val html = ebookRewriteMobiResources(ebookHtmlFragment(expanded, shifted(section.sourceStart), shifted(section.sourceEnd)), imageUrls::get)
                 val notes = mobiNoteAliases(section.html, section.sourceNoteTargets, checkActive)
-                rows.put(save(folder, index, "book.html", withCss(html, parsed.css), notes))
+                val noteFile = "chapter-$index.notes.json"
+                write(AtomicFile(File(folder, noteFile)), JSONObject(notes).toString())
+                rows.put(JSONObject().put("html", "chapter-$index.html").put("notes", noteFile).put("path", "book.html")
+                    .put("deferred", true).put("start", shifted(section.sourceStart)).put("end", shifted(section.sourceEnd)))
             }
         } else {
             // Custom rule chapters are mapped on first access, never by reading every

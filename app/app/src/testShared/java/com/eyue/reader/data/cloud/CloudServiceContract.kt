@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.Bitmap
 import com.eyue.reader.data.*
+import com.eyue.reader.data.LegacyEpubIndex
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -52,6 +53,43 @@ abstract class CloudServiceContract {
     }
 
     @After fun cleanup() { root.deleteRecursively() }
+
+    @Test fun readiumSpineIndexRecoversAtomicBackupAndSurvivesMetadataOnlyProgressUpdate() = runBlocking {
+        val (original, originalState) = novel()
+        val book = original.copy(format = BookFormat.EPUB, contentVersion = 8)
+        val state = originalState.copy(books = listOf(book))
+        val sidecar = LegacyEpubIndex.file(context, book).apply { parentFile!!.mkdirs() }
+        val bytes = JSONObject().put("version", 1).put("contentVersion", 8).put("manifest", JSONObject())
+            .put("spine", JSONArray(book.chapters.mapIndexed { index, chapter -> JSONObject()
+                .put("chapterIndex", index).put("chapterId", chapter.id).put("href", "OPS/ch${index + 1}.xhtml") }))
+            .toString().toByteArray(Charsets.UTF_8)
+        File(sidecar.path + ".bak").writeBytes(bytes)
+        val uploaded = service.upload(state, book)
+        assertArrayEquals(bytes, sidecar.readBytes())
+        val uploads = transport.binaryUploads
+        val progressed = book.copy(characterOffset = 2, progress = .5f, lastReadAt = 1234)
+        val updated = service.upload(state.copy(books = listOf(progressed)), progressed)
+        assertEquals(uploads, transport.binaryUploads)
+        assertEquals(uploaded.revision, updated.revision)
+        val restored = service.download(updated)
+        val restoredIndex = File(File(requireNotNull(restored.book.sourcePath)).parentFile, "readium-publication.json")
+        assertArrayEquals(bytes, restoredIndex.readBytes())
+        assertTrue(sidecar.delete())
+        assertEquals(restoredIndex.canonicalFile, LegacyEpubIndex.find(context, restored.book)?.canonicalFile)
+        assertEquals(2, restored.book.characterOffset)
+        assertEquals(book.chapters.map { it.id }, restored.book.chapters.map { it.id })
+    }
+
+    @Test fun readiumIndexChangeMarksOnlyItsBookBackupFingerprintDirty() {
+        val (original, originalState) = novel()
+        val book = original.copy(format = BookFormat.EPUB)
+        val state = originalState.copy(books = listOf(book))
+        val sidecar = LegacyEpubIndex.file(context, book).apply { parentFile!!.mkdirs(); writeText("{\"version\":1}") }
+        val repository = LibraryRepository(context)
+        val before = cloudBackupFingerprint(repository, state, book)
+        sidecar.writeText("{\"version\":1,\"contentVersion\":9}")
+        assertNotEquals(before, cloudBackupFingerprint(repository, state, book))
+    }
 
     @Test fun informationRestoreReportsCompletedEntriesIncludingMissingManifests() = runBlocking {
         val (first, state) = novel()

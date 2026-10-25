@@ -2,6 +2,141 @@
 
 > 目录迁移说明（2026-10-20）：下文保留各版本验证当时的路径与结果。整理后，Android 工程位于 `app/`，原 `.tools/...` 对应 `app/.tools/...`，原 `artifacts/ERead-*` 发布文件对应 `release/android/ERead-*`，原 `docs/...` 对应 `release/docs/...`。私人测试资料移入 `app/.tools/artifacts/`，其中导入样本位于 `import-fixtures/`。此次目录整理未重新执行下文的测试或设备验证。
 
+## 1.11.6 返回位置、页面预加载与 EPUB 打开
+
+日期：2026-10-25。仅电脑端测试；没有手机安装、GitHub／网盘上传或线上更新清单修改。实现和 liseur 源码比较见 [1.11.6 说明](legacy-engine-1.11.6.md)。
+
+进度跳转现在从最新状态取得原章节、页内位置、名称和进度；跳转期间拒绝其他旧章节的迟到位置回报。实际进度条交互回归连续跳到第二章、第四章，再验证返回按钮名称及点击后回到第二章。模拟连续点击时，进度条在定位准备期间本来不可操作；最终回归按该既有规则等待实际可操作状态再发起下一次跳转，没有改变产品的禁用条件。
+
+翻页／上下模式预加载当前章两侧的实际 WebView 页面，包括字体、插图及 CSS。组件回归验证首次打开下一章复用预加载实例、预加载位置不污染当前进度、旧持有者的释放回调不能暂停新持有者、缓存窗口保持以可见章为中心，以及接管前的旧 viewport 不会成为新阅读位置。页面重新附着后先等待自己的 ready，再处理位置；连贯页面显式恢复新锚点时也重新发送 ready。
+
+新 EPUB 导入内容版本 9 保存原章节 head、原书层级和归档路径。回归将未访问章节的展示缓存写为不可解码内容，并将书籍来源设为不可用，已访问的另一章仍能直接从导入缓存打开；同时验证原注释、相对字体路径和精确资源字节。该测试只修改隔离副本，不修改用户原件。新建单本重复导入回归阻塞来源流后仍能立即复用已有书籍，证明身份检查先于文件复制与解析；多文件导入顺序及图片分组保留原流程。
+
+首轮完整回归 `legacy-116-final-build.log` 执行全部测试，遇到一次 Windows 临时文件原子替换的拒绝访问，以及第二次模拟点击发生在进度条暂不可操作期间。未修改 TXT 回滚实现；原件回滚用例重跑通过，交互用例按可操作状态驱动。随后 `legacy-116-final-check.log` 在 **4m 39s** 内通过相关类与 Debug／设备测试包／lint／两个性能模块构建；页面交接就绪校验补充后，`legacy-116-handoff-check.log` 在 **4m 3s** 内通过最新界面回归及上述所有构建任务。按类使用最新结果覆盖完整基线，共 **155 类、1160 项 JVM／Robolectric 测试，1159 通过、1 项未配置 TXT 私有样本的可选测试跳过，0 失败／错误**。lint：**0 错误、68 警告、4 信息**。没有运行设备或性能测试。
+
+浏览器本轮新增／重跑 **9 项连贯阅读验证和 1 项生产 EPUB 缓存 HTML 启动验证**，全部通过、无异常。章节脚本 `ebook-reader.js` 与 1.11.5 的 SHA-256 完全一致，继续保留该脚本的 **51 项通用排版及 3 项私人 EPUB／MOBI 验证**证据；合计 64 项。脚本与 APK 字节一致性由包审计检查。9 种公开 EPUB 的导入和抽样资源／正文读取，以及实际 MOBI 原件摘要不变检查继续通过；不等于所有排版细节均完成手机视觉验收。
+
+本地包 `release/android/ERead-1.11.6-debug.apk`，versionCode **49**，**50,778,979 字节**，SHA-256 `fdd835a3aa6b3d3f75a75aca45a41fa4f97f6432aa4ef6e52e58089adb269c1a`。签名有效并沿用原测试证书；包内无 Readium 资产／类、私人书籍、日志文档、签名私钥文件或嵌入密钥模式。ReaderScreen、EbookReaderSurface、EbookContinuousSurface 的 DEX 类别静态检查均为 0 错误，不替代 ART 与真机验证。审计为 `app/.tools/legacy-116/package-report.json`。
+
+没有承诺全部格式“秒导入秒开”：首次完整复制、规范文字索引、MOBI 解压和未完成的章节预加载仍可能需要时间。既有书库、原章节编号、UTF-16 位置和 WebDAV 协议保留。
+
+## 1.11.5 导入、连贯滚动与翻页
+
+日期：2026-10-25。仅电脑端验证，不安装到手机，不上传 GitHub／网盘，不修改线上更新清单。实现与 Windows 数据交接见 [1.11.5 说明](legacy-engine-1.11.5.md)。
+
+EPUB 插图提取复用 ZIP 句柄与资源索引，新导入的未提交章节使用缓冲写入，覆盖已有文件及书架提交保留原子写入。从外部打开后进入目标书籍，已保存副本且文件名／原始大小完全一致时复用书库记录；返回可将导入留在后台而不再自动跳入阅读。实际导入队列回归覆盖已有 EPUB 不再打开来源流、外部新书立即显示打开状态、返回后不意外进入阅读、TXT 外部打开不等待导入预分页，既有同名冲突测试继续通过。
+
+默认连贯滚动使用一个父页面和当前／相邻最多三个独立章节 DOM。每章原书样式隔离，只登记可信本地子页面；远处保留轻量占位，前方章节高度变化补偿滚动位置。真实 ReaderScreen 组件回归验证默认使用连贯页面、子文档导航白名单与可信 HTML 供给、跨章进度和单一 WebView；原逐章模式回归保留。设置默认值、独立保存和恢复默认通过，新增偏好不升级书库或 WebDAV 协议。
+
+滑动翻页改为 Chromium 合成动画，不再依赖原生截图／桥接确认。浏览器回归验证动画在原生命令往返前启动、快速连续翻页只保留一个动画、取消或切换模式后无残留变换。覆盖／仿真等待新画面期间仍让 WebView 绘制并遮住未提交画面，避免快照阻止绘制回调的情况；原生动画的真实流畅度未在手机验收。
+
+`app/.tools/legacy-115-final-build.log` 完整构建成功，耗时 **6m 57s**，包含单元测试、Debug APK、设备测试包、lint 和两个性能模块编译。共 **154 类、1155 项 JVM／Robolectric 测试，1154 通过、1 项未配置 TXT 私有样本的可选测试跳过，0 失败／错误**。lint 为 **0 错误、68 警告、4 信息**。没有运行设备或性能测试。
+
+实际 153 章 MOBI 在本次电脑测试中导入约 **2895ms**，首章文字读取约 **1ms**，从导入缓存准备原书结构约 **6ms**；中段、最长章与末章同样通过抽样，原件摘要不变。9 种公开 EPUB 样本继续通过导入与抽样资源／正文读取；不等于所有排版特性完成视觉验收。
+
+Chromium 共 **62 项通过、0 异常**：通用启动／排版／翻页 **51 项**，提供的 EPUB／MOBI 注释、位置和生产 HTML 最长章启动 **3 项**，连贯滚动 **8 项**。后者包含真实触摸和滚轮跨章、两章同屏、样式隔离、远距离跳转、笔记／选区坐标、上方章节重排补偿、缓存恢复和多次往返最多三个 DOM。报告与私人导出只位于忽略目录 `app/.tools/legacy-115/`。
+
+本地包：`release/android/ERead-1.11.5-debug.apk`，versionCode **48**，**49,210,671 字节**，SHA-256 `17a279592d0a6e6eb5e0a36a7aaf7efe29ca80beb444e71b5b2cfaaefa905dfc`。签名有效，沿用原测试证书。包中两份阅读脚本与最终源码一致，无 Readium 资产／类、私人书籍、日志文档、签名私钥或嵌入密钥模式。ReaderScreen、EbookReaderSurface、EbookContinuousSurface 的 DEX 类别静态检查均为 0 错误；该检查不能代替 ART 或真机运行。包检查报告为 `app/.tools/legacy-115/package-report.json`。
+
+首次导入仍需读取原文件；应用进程重启、跳到尚未准备的远处章节仍可能需要当前章排版。没有承诺手机零等待或固定帧率。
+
+## 1.11.4 移除 Readium 与兼容引擎优化
+
+日期：2026-10-25。按作者要求移除 Readium，不上传新版本，仅电脑端验证。当前实现与 Windows 交接见 [兼容引擎说明](legacy-engine-1.11.4.md)。
+
+已移除 Toolkit Shared／Streamer／Navigator 依赖、Fragment 阅读组件、引擎选择设置及随附 CSS／字体资产；实际 `releaseRuntimeClasspath` 从 178 个唯一坐标降至 130 个。保留 Android 现有工具链、TXT／PDF 链路和历史 `readium-publication.json` 的独立兼容读取，不重建原书库的章节和记录。许可证清单依据本轮解析结果更新。
+
+兼容引擎改动与验证：
+
+- 阅读主界面持有当前及相邻已访问章节的 WebView 会话；切章准备正文时不卸载组件。同次运行中重开书籍可复用页面，窗口外、其他书籍、内容变更或启动失败的页面会销毁。真实 Compose 组件测试覆盖切章、重开、上限与失败重试；完整 ReaderScreen 回归验证保存位置 120 不先回写为 0，以及前后导航仍使用缓存页面。
+- 可信 HTML 初始化先恢复字符／图片位置再显示，原生界面等待绘制提交后显示页面；已应用的启动锚点只消费一次，新跳转不会被旧加载回调覆盖。
+- 横向翻页等待 Chromium 绘制提交后启动动画，新旧页分区绘制，避免透明页面相互叠加。Chromium 回归覆盖翻页命令与章末边距；Android 原生动画的实际流畅度仍未在手机验收。
+- 导入后 MOBI 直接读取保存的章节 DOM／CSS／图片，跳过整本重复解压。实际 153 章《龙族》在测试中将 sourcePath 指向不存在的文件后，仍能从导入缓存打开首章、中段、最长章与末章；确认没有重新生成全书展示 HTML。桌面首章结构准备约 6～9 毫秒（此前约 1.9～2.4 秒），不含导入与 WebView 排版；导入本身仍约 3～4 秒。原件 SHA-256 前后相同。
+- 旧 spine 索引保留章节 ID／字符位置；EPUB 2／3、UTF-16、CSS／图片／字体资源读取通过。9 种公开 EPUB 样本通过兼容导入和抽样正文读取，包括竖排、SVG spine、固定版式和混淆字体样本；不代表全部视觉特性均已验收，混淆字体依赖回退，未继续使用 Readium 解混淆。
+
+`legacy-114-final-build.log` 完整构建成功，耗时 7m 54s；包含单元测试、Debug、设备测试包、lint、两个性能模块编译。随后补充完整阅读界面与失败页面重建回归，`legacy-114-final-check.log` 在最新源码上通过相关回归与 Debug／设备测试包／lint／应用性能变体构建，耗时 4m 5s。合并最新测试类结果后共 **154 类、1148 项，1147 通过、1 项缺少 TXT 私有样本的可选测试跳过，0 失败／错误**。最终 lint：0 错误、65 警告、4 信息。性能测试包仅编译，没有采集手机帧率。
+
+浏览器共 **54 项通过、0 异常**：通用排版／启动／缓存恢复 50 项，实际 EPUB／MOBI 注释与定位 2 项，生产 HTML 首章和最长章恢复启动 2 项。最长章 63056 个 UTF-16 字符，约 3 秒启动并直接定位到中段；这不是手机耗时，也不代表每项书内资源均已验收。私人样本、正文导出及报告仅保存在被忽略的 `app/.tools/legacy-114/`。
+
+本地包：`release/android/ERead-1.11.4-debug.apk`，versionCode 47，**50,656,143 字节**，SHA-256 `8716EC0A53DCF1610A530E80CE0F1A913743D4EE1375C4702E4F0A96CD046073`。签名有效，沿用原测试包证书。APK 中没有 Readium 资产／类引用，没有私人书籍、日志文档、私钥文件或嵌入密钥模式。ReaderScreen、EbookReaderSurface 的 DEX 类别静态检查均为 0 错误；不替代 ART 和真机验证。包检查报告为 `app/.tools/legacy-114/package-report.json`。
+
+本轮没有手机安装／运行测试，没有上传 GitHub 或网盘，没有改线上 `update.json`。进程／Activity 重启后仍需创建 WebView 并排版当前章；没有承诺完全零加载或真机卡顿已全部消失。
+
+## 1.11.3 本地排查与修复
+
+日期：2026-10-25。按作者最新要求仅做电脑端排查，不开展手机测试，不上传 GitHub 或网盘，不修改线上更新文件。
+
+本轮复现并修正：
+
+- 兼容引擎末页的实际滚动位置被浏览器截短。水平模式差一个右边距，垂直翻页模式也会截短尾页；现在补足最后一个物理视口，页码仍按实际内容统计。修改前两个末页回归均失败，修改后通过。
+- MOBI 首次准备时生成全部章节 HTML。改为保存原始展开文本及轻量索引，访问时仅生成所需章节。对提供的 153 章 MOBI，首次只生成一章，电脑上的章节准备从约 5.6 秒降至约 1.9～2.4 秒；此计时不代表手机结果，首次仍需读取并解压 MOBI。只升级可重建的本机 MOBI 展示缓存，没有重导入书库或改写原文件。
+- 切章反复创建 WebView。现在复用组件、在新章节就绪前保留旧页面快照，主文档禁止缓存，旧桥接回调继续检查 generation。真实 Compose Surface 回归验证跨章复用同一实例及拒绝旧页面回调；Robolectric 不提供实际 WebView 排版或手机画面流畅度验收。
+- Readium 可见位置引文混入隐藏注释、样式或脚本内容。现在使用可见文字所在文本节点的引文和上下文；修改前浏览器回归失败，修改后通过，没有放宽批注的精确匹配与歧义拒绝规则。
+
+兼容阅读新增“准备原书结构／加载当前章节”阶段提示和超时错误，后台不计时。补验通过暂停至后台 70 秒不报错、恢复后重新计时的实际组件回归。字体资源失败现在保留底层错误原因，同一资源每次打开只提示一次，并由浏览器回退至可用字体。尚未取得截图中实际 EPUB 源文件，不能确认 `HeiTi.ttf` 的资源本身已修复。
+
+浏览器验证共 51 项通过、0 异常：通用 DOM／Readium 可见引文 45 项，提供的 EPUB／MOBI 正文定位和注释 2 项，实际导入的大型 MOBI 首页／中部／末章／最长章启动 4 项。最长章约 6.3 万字符，电脑浏览器约 2.7 秒完成自举启动。实际 HTML 由生产 Kotlin 封装导出，启动探针没有模拟 Android 的页面完成回调。启动通过不代表原书所有图片、字体和手机 WebView 都已完成验收。报告位于忽略目录 `app/.tools/reader-regressions-1.11.3-*`，私人原件和导出正文未进入源码或安装包。
+
+完整构建 `reader-regressions-1.11.3-final-build.log` 为 `BUILD SUCCESSFUL in 7m 26s`：167 类、1221 项 JVM／Robolectric 测试，1220 通过、1 项未配置 TXT 样本的可选测试跳过，0 失败／错误。随后补充后台超时保护，并在 `reader-regressions-1.11.3-final-check.log` 完成最新代码的 18 项相关回归及所有构建任务，`BUILD SUCCESSFUL in 3m 41s`。按测试类用最新结果覆盖完整基线后，共 1222 项、1221 通过、1 跳过、0 失败／错误。两轮均包含 Debug、设备测试包、lint 和两个性能模块编译；没有运行设备或性能测试。最终 lint 为 0 错误、70 警告、4 信息。
+
+本地安装包 `release/android/ERead-1.11.3-debug.apk`，versionCode 46，59,989,352 字节，SHA-256 `84EF3C80217B5D16F069ED342922E240B676B6A50E75374525DA428A08B80CAA`。APK v2 签名有效，与上一测试包证书一致。包内 760 个条目，23 个法律资产、30 个 Readium 资产；未发现私人书籍、日志文档、签名私钥文件或嵌入密钥模式。包检查见 `app/.tools/reader-regressions-1.11.3-package-report.json`。ReaderScreen 和 EbookReaderSurface 的 DEX 类别静态检查均为 0 错误，但不替代 ART 或手机运行验证。
+
+**尚未确认的故障：**电脑上未复现手机 MOBI 持续转圈，以上性能、组件和浏览器结果不能证明手机故障彻底解决；原书字体解码报错仍需对应 EPUB 源文件定位。Windows 交接已补充缓存和引文规则；书库和 WebDAV 协议没有变更，未修改 Windows 实现。
+
+## 1.11.2 本地阅读启动与生命周期修复
+
+日期：2026-10-25。仅生成本地 Android 安装包；不上传 GitHub、百度或夸克，不修改线上更新清单，保留 Windows 的既有开发内容。
+
+用户提供的 vivo 日志实际版本为 1.11.1、Android 16／API 36，异常为 `Can't access ViewModels from detached fragment`。实际生产路径在 FragmentFactory 创建 Navigator 后、挂载前调用 `addDecorationListener`，触发 Readium 懒加载 Fragment ViewModel。改为在真实 Fragment STARTED 时注册输入／批注监听及 Locator 观察，在 STOP／释放时移除、取消，所有异步操作保留当前实例和生命周期保护。真实 Readium Fragment／FragmentManager 回归覆盖旧调用复现、创建、启动、停止、恢复、去重及提前释放。额外修正后台完成事件不能丢弃的问题：始终记住有效页面完成与轻量页码，恢复前台后再执行命令和上报；真实 Compose Surface 回归验证后台收到加载完成后返回前台可结束自身加载状态，该用例不模拟 HTML 分页结果。
+
+MOBI 始终使用兼容 WebView，与 EPUB 引擎选择无关。发现空白／封面章节没有首个 viewport 的问题：原脚本的新九项无原生命令回归中，六个空白／封面用例失败，正文则偶然通过文字可见性观察器补报。现在由受 CSP nonce 保护的本地 HTML 自举初始化，JSON 转义 HTML 结束标签与 Unicode 行分隔符，保留幂等 `onPageFinished` 兜底；先恢复字符／图片／末页锚点，再主动发送 ready 和 viewport。恢复位置的新九项回归也先在旧脚本全部失败。加载入口仅允许自己的主文档，迟到回调仍检查 generation 和 WebView 身份；外部网络与私人路径限制没有放开。
+
+浏览器证据为实际 Chromium：完整通用 DOM 42／42，通过提供的《西游记》原件导出的 EPUB／MOBI 正文与注释 44／44，生产 Kotlin HTML 自举及 MOBI 空文本封面握手 5／5，均无浏览器异常。生产封装不依赖原生 init、report 或页面完成回调，即可自动上报包含恢复目标 1500 的首个 viewport `[1482,1742]`，重复初始化仍只有一次 ready。封面探针没有导出原图片字节，不能作为实际图片显示验收。报告位于忽略目录 `app/.tools/ebook-initial-navigation-final/`、`ebook-ready-private-dom/`、`ebook-ready-private-bootstrap/`，私人书籍与日志未进入源码或安装包。
+
+第一阶段完整构建 `app/.tools/ebook-ready-final-build-1.log` 为 `BUILD SUCCESSFUL in 6m 24s`：165 类、1216 项 JVM／Robolectric 测试，1215 通过、1 项可选样本跳过，0 失败／错误；Debug、设备测试包、lint、应用和驱动两个性能模块均构建通过。本次设置私人样本路径后，原件读取、注释及隔离副本写回也执行，原件摘要不变；9 本标准公开 EPUB 的导入与索引检查继续通过。后台加载补充回归后重新进行定向验证与打包，最终结果和安装包摘要见下方记录。
+
+最终 `app/.tools/ebook-ready-final-build-2.log` 为 `BUILD SUCCESSFUL in 4m 8s`：受影响的五个类共 32 项定向回归全部通过，Debug、设备测试包、lint、两个性能模块重新构建通过。两阶段按测试类去重，共 166 类、1217 项，1216 通过、1 项私人 TXT 样本可选测试跳过，0 失败／错误；完整阶段 XML 保存在 `app/.tools/ebook-ready-full-baseline/`，最终定向结果保存在常规测试输出。lint 为 0 错误、66 警告、4 信息。
+
+本地安装包 `release/android/ERead-1.11.2-debug.apk`，versionCode 45，59,967,907 字节，SHA-256 `4A35A0E7C83413469C789EC5F419CF39DC6D69543EDC94619E478C3D542FC62A`。APK v2 签名通过，证书 SHA-256 `8f7811588790d1be580102e0dee4089be519104936f1f6d57815df173254ca07`，与之前本地版本一致。与 1.11.1 比较没有增加或删除 ZIP 条目；共 760 项，保留 23 个法律／许可资产及 30 项 Readium 相关资产，未发现私人书籍、日志、私钥文件或嵌入 API 密钥模式。审计见 `app/.tools/ebook-ready-final-package-report.json`。ReaderScreen DEX 静态类别检查为 513 个寄存器、21,344 条指令、0 类别错误，不替代 ART 验证。
+
+依作者要求未运行真机测试。主机无法启动 Android 模拟器的尝试未进入 Android／WebView，不计作设备验收；Robolectric 和桌面 Chromium 均不替代 vivo 上的实际排版、滚动和音频验证。本轮未修改 MOBI 自定义目录标题失配时的动态全文映射路径，该条件性性能问题仍需独立处理。
+
+## 1.11.1 本地正文加载修复
+
+日期：2026-10-25。本次只修复 Android 阅读加载，不发布 GitHub、网盘或更新清单，不改动 Windows 开发内容。
+
+用户截图的 `data:text/html;charset=utf-8;base64,` 与 `net::ERR_HTTP_RESPONSE_CODE_FAILURE` 来自兼容 WebView。旧的 `loadDataWithBaseURL()` 会产生 `data:` 主文档请求，但资源拦截器对未知 URL 一律返回 403；MOBI 及选择兼容功能的 EPUB 共用此路径。旧代码还未处理主文档 HTTP／网络错误，因此错误页下方仍显示加载圈。已提取实际生产 WebViewClient 做回归，修复前 6 项用例中 5 项按预期失败，记录 `app/.tools/ebook-loading-red-2.log`。
+
+正文改为 `loadUrl(source.baseUrl)`，拦截器优先返回包含阅读脚本的本地 HTML，再处理原书 CSS、图片及字体，保留原相对资源地址。内嵌 `data:` 图片交给 WebView 解码，外部及私人路径仍拒绝，网络阻止和原 CSP 保留。主文档错误、资源读取失败、渲染进程停止或脚本未启动均进入明确错误状态；错误页与旧代回调不能再将页面重新标记为就绪。原有导入文件、书籍 ID、章节、笔记与阅读位置没有重建，无需因本修复重新导入书籍。
+
+Readium 原生 EPUB 的错误收尾也已补齐：当前正文或核心阅读 JS／CSS 失败时在主线程结束加载，邻章预加载与普通图片／作者样式／字体失败仅记录诊断，避免相邻资源失败中断当前阅读。Android 设备测试明确选择兼容引擎并检查虚拟 HTTPS 主文档入口；本轮依照作者此前要求不运行真机测试，不能把电脑回归或设备测试包编译作为手机显示验收。
+
+21 项定向回归全部通过，日志 `app/.tools/ebook-loading-green-2.log`。覆盖封装主文档优先、内嵌图片、资源字节与字体、未知请求拒绝、HTTP／网络错误终态、防止初始化错误页、重复错误收敛，以及 Readium 当前资源、邻章与核心脚本／样式的区分。
+
+最终完整验证 `app/.tools/ebook-loading-final-1.log` 为 `BUILD SUCCESSFUL in 6m 43s`，单元测试、Debug APK、设备测试包、lint、应用及驱动两个性能测试模块全部构建通过。164 个类共 1208 项测试，1198 项通过、10 项私人样本可选测试跳过，0 失败、0 错误；9 本公开 EPUB 导入与索引回归继续通过。lint 为 0 错误、66 警告、4 信息。未进行真机、实际 WebView 显示或性能测量，设备测试仅编译。
+
+本地安装包 `release/android/ERead-1.11.1-debug.apk`，versionCode 44，58,454,830 字节，SHA-256 `C05F54384B7F55F84B95744730C59427B83A6A8F958FC24CD9AF8E228BEA641A`。APK v2 签名校验通过，证书 SHA-256 `8f7811588790d1be580102e0dee4089be519104936f1f6d57815df173254ca07`，与旧版一致。与 1.11.0 比较没有增加或删除 ZIP 条目；共 760 项，保留 23 个法律／许可资产及 Readium CSS／字体／脚本，未发现私人书籍、日志文档、私钥文件或嵌入 API 密钥模式。结果见 `app/.tools/ebook-loading-final-package-report.json`。阅读页 DEX 类别检查为 513 个寄存器、21,344 条指令、0 类别错误，不代替 ART 真机校验。
+
+## 1.11.0 Readium 迁移的本地验证
+
+日期：2026-10-24～25。versionCode 43，包名 `com.eyue.reader`，最低 API 26、目标 API 35。按作者要求，**未发布 GitHub、百度或夸克网盘，未修改线上更新清单**。Windows 既有开发内容未修改或验收；增量交接见 [Windows 交接](windows-handoff-1.11.0.md)。
+
+本地安装包为 `release/android/ERead-1.11.0-debug.apk`，61,688,303 字节，SHA-256 为 `B7D507A8FA77D2DD95E78BA5FB63DB7132DA47DBF0BF193B68F47622C028FFE3`。APK v2 签名校验通过，证书 SHA-256 为 `8f7811588790d1be580102e0dee4089be519104936f1f6d57815df173254ca07`，与旧版一致。补齐字体许可后再次执行打包、设备测试包、lint 与两个性能模块构建，`app/.tools/readium-final-packaging-7.log` 为 `BUILD SUCCESSFUL in 2m 29s`；此次仅新增许可资产，没有再次更改生产逻辑。
+
+先以隔离工程验证依赖：旧工具链的实际构建在 AAR 元数据检查阶段失败，新工具链的 Readium＋Compose APK 编译成功，记录在 `app/.tools/readium-compat/upgraded-toolchain-3.log`。生产工程采用 Gradle 9.7.0、AGP 9.3.3、内置 Kotlin 2.4.20、JDK 17、compileSdk 37.0，并对齐 Compose BOM 2026.06.01 与 Lifecycle 2.11.0，避免仅能解析依赖、运行时却缺少方法。
+
+最终代码验证 `app/.tools/readium-final-validation-6.log` 为 `BUILD SUCCESSFUL in 7m 22s`。`testDebugUnitTest`、`assembleDebug`、`assembleDebugAndroidTest`、`lintDebug`、`:app:assembleBenchmark`、`:benchmark:assembleBenchmark` 全部通过。162 个类共 1187 项 JVM／Robolectric 测试，0 失败、0 错误、10 跳过；跳过项是未设置私人 EPUB／MOBI／TXT 样本路径的可选回归，不是 Readium 官方样本测试。lint 为 0 错误、66 警告、4 信息。性能测试模块仅编译，没有生成真机帧率、内存或启动耗时基线。
+
+最终 APK 共 760 个 ZIP 条目，含 23 个法律／许可资产，Readium CSS、脚本与字体资产已打包。两套许可目录逐文件摘要一致，Readium 所带历史版 OpenDyslexic 2.001 按实际字体元数据保留 CC BY 3.0 与 Bitstream 声明，没有套用新版字体的 OFL。扫描未发现私人 EPUB／MOBI、日志文档、签名私钥文件或嵌入 API 密钥模式，结果保存在 `app/.tools/readium-final-package-report.json`。阅读页 DEX 静态类别检查为 513 个寄存器、21,344 条指令、0 类别错误；仅检查普通分支寄存器类别，不替代 ART 或手机运行验收。
+
+新增回归覆盖完整原件字节保留、EPUB 2 NCX／EPUB 3 导航、图像／字体资源、UTF-16 XHTML、SVG spine、固定版式、空白资源不重编号、损坏文件诊断与回滚、旧库不变、写回与资源完整性、云端辅助索引、Locator 引文／歧义／失效、位置合并持久化、异步导航检查点只消费一次，以及新 Compose 文本菜单与记笔记不中断朗读。字体附加资源还覆盖了 Readium 钩子重复执行的幂等处理与真实原件路径冲突拒绝，未以忽略所有冲突掩盖错误。
+
+公开兼容样本来自 W3C／IDPF EPUB 3 Samples：`wasteland`、`moby-dick`、`wasteland-otf-obf`、`kusamakura-japanese-vertical-writing`、`sous-le-vent_svg-in-spine`、`page-blanche`、`cole-voyage-of-life`、`internallinks`、`figure-gallery-bindings`，9 本导入／原件与资源／索引检查全部通过，其中 8 本完成文字 Locator 引文往返，纯图片样本不适用文字映射。来源与结果留在忽略目录 `app/.tools/readium-test-books/provenance.json` 和 `readium-import-report.json`；此报告明确标记 `nativeRenderingTested: false`，不能作为 Android 图文分页观感验收。私人书籍没有加入源码或 APK。
+
+本轮曾在 Redmi 23113RKC6C、Android 15／API 35 上尝试隔离包 `com.eyue.reader.readiumtest`，没有安装覆盖正式书库。实际执行的一个图文资源测试因软件字体附加路径重复失败，随后查明上游 opener 会对同一 builder 两次执行钩子，代码与桌面回归已修正。之后作者明确要求跳过真机测试，已停止设备任务，**修正后没有真机复测，真机验收未完成**。Android 设备测试包编译通过不表示图片、标题断页、裁切、异常留白、选区装饰、页码、跨章跟随或实际系统／AI 音频在手机上已通过。旧版的设备或桌面浏览器结果不计入本次 Readium 验收。
+
+旧 EPUB 引擎仍在，已有书库不批量重导入。上下翻页、覆盖／仿真效果、简繁转换、图片背景、未保存编辑预览及已有图片批注暂走兼容路径；Readium 新建图片长按批注、DRM 解锁尚不支持。作者 CSS／CJK／RTL 偏好限制、重复 spine href 的独立定位、含正文内脚本／样式的精确引文边界见 [迁移说明](READIUM_MIGRATION.md)。Readium Locator 附加文件暂不作为跨端云记录协议，云端继续保留旧章节与 UTF-16 兼容坐标。
+
 ## 1.10.3 的变更与验证
 
 日期：2026-10-24。安装包为 `release/android/ERead-1.10.3-debug.apk`，versionCode 42，包名 `com.eyue.reader`，最低 API 26、目标 API 35。大小 47,687,530 字节，SHA-256 为 `ABA78564C2F3FF79C4F4E7B14082F1ABB6F465AA9635063CDCBE31E42DB82BAC`。签名校验通过，证书 SHA-256 为 `8f7811588790d1be580102e0dee4089be519104936f1f6d57815df173254ca07`，与旧版一致，可覆盖安装。

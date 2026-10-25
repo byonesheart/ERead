@@ -3,12 +3,12 @@ package com.eyue.reader
 import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.Lifecycle
+import androidx.activity.ComponentActivity
 import com.eyue.reader.data.ConsentStore
 import com.eyue.reader.ui.ConsentGate
 import com.eyue.reader.ui.EReadApp
@@ -23,6 +23,8 @@ class MainActivity : ComponentActivity() {
     private var readerReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Old navigator Fragment state has no owner in the Compose-only activity.
+        savedInstanceState?.getBundle("androidx.lifecycle.BundlableSavedStateRegistry.key")?.remove("android:support:fragments")
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         externalRequestId = savedInstanceState?.getString(EXTERNAL_REQUEST_ID)

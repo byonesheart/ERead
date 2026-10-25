@@ -8,6 +8,8 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.util.AtomicFile
+import com.eyue.reader.data.LegacyLocatorFiles
+import com.eyue.reader.data.LegacyEpubIndex
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -16,6 +18,7 @@ import java.io.File
 import java.util.UUID
 
 class LibraryRepository(private val context: Context) {
+    internal fun epubIndexFile(book: Book): File? = LegacyEpubIndex.find(context, book)
     private val stateFile = AtomicFile(File(context.filesDir, "library.json"))
     private val positionsFile = AtomicFile(File(context.filesDir, "reading_positions.json"))
     private var positionRevision: String? = null
@@ -138,6 +141,7 @@ class LibraryRepository(private val context: Context) {
         val target = File(booksDirectory, book.id).canonicalFile
         require(target.parentFile == booksDirectory) { "图书目录越界" }
         if (target.exists()) check(target.deleteRecursively()) { "图书文件删除失败" }
+        check(LegacyLocatorFiles(File(context.filesDir, "readium-locators")).removeBookNow(book.id)) { "EPUB 阅读索引删除失败" }
     }
 
     suspend fun createDemoBooks(): List<Book> = withContext(Dispatchers.IO) {
@@ -308,6 +312,7 @@ class LibraryRepository(private val context: Context) {
             activeAppearanceProfileId = json.nullableString("activeAppearanceProfileId"),
             hierarchicalContents = json.optBoolean("hierarchicalContents", defaults.hierarchicalContents),
             useSourceCss = json.optBoolean("useSourceCss", defaults.useSourceCss),
+            continuousEbookScroll = json.optBoolean("continuousEbookScroll", defaults.continuousEbookScroll),
             marginLeft = margin("marginLeft", defaults.marginLeft), marginRight = margin("marginRight", defaults.marginRight),
             marginTop = margin("marginTop", defaults.marginTop), marginBottom = margin("marginBottom", defaults.marginBottom)
         )
@@ -338,6 +343,7 @@ class LibraryRepository(private val context: Context) {
         .put("activeAppearanceProfileId", settings.activeAppearanceProfileId)
         .put("hierarchicalContents", settings.hierarchicalContents)
         .put("useSourceCss", settings.useSourceCss)
+        .put("continuousEbookScroll", settings.continuousEbookScroll)
         .put("marginLeft", settings.marginLeft.toDouble()).put("marginRight", settings.marginRight.toDouble())
         .put("marginTop", settings.marginTop.toDouble()).put("marginBottom", settings.marginBottom.toDouble())
         .put("chapterRules", JSONArray(presets.map {

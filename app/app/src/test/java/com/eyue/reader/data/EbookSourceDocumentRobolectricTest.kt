@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
@@ -59,6 +60,30 @@ class EbookSourceDocumentRobolectricTest {
             Thread.sleep(50)
         }
         check(!root.exists())
+    }
+
+    @Test fun newEpubImportOpensOnlyTheRequestedSavedDomWithoutRescanningTheOriginal() = runBlocking {
+        val source = epubFixture(includeImage = false)
+        val directory = File(context.filesDir, "books/fast-import").apply { mkdirs() }
+        val book = EpubTestImporter(context).import(source, directory, "fast-import", "fast-import")
+        assertEquals(9, book.contentVersion)
+        val firstManifest = JSONObject(File(requireNotNull(book.chapters[1].lazySourcePath)).readText())
+        assertEquals("OPS/text/body.xhtml", firstManifest.getString("archivePath"))
+        assertTrue(firstManifest.getString("html").contains("href='../styles/main.css'"))
+        // The other chapter remains a valid file but cannot be decoded. Opening
+        // this chapter must not parse its neighbor or reopen the entire package.
+        File(requireNotNull(book.chapters[0].lazySourcePath)).writeText("invalid unrequested manifest")
+        val isolated = book.copy(sourcePath = File(directory, "unavailable.epub").absolutePath, sourceUri = null)
+        val document = store(isolated).load(1, readChapterText(book, 1))
+        assertTrue(document.baseUrl.endsWith("/archive/OPS/text/body.xhtml"))
+        assertTrue(document.html.contains("<h2 id='two'>第二章</h2>"))
+        assertTrue(document.noteTargets.values.any { it.contains("原书注解") })
+        assertEquals(0, context.cacheDir.walkTopDown().count { it.isFile && it.name.matches(Regex("chapter-\\d+\\.html")) })
+        val resourceStore = store(book)
+        val available = resourceStore.load(1, readChapterText(book, 1))
+        val font = requireNotNull(resourceStore.openResource(URI(available.baseUrl).resolve("../fonts/reader.woff2").toString()))
+        assertArrayEquals(fontBytes, font.stream.use { it.readBytes() })
+        exportProvided("cached-epub", available, book.chapters[1])
     }
 
     @Test fun nestedChapterDisplaysOriginalHeadCssAndDomRatherThanFlattenedParagraphs() = runBlocking {
@@ -294,6 +319,44 @@ class EbookSourceDocumentRobolectricTest {
         assertEquals(text(book, index), SourceHtmlEdit.plain(document.html) { "image" })
         assertTrue(document.noteTargets.values.any { it.contains("西游释厄传") })
         exportProvided("mobi", document, book.chapters[index])
+        val first = store(book).load(0, text(book, 0))
+        assertEquals(text(book, 0), SourceHtmlEdit.plain(first.html) { "image" })
+        exportProvided("mobi-first", first, book.chapters.first())
+    }
+
+    @Test fun providedMobiUsesTheActualImporterAndOpensItsFirstChapter() = runBlocking {
+        val configured = System.getenv("EREAD_EBOOK_SMOKE_SOURCE")
+        assumeTrue("Set EREAD_EBOOK_SMOKE_SOURCE for an actual imported MOBI", !configured.isNullOrBlank())
+        val source = File(requireNotNull(configured))
+        assumeTrue(source.isFile)
+        originalDigests[source] = sha256(source)
+        val id = UUID.randomUUID().toString()
+        val directory = File(context.filesDir, "books/$id").apply { mkdirs() }
+        val importer = DocumentImporter(context)
+        val method = DocumentImporter::class.java.declaredMethods.single { it.name == "importMobi" }.apply { isAccessible = true }
+        val started = System.nanoTime()
+        val book = (method.invoke(importer, source, directory, id, source.nameWithoutExtension, DEFAULT_CHAPTER_RULE,
+            {}) as Book).copy(sourcePath = source.absolutePath)
+        val imported = System.nanoTime()
+        val canonical = readChapterText(book, 0)
+        val textRead = System.nanoTime()
+        val sourceStore = store(book.copy(sourcePath = File(directory, "not-needed-for-cached-reading.mobi").absolutePath))
+        val document = sourceStore.load(0, canonical)
+        val loaded = System.nanoTime()
+        assertEquals("An imported MOBI must reuse its saved chapter DOM without decoding the original", 0,
+            context.cacheDir.walkTopDown().count { it.isFile && it.name.matches(Regex("chapter-\\d+\\.html")) })
+        assertTrue(document.html.contains("<body", true))
+        assertEquals(canonical.filterNot(Char::isWhitespace), SourceHtmlEdit.plain(document.html) { "image" }.filterNot(Char::isWhitespace))
+        exportProvided("actual-mobi", document, book.chapters.first())
+        val largest = book.chapters.indices.maxBy { book.chapters[it].characterCount }
+        for ((name, index) in listOf("middle" to book.chapters.size / 2, "last" to book.chapters.lastIndex, "largest" to largest)) {
+            val chapterText = readChapterText(book, index)
+            val loadedChapter = sourceStore.load(index, chapterText)
+            assertEquals(chapterText.filterNot(Char::isWhitespace), SourceHtmlEdit.plain(loadedChapter.html) { "image" }.filterNot(Char::isWhitespace))
+            exportProvided("actual-mobi-$name", loadedChapter, book.chapters[index])
+        }
+        assertEquals(0, context.cacheDir.walkTopDown().count { it.isFile && it.name.matches(Regex("chapter-\\d+\\.html")) })
+        println("Actual MOBI: chapters=${book.chapters.size}, importMs=${(imported-started)/1_000_000}, textMs=${(textRead-imported)/1_000_000}, sourceMs=${(loaded-textRead)/1_000_000}")
     }
 
     private fun exportProvided(name: String, document: EbookSourceDocument, chapter: Chapter) {
@@ -302,6 +365,14 @@ class EbookSourceDocumentRobolectricTest {
         val json = org.json.JSONObject().put("key", document.key).put("html", document.html).put("baseUrl", document.baseUrl)
             .put("canonicalText", document.canonicalText).put("noteTargets", org.json.JSONObject(document.noteTargets))
             .put("images", org.json.JSONArray(chapter.inlineImages.map { org.json.JSONObject().put("offset", it.offset).put("path", it.path) }))
+        val options = org.json.JSONObject().put("canonical", document.canonicalText)
+            .put("initialNavigation", org.json.JSONObject().put("offset", document.canonicalText.length / 2))
+            .put("decorations", org.json.JSONObject().put("annotations", org.json.JSONArray()).put("search", "").put("spokenStart", -1).put("spokenEnd", -1))
+            .put("config", org.json.JSONObject().put("mode", "SCROLL").put("fontSize", 19).put("lineHeight", 35)
+                .put("letterSpacing", .5).put("paragraphGap", 16).put("left", 24).put("right", 24).put("top", 18).put("bottom", 18))
+            .put("noteTargets", org.json.JSONArray(document.noteTargets.keys.toList())).put("images", json.getJSONArray("images"))
+        json.put("trustedHtml", com.eyue.reader.ui.ebookReaderHtml(document,
+            context.assets.open("reader/ebook-reader.js").bufferedReader().use { it.readText() }, "actual-source-test", options))
         File(folder, "$name.json").writeText(json.toString())
     }
 
@@ -365,7 +436,7 @@ class EbookSourceDocumentRobolectricTest {
         return SourceProbe(Uri.Builder().scheme("content").authority(authority).appendPath(file.name).build(), opens)
     }
 
-    private fun epubFixture(): File = File(root, "source.epub").apply {
+    private fun epubFixture(includeImage: Boolean = true): File = File(root, "source.epub").apply {
         val entries = linkedMapOf(
             "META-INF/container.xml" to "<container><rootfile full-path='OPS/book.opf'/></container>".toByteArray(),
             "OPS/book.opf" to ("<package><metadata><title>原书DOM</title><creator>作者</creator></metadata><manifest>" +
@@ -374,7 +445,7 @@ class EbookSourceDocumentRobolectricTest {
             "OPS/nav.xhtml" to "<html><nav><a href='text/body.xhtml#one'>第一章</a><a href='text/body.xhtml#two'>第二章</a></nav></html>".toByteArray(),
             "OPS/text/body.xhtml" to ("<html lang='zh'><head><link rel='stylesheet' href='../styles/main.css'/>" +
                 "<style>.outer blockquote p{letter-spacing:.2em}</style></head><body class='paper' style='padding:1em'>" +
-                "<div class='outer'><blockquote cite='original'><h2 id='one'>第一章</h2><p>第一章正文<img src='../images/cover.png'/></p>" +
+                "<div class='outer'><blockquote cite='original'><h2 id='one'>第一章</h2><p>第一章正文${if (includeImage) "<img src='../images/cover.png'/>" else ""}</p>" +
                 "<h2 id='two'>第二章</h2><p class='body'>第二章<b>旧🙂正文</b>结束</p>" +
                 "<p>注号<a role='doc-noteref' href='#fn2'>[2]</a></p><aside id='fn2' role='doc-footnote'>原书注解</aside>" +
                 "</blockquote></div></body></html>").toByteArray(),
