@@ -48,6 +48,19 @@ class EbookReaderWebViewClientRobolectricTest {
         assertTrue(failures.isEmpty())
     }
 
+    @Test fun onlyTheOwnedBackgroundEndpointCanReadTheChosenImage() {
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+        var opened = 0
+        val client = EbookReaderWebViewClient(documentUrl, "parent", openResource = { null }, openFont = { null },
+            onDocumentLoaded = {}, onFailure = failures::add, openBackground = { opened++; ByteArrayInputStream(png) })
+        val response = requireNotNull(client.shouldInterceptRequest(browser, request("https://eread.local/reader-background?v=1")))
+        assertEquals("image/png", response.mimeType)
+        assertArrayEquals(png, response.data.use { it.readBytes() })
+        assertEquals(403, client.shouldInterceptRequest(browser, request("https://other.local/reader-background"))!!.statusCode)
+        assertEquals(403, client.shouldInterceptRequest(browser, request("file:///reader-background"))!!.statusCode)
+        assertEquals(1, opened)
+    }
+
     @Test fun onlyReaderOwnedChapterFramesCanNavigateAndReceiveTheirTrustedEnvelope() {
         val child = "$documentUrl?chapter=1&token=2"
         val html = "<html><body>相邻章节</body></html>"

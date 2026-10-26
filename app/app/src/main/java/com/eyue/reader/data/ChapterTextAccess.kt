@@ -9,7 +9,12 @@ import java.nio.charset.CodingErrorAction
 internal class ChapterTextReadException(val chapterTitle: String, cause: Exception? = null) :
     IOException("无法读取「$chapterTitle」的正文缓存或排版资料，请重新导入该书。", cause)
 
-internal fun readChapterText(chapter: Chapter, check: () -> Unit = {}): String =
+internal fun readChapterText(chapter: Chapter, check: () -> Unit = {}): String {
+    DeferredEbookContent.ensure(chapter, check)
+    return readExistingChapterText(chapter, check)
+}
+
+internal fun readExistingChapterText(chapter: Chapter, check: () -> Unit = {}): String =
     readChapterTextFile(chapter.textPath, chapter.title, check)
 
 internal fun readChapterText(book: Book, index: Int, check: () -> Unit = {}): String {
@@ -27,6 +32,7 @@ internal fun readChapterPageText(chapter: Chapter, pageIndex: Int, check: () -> 
 }
 
 internal fun countChapterText(chapter: Chapter, check: () -> Unit = {}): Int {
+    DeferredEbookContent.ensure(chapter, check)
     var count = 0
     visitChapterText(chapter.textPath, chapter.title, check) { _, size -> count += size }
     return count

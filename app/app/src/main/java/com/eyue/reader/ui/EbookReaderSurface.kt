@@ -284,6 +284,9 @@ internal fun EbookReaderSurface(
                         val chosen = latestSettings
                         runCatching { chosen.fontPath?.let { File(it).inputStream() }
                             ?: readerBundledFontResource(chosen)?.let { context.resources.openRawResource(it) } }.getOrNull()
+                    }, openBackground = {
+                        latestSettings.backgroundImagePath?.takeIf { latestSettings.background == ReaderBackground.IMAGE }
+                            ?.let { path -> File(path).inputStream() }
                     }, onFailure = ::fail, onDocumentLoaded = { view ->
                         if (generation == latestGeneration && browser === webView) {
                             val initial = initialOptions()
@@ -437,10 +440,15 @@ internal fun rememberEbookConfig(settings: ReaderSettings, foreground: Color, du
     val density = LocalDensity.current
     val calibration = remember(settings.fontName, settings.fontPath, settings.bold) { readerFontCalibration(context, settings) }
     val fontScale = density.fontScale
+    val paper = if (settings.nightMode) MaterialTheme.colorScheme.background else when (settings.background) {
+        ReaderBackground.WHITE -> Color.White
+        ReaderBackground.GREEN -> Color(0xFFE5EBD9)
+        else -> MaterialTheme.colorScheme.background
+    }
     val fontVersion = remember(settings.fontName, settings.fontPath) {
         settings.fontPath?.let { File(it).let { file -> "${file.length()}-${file.lastModified()}" } } ?: settings.fontName.hashCode().toString()
     }
-    val config = remember(settings, foreground, dualPage, einkMode, fontScale, calibration, fontVersion) {
+    val config = remember(settings, foreground, dualPage, einkMode, fontScale, calibration, fontVersion, paper) {
         JSONObject().put("mode", settings.readingMode.name).put("turn", settings.pageTurnStyle.name)
             .put("authorCss", settings.useSourceCss).put("dual", dualPage).put("eink", einkMode)
             .put("fontSize", settings.fontSize * calibration.sizeScale * fontScale)
@@ -449,6 +457,9 @@ internal fun rememberEbookConfig(settings: ReaderSettings, foreground: Color, du
             .put("paragraphGap", settings.fontSize * settings.paragraphSpacing * fontScale)
             .put("bold", settings.bold).put("night", settings.nightMode)
             .put("color", "#%06x".format(foreground.toArgb() and 0xffffff))
+            .put("paper", "#%06x".format(paper.toArgb() and 0xffffff))
+            .put("paperImage", settings.backgroundImagePath?.takeIf { settings.background == ReaderBackground.IMAGE && !einkMode }
+                ?.let { "https://eread.local/reader-background?v=${it.hashCode()}" })
             .put("left", settings.marginLeft).put("right", settings.marginRight)
             .put("top", settings.marginTop).put("bottom", settings.marginBottom)
             .put("font", if (settings.fontPath != null || readerBundledFontResource(settings) != null) "eread-selected"

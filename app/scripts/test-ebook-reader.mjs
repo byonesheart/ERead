@@ -59,12 +59,18 @@ async function open(config = {}, options = {}) {
   page.on('pageerror', error => consoleErrors.push(error.message));
   await page.addInitScript(conversion => {
     window.events = [];
+    window.pageTransitions = [];
+    if (document.startViewTransition) {
+      const start = document.startViewTransition.bind(document);
+      document.startViewTransition = update => {
+        const transition = start(update); window.pageTransitions.push(transition.finished); return transition;
+      };
+    }
     window.__ERead = {
       event: json => {
         const event = JSON.parse(json); window.events.push(event);
-        // Android captures the current viewport, acknowledges the target page,
-        // then animates its native snapshot. Chromium tests exercise the actual
-        // JS turn handshake and geometry; they do not pretend to test Canvas UI.
+        // Compatibility with an older native-turn envelope. Current page turns
+        // must remain entirely inside Chromium and never use this acknowledgement.
         if (event.type === 'turn') requestAnimationFrame(() => window.ERead.command({ type: 'page', page: event.page }));
       },
       convert: text => {
@@ -119,6 +125,7 @@ async function open(config = {}, options = {}) {
 
 async function command(value) {
   await page.evaluate(value => window.ERead.command(value), value);
+  await page.evaluate(() => Promise.all(window.pageTransitions));
     await page.evaluate(() => Promise.all(document.getAnimations().filter(animation => animation.id === 'eread-page-turn')
       .map(animation => animation.finished.catch(() => {}))));
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -563,14 +570,71 @@ try {
       await command({ type: 'move', direction: -1 });
       assert.equal((await viewport()).page, 0);
       const turns = await page.evaluate(() => window.events.filter(event => event.type === 'turn'));
-      assert.deepEqual(turns.map(event => ({ style: event.style, direction: event.direction, page: event.page })),
-        style === 'SLIDE' ? [] : [{ style, direction: 1, page: 1 }, { style, direction: -1, page: 0 }]);
+      assert.deepEqual(turns, [], 'Page animation must not wait for an Android snapshot acknowledgement');
       evidence.push({ style, turns });
     }
     for (const config of [{ mode: 'PAGED', eink: true }, { mode: 'VERTICAL_PAGED' }]) {
       await open(config); await command({ type: 'move', direction: 1 });
       assert.equal((await viewport()).page, 1);
       assert.deepEqual(await page.evaluate(() => window.events.filter(event => event.type === 'turn')), []);
+    }
+    return evidence;
+  });
+
+  await test('cover-and-curl-retire-compositor-snapshots-without-showing-the-old-page-again', async () => {
+    const evidence = [];
+    for (const style of ['COVER', 'CURL']) {
+      await open({mode:'PAGED', turn:style});
+      assert.equal(await page.evaluate(()=>typeof document.startViewTransition), 'function');
+      const before = await page.screenshot();
+      await page.evaluate(()=>ERead.command({type:'move',direction:1}));
+      await page.waitForFunction(()=>document.getAnimations().some(a=>a.id==='eread-page-turn'));
+      const middle = await page.evaluate(()=>document.getAnimations().filter(a=>a.id==='eread-page-turn')
+        .map(a=>({pseudo:a.effect.pseudoElement,frames:a.effect.getKeyframes()})));
+      await page.evaluate(()=>document.getAnimations().filter(a=>a.id==='eread-page-turn').forEach(a=>a.finish()));
+      await page.evaluate(()=>Promise.all(window.pageTransitions));
+      const completed = await page.screenshot();
+      await page.waitForTimeout(100);
+      assert.deepEqual(await page.screenshot(), completed, 'Old page must never reappear after the snapshot is released');
+      assert.notDeepEqual(completed, before);
+      assert.equal((await viewport()).page, 1);
+      await command({type:'page',page:1});
+      assert.deepEqual(await page.screenshot(), completed, 'Final frame must exactly match the live target page');
+      // Multiple requests can arrive before the asynchronous snapshot callback.
+      await page.evaluate(()=>{ERead.command({type:'move',direction:1});ERead.command({type:'move',direction:1});});
+      await page.evaluate(()=>Promise.all(window.pageTransitions));
+      assert.equal((await viewport()).page, 3);
+      await command({type:'move',direction:-1});
+      assert.equal((await viewport()).page, 2);
+      await page.evaluate(()=>{ERead.command({type:'move',direction:1});ERead.command({type:'configure',config:{...window.readerInitOptions.config,mode:'SCROLL'}});});
+      await page.evaluate(()=>Promise.all(window.pageTransitions));
+      assert.equal(await page.evaluate(()=>document.getAnimations().filter(a=>a.id==='eread-page-turn').length), 0);
+      evidence.push({style,middle});
+    }
+    return evidence;
+  });
+
+  await test('older-webviews-use-a-composited-fallback-without-native-readback', async () => {
+    await open({mode:'PAGED',turn:'CURL'});
+    await page.evaluate(()=>document.startViewTransition=undefined);
+    await command({type:'move',direction:1});
+    assert.equal((await viewport()).page,1);
+    assert.deepEqual(await page.evaluate(()=>events.filter(e=>e.type==='turn')),[]);
+    return {page:1};
+  });
+
+  await test('page-snapshots-have-opaque-paper-in-light-and-night-themes', async () => {
+    const evidence = [];
+    for (const paper of ['#f1ead8', '#141914']) {
+      await open({mode:'PAGED',turn:'COVER',paper,night:paper==='#141914'});
+      await page.evaluate(()=>ERead.command({type:'move',direction:1}));
+      await page.waitForFunction(()=>document.getAnimations().some(a=>a.id==='eread-page-turn'));
+      const backgrounds = await page.evaluate(()=>['old','new'].map(which=>
+        getComputedStyle(document.documentElement,'::view-transition-'+which+'(root)').backgroundColor));
+      assert.ok(backgrounds.every(color=>color!=='rgba(0, 0, 0, 0)'), 'Transparent old snapshots would show target text through the old text');
+      await page.evaluate(()=>Promise.all(window.pageTransitions));
+      assert.equal((await viewport()).page,1);
+      evidence.push({paper,backgrounds});
     }
     return evidence;
   });

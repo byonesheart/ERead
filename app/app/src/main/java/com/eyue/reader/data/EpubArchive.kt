@@ -9,7 +9,7 @@ import javax.xml.parsers.DocumentBuilderFactory
 
 data class EpubSection(val title: String, val html: String, val path: String, val css: String = "",
                        val sourceStart: Int = 0, val sourceEnd: Int = html.length, val tocParentTitle: String? = null,
-                       val sourceNoteTargets: Map<String, String> = emptyMap())
+                       val sourceNoteTargets: Map<String, String> = emptyMap(), val sourceAnchor: String? = null)
 data class ParsedEpub(
     val title: String,
     val author: String,
@@ -22,7 +22,9 @@ data class ParsedEpub(
 object EpubArchive {
     private data class TocLabel(val title: String, val fragment: String, val parentTitle: String? = null)
 
-    fun read(file: File, fallbackTitle: String = file.nameWithoutExtension, onProgress: (Float) -> Unit = {}): ParsedEpub = ZipFile(file).use { zip ->
+    fun read(file: File, fallbackTitle: String = file.nameWithoutExtension, catalogOnly: Boolean = false,
+             onlyPaths: Set<String>? = null, mergeLegacyToc: Boolean = false, onDirectoryReady: () -> Unit = {},
+             onProgress: (Float) -> Unit = {}): ParsedEpub = ZipFile(file).use { zip ->
         onProgress(0f)
         val entries = zip.entries().asSequence().associateBy { safePath(it.name) }
         fun xml(path: String): Element = parseXml(zip.getInputStream(entries[path]
@@ -45,6 +47,7 @@ object EpubArchive {
             val fragment = URLDecoder.decode(href.substringAfter('#', "").replace("+", "%2B"), "UTF-8")
             if (isNoteReference("", title) || isFootnoteTarget("id='$fragment'")) return
             val path = resolve(base, href)
+            if (title.isBlank() || path !in entries) return
             if (fragment.isNotBlank()) {
                 val list = anchors.getOrPut(path) { mutableListOf() }
                 if (list.none { it.fragment == fragment }) list += TocLabel(title, fragment, parentTitle)
@@ -78,6 +81,8 @@ object EpubArchive {
         val spine = opf.descendants("spine").firstOrNull()
             ?: throw IllegalArgumentException("EPUB 缺少阅读顺序")
         val cssCache = mutableMapOf<String, String>()
+        val linkedStylesheets = mutableMapOf<String, String>()
+        val chapterStylesheets = mutableMapOf<Pair<List<String>, String>, String>()
         fun stylesheet(path: String, visited: MutableSet<String>): String {
             if (!visited.add(path) || visited.size > 32) return ""
             val entry = entries[path] ?: return ""
@@ -89,7 +94,7 @@ object EpubArchive {
         }
         val ncx = byId[spine.getAttribute("toc")]
             ?: manifest.firstOrNull { it.getAttribute("media-type") == "application/x-dtbncx+xml" }
-        if (ncx != null) {
+        if (ncx != null && (mergeLegacyToc || labels.isEmpty() && anchors.isEmpty())) {
             val ncxPath = resolve(packagePath, ncx.getAttribute("href"))
             xml(ncxPath).descendants("navPoint").forEach { point ->
                 val src = point.descendants("content").firstOrNull()?.getAttribute("src").orEmpty()
@@ -102,7 +107,9 @@ object EpubArchive {
             }
         }
         val references = spine.descendants("itemref").filter { it.getAttribute("linear") != "no" }
+        onDirectoryReady()
         val sourceDocuments = mutableMapOf<String, String>()
+        val documentReferences = mutableMapOf<String, List<SourceNoteReference>>()
         fun document(path: String): String = sourceDocuments.getOrPut(path) {
             val entry = entries[path] ?: throw IllegalArgumentException("EPUB 章节文件缺失：$path")
             zip.getInputStream(entry).use { decodeMarkup(it.readBytes()) }
@@ -112,39 +119,58 @@ object EpubArchive {
                 onProgress(index.toFloat() / references.size.coerceAtLeast(1))
                 val item = byId[ref.getAttribute("idref")] ?: return@flatMapIndexed emptyList()
                 val path = resolve(packagePath, item.getAttribute("href"))
+                if (onlyPaths != null && path !in onlyPaths) return@flatMapIndexed emptyList()
+                require(entries.containsKey(path)) { "EPUB 章节文件缺失：$path" }
+                // Multiple TOC anchors in one document need that document's boundaries checked,
+                // otherwise a missing/footnote anchor could duplicate an entire chapter later.
+                if (catalogOnly && anchors[path].orEmpty().size <= 1) {
+                    val targets = anchors[path].orEmpty()
+                    val names = listOfNotNull(targets.firstOrNull() ?: labels[path])
+                    return@flatMapIndexed (names.ifEmpty { listOf(TocLabel("第 ${index + 1} 章", "")) }).map { label ->
+                        EpubSection(label.title, "", path, tocParentTitle = label.parentTitle,
+                            sourceAnchor = label.fragment.takeIf(String::isNotBlank))
+                    }
+                }
                 val html = document(path)
-                val scanned = maskHtmlComments(html)
-                val notes = SourceHtmlNotes(scanned)
-                val bodyTag = sourceBodyTag(html)
-                val linkedCss = Regex("<link\\b([^>]*)>", RegexOption.IGNORE_CASE).findAll(scanned).mapNotNull { link ->
-                    val attributes = link.groupValues[1]
+                val scan = SourceHtmlScan(html)
+                val linkedPaths = scan.tags.filter { it.name == "link" && !it.closing }.mapNotNull { link ->
+                    val attributes = link.attributes
                     if (!attribute(attributes, "rel").orEmpty().split(Regex("\\s+")).any { it.equals("stylesheet", true) }) null
                     else attribute(attributes, "href")?.let { runCatching { resolve(path, it) }.getOrNull() }
-                }.joinToString("\n") { stylesheet(it, mutableSetOf()) }
-                val embeddedCss = Regex("<style\\b[^>]*>([\\s\\S]*?)</style>", RegexOption.IGNORE_CASE).findAll(scanned)
-                    .joinToString("\n") { it.groupValues[1] }
-                val css = "$linkedCss\n$embeddedCss"
+                }
+                val embeddedCss = scan.elements(setOf("style"), visible = false)
+                    .joinToString("\n") { maskHtmlComments(html.substring(it.tag.end, it.contentEnd)) }
+                val css = chapterStylesheets.getOrPut(linkedPaths to embeddedCss) {
+                    val linkedCss = linkedPaths.joinToString("\n") { path -> linkedStylesheets.getOrPut(path) { stylesheet(path, mutableSetOf()) } }
+                    "$linkedCss\n$embeddedCss"
+                }
+                val locations = mutableMapOf<String, Int>()
+                if (anchors[path].orEmpty().isNotEmpty()) scan.visibleTags.filterNot { it.closing }.forEach { tag ->
+                    listOfNotNull(sourceHtmlAttribute(tag.attributes, "id"), sourceHtmlAttribute(tag.attributes, "name"))
+                        .forEach { locations.putIfAbsent(it.lowercase(), tag.start) }
+                }
                 val candidates = anchors[path].orEmpty().map { label ->
-                    val expression = Regex("<[^>]+\\b(?:id|name)\\s*=\\s*[\"']${Regex.escape(label.fragment)}[\"'][^>]*>",
-                        RegexOption.IGNORE_CASE)
-                    label to expression.find(scanned)?.range?.first
-                }.filter { (_, offset) -> offset == null || !notes.contains(offset) }
+                    label to locations[label.fragment.lowercase()]
+                }.filter { (_, offset) -> offset == null || !scan.notes.contains(offset) }
+                documentReferences.getOrPut(path) { sourceNoteReferences(html, scan = scan) }
                 val located = candidates.mapNotNull { (label, offset) -> offset?.let { it to label } }
                     .distinctBy { it.first }.sortedBy { it.first }
                 if (located.size > 1) {
                     located.mapIndexed { anchorIndex, (_, label) ->
                         val start = if (anchorIndex == 0) 0 else located[anchorIndex].first
                         val end = located.getOrNull(anchorIndex + 1)?.first ?: html.length
-                        EpubSection(label.title, sourceBodyFragment(html.substring(start, end), bodyTag), path, css, start, end, label.parentTitle)
+                        EpubSection(label.title, scan.bodyFragment(start, end), path, css, start, end, label.parentTitle,
+                            sourceAnchor = label.fragment)
                     }
                 } else {
                     val label = located.firstOrNull()?.second ?: labels[path] ?: candidates.firstOrNull()?.first
                     listOf(EpubSection(label?.title.orEmpty().ifBlank { "第 ${index + 1} 章" }, html, path, css,
-                        tocParentTitle = label?.parentTitle))
+                        tocParentTitle = label?.parentTitle, sourceAnchor = label?.fragment?.takeIf(String::isNotBlank)))
                 }
             }
         require(sections.isNotEmpty()) { "EPUB 没有可阅读章节" }
-        val sectionReferences = sections.map { section -> sourceNoteReferences(section.html).mapNotNull { reference ->
+        val sectionReferences = sections.map { section -> documentReferences[section.path].orEmpty()
+            .filter { it.tag.start in section.sourceStart until section.sourceEnd }.mapNotNull { reference ->
             val href = reference.href ?: return@mapNotNull null
             val fragment = sourceNoteFragment(href) ?: return@mapNotNull null
             val path = runCatching { if (href.substringBefore('#').isBlank()) section.path else resolve(section.path, href) }.getOrNull()
@@ -166,6 +192,14 @@ object EpubArchive {
         onProgress(1f)
         ParsedEpub(title, author, notedSections,
             cover?.let { resolve(packagePath, it.getAttribute("href")) }?.takeIf { entries.containsKey(it) }, images)
+    }
+
+    /** Existing books may have retained extra NCX anchors; never move their saved offsets. */
+    internal fun readForChapters(file: File, chapterCount: Int, onProgress: (Float) -> Unit = {}): ParsedEpub {
+        val parsed = read(file, onProgress = onProgress)
+        if (parsed.sections.size == chapterCount) return parsed
+        val legacy = read(file, mergeLegacyToc = true, onProgress = { onProgress(1f) })
+        return legacy.takeIf { it.sections.size == chapterCount } ?: parsed
     }
 
     fun copyEntry(archive: File, path: String, destination: File) {

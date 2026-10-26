@@ -1847,7 +1847,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                             val textFile = File(folder, "chapter-$chapter.txt").apply { writeText(edit.text) }
                             val updatedChapter = edit.chapter(prepared.chapter, textFile.absolutePath)
                             val lengths = book.chapters.map { content -> content.characterCount.takeIf { it >= 0 }
-                                ?: File(requireNotNull(content.textPath)).readText().length }
+                                ?: readChapterText(content).length }
                             edit.book(book, updatedChapter, lengths) to edit::annotation
                         }
                     }
@@ -1990,7 +1990,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val lengths = mutableListOf<Int>()
         val chapters = book.chapters.mapIndexed { index, chapter ->
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            val text = File(requireNotNull(chapter.textPath)).readText()
+            val text = readChapterText(chapter)
             val replacements = literalTextReplacements(text, query, replacement)
             if (replacements.isEmpty()) { lengths += text.length; chapter }
             else {

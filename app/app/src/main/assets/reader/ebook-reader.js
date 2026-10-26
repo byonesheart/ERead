@@ -19,6 +19,7 @@
     const textByParent = new Map(), visibleTextParents = new Set();
     let paragraphObserver;
     let pageAnimation = null;
+    let pageTransition = null;
     const continuousHost = window.parent !== window ? window.parent.EReadContinuous : null;
     const frameChapter = continuousHost ? Number(window.frameElement.dataset.chapter) : -1;
     const bridge = continuousHost ? {
@@ -199,7 +200,7 @@
             atStart: position <= 1, atEnd: position + (horizontal ? innerWidth : view.height) >= extent - 1};
     }
     function report(force) {
-        if (!started || pageAnimation) return;
+        if (!started || pageAnimation || pageTransition) return;
         const now = performance.now();
         if (!force && now - lastBridgeReport < 80) { drawDecorations(); return; }
         lastBridgeReport = now;
@@ -260,19 +261,60 @@
             endManual();
             return;
         }
-        const span = config.mode === 'PAGED' && config.dual ? 2 : 1, target = pageIndex() + direction * span;
+        const span = config.mode === 'PAGED' && config.dual ? 2 : 1;
+        const target = (pageTransition ? pageTransition.page : pageIndex()) + direction * span;
         beginManual();
         if (target < 0 || target >= pageCount()) send('chapterStep', {direction: direction});
         else if (config.eink || config.mode === 'VERTICAL_PAGED') moveToPage(target);
         else if (config.turn === 'SLIDE') animatePage(target);
-        else send('turn', {page:target, direction:direction, style:config.turn});
+        else transitionPage(target, direction);
         endManual();
     }
     function finishPageAnimation() {
+        if (pageTransition) {
+            const previous = pageTransition; pageTransition = null;
+            previous.animations.forEach(animation => animation.cancel());
+            previous.transition.skipTransition(); automatic = false;
+        }
         if (!pageAnimation) return;
         const previous = pageAnimation; pageAnimation = null; previous.cancel();
         automatic = false;
         if (overlay) overlay.style.visibility = '';
+    }
+    function transitionPage(page, direction) {
+        finishPageAnimation();
+        // Keep both snapshots in Chromium's compositor. Android software WebView
+        // readback can still contain the previous GPU frame, even after a visual callback.
+        if (!document.startViewTransition) { animatePage(page); return; }
+        const state = {page:page, transition:null, animations:[]};
+        pageTransition = state; automatic = true;
+        state.transition = document.startViewTransition(function () {
+            if (pageTransition !== state) return;
+            scrollTo(page * pageStride(), 0);
+        });
+        state.transition.ready.then(function () {
+            if (pageTransition !== state) return;
+            const curl = config.turn === 'CURL', forward = direction > 0;
+            const moving = forward ? 'old' : 'new', fixed = forward ? 'new' : 'old';
+            const movingPseudo = '::view-transition-' + moving + '(root)';
+            const still = document.documentElement.animate([{zIndex:1},{zIndex:1}],
+                {duration:curl ? 280 : 180, fill:'both', pseudoElement:'::view-transition-' + fixed + '(root)'});
+            const start = curl ? 'perspective(1400px) rotateY(0deg)' : 'translateX(0)';
+            const end = curl ? 'perspective(1400px) rotateY(-110deg)' : 'translateX(-100%)';
+            const frames = [
+                {transform:start, filter:'brightness(1)', zIndex:2, transformOrigin:'left center'},
+                {transform:end, filter:curl ? 'brightness(.65)' : 'brightness(1)', zIndex:2, transformOrigin:'left center'}
+            ];
+            const animation = document.documentElement.animate(forward ? frames : frames.reverse(),
+                {duration:curl ? 280 : 180, easing:'cubic-bezier(.2,.65,.3,1)', fill:'both', pseudoElement:movingPseudo});
+            animation.id = still.id = 'eread-page-turn';
+            state.animations.push(animation, still);
+        }).catch(function () { /* A resize or a newer navigation can skip a transition. */ });
+        state.transition.finished.then(function () {
+            state.animations.forEach(animation => animation.cancel());
+            if (pageTransition !== state) return;
+            pageTransition = null; automatic = false; report(true);
+        });
     }
     function animatePage(page) {
         finishPageAnimation();
@@ -301,6 +343,7 @@
         const anchor = old && navigationAnchor && (navigationAnchor.image || Array.from(rangeFor(navigationAnchor.offset,
             Math.min(canonical.length, navigationAnchor.offset + 1)).getClientRects()).some(visible)) ? navigationAnchor : old;
         config = next;
+        if (config.paperImage) { const paper = new Image(); paper.src = config.paperImage; }
         rangeGeometry.clear();
         const horizontal = config.mode === 'PAGED', scrolling = config.mode === 'SCROLL';
         const column = innerWidth / (config.dual && horizontal ? 2 : 1);
@@ -316,6 +359,10 @@
             [data-eread-body-weight] { font-weight:inherit!important; }
         ` : '';
         readerStyle.textContent = `
+            ::view-transition-group(root),::view-transition-old(root),::view-transition-new(root) { animation:none; }
+            ::view-transition-image-pair(root) { isolation:isolate; }
+            ::view-transition-old(root),::view-transition-new(root) { mix-blend-mode:normal; height:100%; object-fit:fill; backface-visibility:hidden;
+                background:${config.paper || '#fff'} ${config.paperImage ? `linear-gradient(${config.night ? 'rgba(0,0,0,.72),rgba(0,0,0,.72)' : 'rgba(255,255,255,.72),rgba(255,255,255,.72)'}),url('${config.paperImage}') center/cover` : ''}; }
             @font-face { font-family:eread-selected; src:url('${config.fontUrl}'); }
             html { margin:0!important; padding:0!important; width:100%!important; height:${continuousHost ? 'auto' : '100%'}!important; scroll-behavior:auto!important; overflow:${scrolling && !continuousHost ? 'auto' : 'hidden'}!important; background:transparent!important; }
             body { box-sizing:content-box!important; margin:0!important; padding:${config.top}px ${config.right}px ${config.bottom}px ${config.left}px!important;

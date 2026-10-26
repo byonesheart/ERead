@@ -118,6 +118,53 @@ class ReaderContentsTest {
         assertEquals("第1章 · 第1节 · 第　1　章 起点 / 第 1 节 见面", readerSearchLocationIndex(chapters).label(1, 0))
     }
 
+    @Test fun flatOmnibusGroupsRomanVolumesIncludingPrefacesAndExtrasWithoutMovingChapters() {
+        val chapters = listOf("前言", "星海Ⅰ·启程", "版权信息", "目录", "序章 开始", "第一幕 起点", "尾声",
+            "星海Ⅱ·归来", "目录", "第一幕 回家", "星海前传·往日", "第一章 相遇").mapIndexed { index, title ->
+            Chapter(id = "part-$index", title = title, textPath = "absent-$index.txt")
+        }
+        val entries = readerContentsEntries(chapters, hierarchical = true)
+        assertEquals(chapters.map { it.id }, entries.map { it.key })
+        assertEquals(listOf("前言", "星海Ⅰ·启程", "星海Ⅱ·归来", "星海前传·往日"), entries.filter { it.depth == 0 }.map { it.title })
+        assertEquals((1..6).toSet(), entries[1].groupChapters)
+        assertEquals("part-1", entries[5].parentKey)
+        assertEquals("part-7", entries[9].parentKey)
+        assertEquals("part-10", entries[11].parentKey)
+        assertTrue(readerContentsEntries(chapters, hierarchical = false).all { it.depth == 0 })
+        assertEquals("第2章 · 第4节 · 星海Ⅰ·启程 / 第一幕 起点", readerSearchLocationIndex(chapters).label(5, 0))
+    }
+
+    @Test fun suppliedOmnibusKeepsPhysicalPositionsAndGroupsItsFlatDirectory() {
+        val path = System.getenv("EREAD_EBOOK_SMOKE_SOURCE")
+        org.junit.Assume.assumeTrue(!path.isNullOrBlank() && path.endsWith(".mobi", true))
+        val parsed = com.eyue.reader.data.MobiArchive.read(java.io.File(path!!))
+        val chapters = parsed.sections.mapIndexed { index, section -> Chapter(id = "source-$index", title = section.title,
+            tocParentTitle = section.tocParentTitle) }
+        val entries = readerContentsEntries(chapters, hierarchical = true)
+        assertEquals(chapters.map { it.id }, entries.map { it.key })
+        assertTrue(entries.count { it.depth == 0 } in 3 until chapters.size)
+        assertEquals("The seven-volume fixture has seven roots plus its preface", 8, entries.count { it.depth == 0 })
+        assertTrue(entries.any { it.depth == 1 })
+        entries.forEach { entry -> assertEquals(chapters[entry.chapter].title, entry.title) }
+    }
+
+    @Test fun duplicateTitlePagesWithDifferentRomanGlyphsKeepTheFirstVolumeAsTheirParent() {
+        val chapters = listOf("星海Ⅲ·远方（下）", "版权信息", "目录", "星海III · 远方（下）", "第一幕 抵达",
+            "星海 IV·归来", "第一章 回家").mapIndexed { index, title -> Chapter(id = "part-$index", title = title) }
+        val entries = readerContentsEntries(chapters, hierarchical = true)
+        assertEquals(listOf("part-0", "part-5"), entries.filter { it.depth == 0 }.map { it.key })
+        assertEquals((0..4).toSet(), entries[0].groupChapters)
+        assertEquals("part-0", entries[3].parentKey)
+        assertEquals(chapters.map { it.id }, entries.map { it.key })
+    }
+
+    @Test fun aSingleNumberedBookAndProseNeverBecomeAnOmnibus() {
+        val chapters = listOf("星海Ⅰ·启程", "第一幕 起点", "注1 释义", "第二幕 离开").map { Chapter(title = it) }
+        assertTrue(readerContentsEntries(chapters, hierarchical = true).all { it.depth == 0 })
+        val repeated = listOf("星海Ⅰ·启程", "版权信息", "星海 I · 启程", "第一幕 起点").map { Chapter(title = it) }
+        assertTrue(readerContentsEntries(repeated, hierarchical = true).all { it.depth == 0 })
+    }
+
     @Test fun comicParentLinksAndSearchLocationsKeepTheExistingSectionPath() {
         val entries = readerContentsEntries(listOf(chapter), hierarchical = true)
         assertEquals(listOf(0, 1, 2, 2, 1), entries.map { it.depth })

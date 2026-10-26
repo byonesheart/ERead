@@ -77,8 +77,9 @@ internal class ReaderChapterStore(private val context: Context, private val book
 }
 
 /** Old books get an inexpensive, persistent length catalog without retaining all chapter strings. */
-internal suspend fun readerChapterLengths(context: Context, book: Book): List<Int> = withContext(Dispatchers.IO) {
+internal suspend fun readerChapterLengths(context: Context, book: Book, allowScan: Boolean = true): List<Int> = withContext(Dispatchers.IO) {
     if (book.chapters.all { it.characterCount >= 0 }) return@withContext book.chapters.map { it.characterCount }
+    if (!allowScan) return@withContext com.eyue.reader.data.DeferredEbookContent.lengthHints(book.chapters)
     val work = currentCoroutineContext()
     val key = MessageDigest.getInstance("SHA-256").digest(book.id.toByteArray()).joinToString("") { "%02x".format(it) }
     val catalog = AtomicFile(File(context.cacheDir, "reader-chapter-lengths/$key.json"))

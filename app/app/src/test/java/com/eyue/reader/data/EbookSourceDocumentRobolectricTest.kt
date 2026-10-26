@@ -36,7 +36,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28], manifest = Config.NONE)
+@Config(sdk = [28], manifest = Config.NONE, shadows = [MobiBitmapRegionDecoderShadow::class])
 class EbookSourceDocumentRobolectricTest {
     private lateinit var root: File
     private lateinit var context: Context
@@ -55,9 +55,9 @@ class EbookSourceDocumentRobolectricTest {
         stores.forEach(EbookSourceStore::close)
         originalDigests.forEach { (file, digest) -> assertArrayEquals("Read-only original changed: ${file.name}", digest, sha256(file)) }
         check(root.canonicalFile.parentFile == File("build").canonicalFile)
-        repeat(5) {
+        repeat(10) {
             if (root.deleteRecursively()) return
-            Thread.sleep(50)
+            Thread.sleep(100)
         }
         check(!root.exists())
     }
@@ -66,7 +66,9 @@ class EbookSourceDocumentRobolectricTest {
         val source = epubFixture(includeImage = false)
         val directory = File(context.filesDir, "books/fast-import").apply { mkdirs() }
         val book = EpubTestImporter(context).import(source, directory, "fast-import", "fast-import")
-        assertEquals(9, book.contentVersion)
+        assertEquals(10, book.contentVersion)
+        assertTrue(book.chapters.all { File(requireNotNull(it.textPath)).isFile })
+        readChapterText(book, 1)
         val firstManifest = JSONObject(File(requireNotNull(book.chapters[1].lazySourcePath)).readText())
         assertEquals("OPS/text/body.xhtml", firstManifest.getString("archivePath"))
         assertTrue(firstManifest.getString("html").contains("href='../styles/main.css'"))

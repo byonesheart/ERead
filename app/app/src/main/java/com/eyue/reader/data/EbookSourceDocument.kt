@@ -31,6 +31,7 @@ internal data class EbookSourceResource(val mimeType: String, val encoding: Stri
 internal class EbookSourceStore(private val context: Context, private val book: Book) : Closeable {
     private val mutex = Mutex()
     private val documents = linkedMapOf<Int, EbookSourceDocument>()
+    private val deferredImages = java.util.concurrent.ConcurrentHashMap<String, String>()
     private var window: IntRange? = null
     private val streams = mutableSetOf<Closeable>()
     private var directory: File? = null
@@ -57,6 +58,12 @@ internal class EbookSourceStore(private val context: Context, private val book: 
             require(chapterIndex in book.chapters.indices) { "原书章节位置无效" }
             val worker = currentCoroutineContext()
             worker.ensureActive()
+            val content = DeferredEbookContent.ensure(book.chapters[chapterIndex]) { worker.ensureActive() }
+            content.inlineImages.forEach { image ->
+                val file = File(image.path).canonicalFile
+                if (book.format == BookFormat.MOBI && file.parentFile == File(requireNotNull(content.textPath)).canonicalFile.parentFile &&
+                    file.name.startsWith("mobi-inline-")) deferredImages["images/" + file.name.removePrefix("mobi-inline-")] = file.path
+            }
             val catalog = index ?: prepare { worker.ensureActive() }.also { index = it }
             synchronized(documents) { documents.remove(chapterIndex)?.also { documents[chapterIndex] = it } }?.takeIf { it.canonicalText == canonicalText }
                 ?.let { return@withLock it }
@@ -79,7 +86,7 @@ internal class EbookSourceStore(private val context: Context, private val book: 
             }
             var html = if (savedSource == null) File(folder, row.getString("html")).readText()
             else if (book.format == BookFormat.EPUB) savedSource.getString("html") else {
-                val resources = catalog.getJSONObject("resources")
+                val resources = JSONObject(catalog.getJSONObject("resources").toString()).apply { deferredImages.forEach { (path, file) -> put(path, file) } }
                 val urls = resources.keys().asSequence().associateBy { it.substringAfterLast('/').substringBefore('.').toInt() }
                 withCss(ebookRewriteMobiResources(savedSource.getString("html")) { recIndex ->
                     urls[recIndex]?.let { origin + "archive/$it" }
@@ -134,10 +141,10 @@ internal class EbookSourceStore(private val context: Context, private val book: 
                     catch (error: Throwable) { zip.close(); throw error }
             }
         }
-        val relative = catalog.optJSONObject("resources")?.optString(path)?.takeIf(String::isNotBlank) ?: return null
+        val relative = deferredImages[path] ?: catalog.optJSONObject("resources")?.optString(path)?.takeIf(String::isNotBlank) ?: return null
         val borrowed = File(relative).takeIf { it.isAbsolute }
         val file = (borrowed ?: File(requireNotNull(directory), relative)).canonicalFile
-        if (borrowed != null) require(book.chapters.any { chapter -> chapter.inlineImages.any { File(it.path).canonicalFile == file } }) {
+        if (borrowed != null) require(deferredImages[path] == file.path || book.chapters.any { chapter -> chapter.inlineImages.any { File(it.path).canonicalFile == file } }) {
             "原书资源不属于这本书"
         } else require(file.toPath().startsWith(requireNotNull(directory).canonicalFile.toPath())) { "原书资源路径无效" }
         return response(path, file.inputStream())
@@ -205,7 +212,7 @@ internal class EbookSourceStore(private val context: Context, private val book: 
 
     private fun prepareEpub(source: File, folder: File, checkActive: () -> Unit): JSONObject {
         val legacyIndex = LegacyEpubIndex.read(context, book)
-        val parsed = legacyIndex?.snapshot(source, book, checkActive) ?: EpubArchive.read(source) { checkActive() }
+        val parsed = legacyIndex?.snapshot(source, book, checkActive) ?: EpubArchive.readForChapters(source, book.chapters.size) { checkActive() }
         require(parsed.sections.size == book.chapters.size) { "原书目录与书架章节不一致，请重新导入后使用原书排版" }
         val rows = JSONArray()
         ZipFile(source).use { zip ->

@@ -20,7 +20,8 @@ internal class EbookReaderWebViewClient(
     private val openFont: () -> InputStream?,
     private val onDocumentLoaded: (WebView) -> Unit,
     private val onFailure: (String) -> Unit,
-    private val openChapterDocument: (String) -> String? = { null }
+    private val openChapterDocument: (String) -> String? = { null },
+    private val openBackground: () -> InputStream? = { null }
 ) : WebViewClient() {
     private val document = documentHtml.toByteArray(Charsets.UTF_8)
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -44,6 +45,10 @@ internal class EbookReaderWebViewClient(
         return try {
             if (request.url.scheme == "https" && request.url.authority == "eread.local" && request.url.path == "/reader-font") {
                 openFont()?.let { return WebResourceResponse("font/ttf", null, it) }
+            }
+            if (request.url.scheme == "https" && request.url.authority == "eread.local" && request.url.path == "/reader-background") {
+                openBackground()?.buffered()?.let { stream -> return WebResourceResponse(
+                    java.net.URLConnection.guessContentTypeFromStream(stream) ?: "application/octet-stream", null, stream) }
             }
             val resource = openResource(request.url.toString())
             if (resource != null) WebResourceResponse(resource.mimeType, resource.encoding, resource.stream) else denied()

@@ -172,7 +172,7 @@ class LazyChapterContentRobolectricTest {
         assertTrue(first.chapters.all { it.lazySourcePath == null && it.sourceStyles.isNotEmpty() })
     }
 
-    @Test fun importsEpubWithPlainTextReadyAndStylesDeferredForEveryChapter() = runBlocking {
+    @Test fun importsEpubWithAllTextAndSourceMarkupCachedBeforeReturning() = runBlocking {
         val source = File(root, "fixture.epub")
         ZipOutputStream(source.outputStream()).use { zip ->
             val entries = mapOf(
@@ -191,7 +191,9 @@ class LazyChapterContentRobolectricTest {
         assertEquals(LibraryMode.NOVEL, book.mode)
         assertEquals(2, book.chapters.size)
         assertTrue(book.chapters.all { it.lazySourcePath != null && it.sourceStyles.isEmpty() })
-        assertTrue(book.chapters.all { File(it.textPath!!).readText().length == it.characterCount })
+        assertEquals(File(book.chapters.first().textPath!!).readText().length, book.chapters.first().characterCount)
+        assertTrue(book.chapters.all { File(it.textPath!!).isFile && it.characterCount == File(it.textPath).readText().length })
+        assertTrue(book.chapters.all { File(it.lazySourcePath!!).isFile && !DeferredEbookContent.pending(it) })
         assertEquals(listOf("原生分卷", "原生分卷"), book.chapters.map { it.tocParentTitle })
         assertEquals(book, LibraryRepository(context).let { it.readBook(it.writeBook(book)) })
         val upgraded = importer.upgradeInlineBooks(LibraryState(books = listOf(book.copy(

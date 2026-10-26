@@ -29,6 +29,49 @@ import java.util.UUID
 class ReaderProgressReturnRobolectricTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun draggingShowsTheTargetChapterAndPageWithoutNavigatingUntilRelease() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val root = File(context.cacheDir, "seek-preview-${UUID.randomUUID()}").apply { mkdirs() }
+        val chapters = (0..3).map { index ->
+            val text = "Paragraph ${index + 1}: The reader waits until the slider is released.\n".repeat(35)
+            Chapter(title = "第${index + 1}章", characterCount = text.length,
+                textPath = File(root, "$index.txt").apply { writeText(text) }.absolutePath)
+        }
+        val book = Book(title = "拖动预览", format = BookFormat.TXT, mode = LibraryMode.NOVEL, chapters = chapters)
+        var observedChapter = -1
+        fun await(condition: () -> Boolean) {
+            val until = System.nanoTime() + 15_000_000_000L
+            while (System.nanoTime() < until) {
+                compose.mainClock.advanceTimeBy(50)
+                Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
+                compose.waitForIdle()
+                if (condition()) return
+                Thread.sleep(10)
+            }
+            fail(compose.onRoot().printToString().take(3000))
+        }
+        try {
+            compose.setContent { MaterialTheme {
+                ReaderScreen(book, ReaderSettings(readingMode = ReadingMode.PAGED, showTime = false, showBattery = false),
+                    emptyList(), {}, { chapter, _, _, _, _ -> observedChapter = chapter }, {}, {}, {}, {}, emptyFlow())
+            } }
+            await { observedChapter == 0 }
+            compose.onNodeWithTag("reader_body").performClick()
+            val slider = compose.onNodeWithTag("reader_progress")
+            slider.performTouchInput { down(Offset(width * .05f, center.y)); moveTo(Offset(width * .84f, center.y)) }
+            compose.onNodeWithTag("reader_seek_preview").assertIsDisplayed()
+            compose.onNode(hasText("第4章") and hasAnyAncestor(hasTestTag("reader_seek_preview"))).assertIsDisplayed()
+            await {
+                compose.onAllNodes(hasText(" 页", substring = true) and hasAnyAncestor(hasTestTag("reader_seek_preview")))
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.runOnIdle { assertEquals(0, observedChapter) }
+            slider.performTouchInput { up() }
+            await { observedChapter == 3 }
+            compose.onNodeWithTag("reader_seek_preview").assertDoesNotExist()
+        } finally { root.deleteRecursively() }
+    }
+
     @Test fun consecutiveSeeksReturnToTheImmediatelyPreviousTarget() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val root = File(context.cacheDir, "rapid-seek-${UUID.randomUUID()}").apply { mkdirs() }

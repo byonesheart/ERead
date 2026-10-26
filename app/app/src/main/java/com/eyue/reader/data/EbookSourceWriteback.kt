@@ -111,6 +111,11 @@ internal class EbookSourceWriteback private constructor(
                     checkActive: () -> Unit = {}): EbookSourceWriteback {
             checkActive()
             val progress = Progress(onProgress)
+            // Explicit saving may traverse the book, but untouched deferred chapters must remain readable.
+            if (before.format in setOf(BookFormat.EPUB, BookFormat.MOBI)) {
+                before.chapters.forEach { DeferredEbookContent.ensure(it, checkActive) }
+                edited.chapters.forEach { DeferredEbookContent.ensure(it, checkActive) }
+            }
             progress.report("读取原文件", 0f)
             val source = source(before)
             requireWritable(context, source)
@@ -153,7 +158,7 @@ internal class EbookSourceWriteback private constructor(
 
         private fun epub(context: Context, source: File, destination: File, before: Book, edited: Book, progress: Progress, checkActive: () -> Unit) {
             val legacyIndex = LegacyEpubIndex.read(context, before)
-            val parsed = legacyIndex?.snapshot(source, before, checkActive) ?: EpubArchive.read(source, onProgress = {
+            val parsed = legacyIndex?.snapshot(source, before, checkActive) ?: EpubArchive.readForChapters(source, before.chapters.size, onProgress = {
                 checkActive(); progress.report("读取 EPUB 正文", .1f + .15f * it)
             })
             require(parsed.sections.size == edited.chapters.size) { "源文件目录与书架记录不一致，修改未保存，请重新导入" }
@@ -207,7 +212,7 @@ internal class EbookSourceWriteback private constructor(
                     }
                 }
             }
-            val verified = legacyIndex?.snapshot(destination, before, checkActive) ?: EpubArchive.read(destination, onProgress = {
+            val verified = legacyIndex?.snapshot(destination, before, checkActive) ?: EpubArchive.readForChapters(destination, before.chapters.size, onProgress = {
                 checkActive(); progress.report("校验 EPUB 文件", .8f + .1f * it)
             })
             check(verified.title == parsed.title && verified.author == parsed.author && verified.sections.size == parsed.sections.size &&

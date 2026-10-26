@@ -31,6 +31,8 @@ import com.eyue.reader.data.LibraryRepository
 import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.ReadingMode
 import com.eyue.reader.data.loadChapterContent
+import com.eyue.reader.data.materializeCloudBook
+import com.eyue.reader.data.MobiBitmapRegionDecoderShadow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
@@ -56,7 +58,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 /** Native cached-text fallback checks; actual source DOM is covered by browser/device tests. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28], qualifiers = "w360dp-h800dp-mdpi")
+@Config(sdk = [28], qualifiers = "w360dp-h800dp-mdpi", shadows = [MobiBitmapRegionDecoderShadow::class])
 @LooperMode(LooperMode.Mode.PAUSED)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ReaderProvidedFootnotesRobolectricTest {
@@ -114,7 +116,9 @@ class ReaderProvidedFootnotesRobolectricTest {
         assertEquals(LibraryMode.NOVEL, imported.mode)
         assertTrue(imported.chapters.size > 100)
         val repository = LibraryRepository(context)
-        val reopened = repository.readBook(repository.writeBook(imported))
+        // This test deliberately removes the source and simulates an older, fully cached shelf.
+        val materialized = runBlocking { materializeCloudBook(context, imported) }
+        val reopened = repository.readBook(repository.writeBook(materialized))
         val chapterIndex = reopened.chapters.indexOfFirst { chapter -> chapter.sourceFootnotes.any { it.content.contains("《西游释厄传》") } }
         assertTrue("Import must retain the first chapter's original note through shelf serialization", chapterIndex >= 0)
         val prepared = runBlocking { loadChapterContent(context, reopened, chapterIndex) }

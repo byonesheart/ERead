@@ -18,7 +18,8 @@ private val chapterContentLocks = Array(32) { Mutex() }
 
 /** Plain text is immutable; deferred CSS projection can never move notes or saved reading offsets. */
 suspend fun loadChapterContent(context: Context, book: Book, chapterIndex: Int): PreparedChapter = withContext(Dispatchers.IO) {
-    val chapter = book.chapters[chapterIndex]
+    val work = currentCoroutineContext()
+    val chapter = DeferredEbookContent.ensure(book.chapters[chapterIndex]) { work.ensureActive() }
     val sourcePath = chapter.lazySourcePath
     if (sourcePath == null) {
         val job = currentCoroutineContext()
@@ -79,13 +80,16 @@ private fun chapterTextFootnotes(format: BookFormat, chapter: Chapter, text: Str
 
 /** Used by imports after lightweight text/image extraction; no source styling is evaluated here. */
 internal fun saveLazyChapter(directory: File, index: Int, parsed: ParsedTextChapter, html: String, css: String,
-                             images: Map<String, String>, noteTargets: Map<String, String> = emptyMap(), archivePath: String? = null): Chapter {
+                             images: Map<String, String>, noteTargets: Map<String, String> = emptyMap(), archivePath: String? = null,
+                             cssFiles: MutableMap<String, File>? = null): Chapter {
     val text = File(directory, "chapter-$index.txt")
     val manifest = File(directory, "chapter-$index.source.json")
-    val cssBytes = css.toByteArray(Charsets.UTF_8)
-    val cssHash = MessageDigest.getInstance("SHA-256").digest(cssBytes).joinToString("") { "%02x".format(it) }
-    val cssFile = File(directory, "styles-$cssHash.css")
-    if (!cssFile.isFile) writeImportChapter(cssFile, css)
+    fun stylesheet(): File {
+        val cssBytes = css.toByteArray(Charsets.UTF_8)
+        val cssHash = MessageDigest.getInstance("SHA-256").digest(cssBytes).joinToString("") { "%02x".format(it) }
+        return File(directory, "styles-$cssHash.css").also { if (!it.isFile) writeImportChapter(it, css) }
+    }
+    val cssFile = if (cssFiles == null) stylesheet() else synchronized(cssFiles) { cssFiles.getOrPut(css, ::stylesheet) }
     writeImportChapter(text, parsed.text)
     writeImportChapter(manifest, JSONObject().put("version", 3).put("html", html).put("cssPath", cssFile.absolutePath)
         .put("images", JSONObject(images)).put("noteTargets", JSONObject(noteTargets)).put("archivePath", archivePath).toString())
@@ -97,7 +101,7 @@ internal fun saveLazyChapter(directory: File, index: Int, parsed: ParsedTextChap
 /** New import files are private until the book's atomic library commit; do not fsync every chapter. */
 private fun writeImportChapter(file: File, text: String) {
     if (file.exists()) writeChapterAtomic(AtomicFile(file), text)
-    else file.bufferedWriter(Charsets.UTF_8).use { it.write(text) }
+    else file.writeText(text, Charsets.UTF_8)
 }
 
 private fun chapterTextHash(file: File, checkActive: () -> Unit): String {

@@ -67,6 +67,8 @@ import com.eyue.reader.data.UnderlineStyle
 import com.eyue.reader.data.ChineseConversion
 import com.eyue.reader.data.ChineseTextConverter
 import com.eyue.reader.data.EbookSourceStore
+import com.eyue.reader.data.DeferredEbookContent
+import com.eyue.reader.data.indexEbookChapters
 import com.eyue.reader.data.txtSourceFootnotes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -188,6 +190,7 @@ internal fun ReaderScreen(
     var document by remember(book.id) { mutableStateOf<ReaderDocument?>(null) }
     var documentReadError by remember(book.id) { mutableStateOf<String?>(null) }
     var documentAttempt by remember(book.id) { mutableIntStateOf(0) }
+    var indexedLengths by remember(book.id, importedBook.contentVersion) { mutableStateOf<List<Int>>(emptyList()) }
     val book = importedBook.copy(chapters = document?.chapters?.takeIf { it.size == importedBook.chapters.size } ?: importedBook.chapters)
     val nativeSourceCss = !sourceEbook && settings.useSourceCss
     val chapterStore = remember(importedBook.id, importedBook.contentVersion, importedBook.chapters, nativeSourceCss) {
@@ -244,6 +247,8 @@ internal fun ReaderScreen(
     var pendingScrollAnchor by remember(book.id) { mutableStateOf<Triple<Int, Int, Int>?>(null) }
     var chromeVisible by remember(book.id) { mutableStateOf(false) }
     var progressDraft by remember(book.id) { mutableStateOf<Float?>(null) }
+    var seekPreviewPage by remember(book.id) { mutableStateOf<ReaderSeekPage?>(null) }
+    LaunchedEffect(chromeVisible) { if (!chromeVisible) { progressDraft = null; seekPreviewPage = null } }
     var returnPosition by remember(book.id) { mutableStateOf<ReaderReturnPosition?>(null) }
     var searchReturnPosition by remember(book.id) { mutableStateOf<ReaderReturnPosition?>(null) }
     var toolbarHeight by remember { mutableIntStateOf(0) }
@@ -330,6 +335,17 @@ internal fun ReaderScreen(
     val chapterStarts = remember(pageCounts) { pageCounts.runningFold(0, Int::plus).dropLast(1) }
     val chapterPageCount = pageCounts.getOrNull(chapterIndex) ?: 0
     val totalPages = remember(pageCounts) { pageCounts.sum() }
+    val seekLocation = if (!raster) progressDraft?.let { document?.scrollIndex?.location(it) } else null
+    val seekRaster = if (raster) progressDraft?.let { readerRasterSeekLocation(pageCounts, it) } else null
+    val seekChapter = seekLocation?.chapter ?: seekRaster?.chapter
+    val seekPageLabel = when {
+        seekRaster != null -> "本章 ${readerVisiblePageEnd(seekRaster.page, pageCounts[seekRaster.chapter], dualPage)} / ${pageCounts[seekRaster.chapter]} 页"
+        seekLocation != null && sourceEbook -> seekPreviewPage?.takeIf { it.location == seekLocation }
+            ?.let { if (it.failed) "本章页码暂不可用" else "本章 ${it.page} / ${it.count} 页" } ?: "本章页码计算中"
+        seekLocation != null -> rememberReaderPageProgress(importedBook, settings, layoutSpec, seekLocation.chapter,
+            seekLocation.offset, seekLocation.imageIndex, delayMillis = 120).label
+        else -> ""
+    }
     val visiblePageEnd = readerVisiblePageEnd(pageIndex, chapterPageCount, dualPage)
     val globalPage = chapterStarts.getOrElse(chapterIndex) { 0 } + visiblePageEnd
     val scrollPageProgress = if (directScroll && !sourceEbook) rememberReaderPageProgress(importedBook, settings, layoutSpec,
@@ -381,9 +397,11 @@ internal fun ReaderScreen(
     fun publishEbookText(index: Int, text: String, chapter: Chapter, owner: ReaderChapterStore) {
         if (latestChapterStore !== owner || index !in (chapterIndex - 1)..(chapterIndex + 1)) return
         val current = document ?: return
+        if (index in indexedLengths.indices) indexedLengths = indexedLengths.toMutableList().apply { this[index] = text.length }
         document = readerRetainChapterWindow(current.copy(
             text = current.text.toMutableList().apply { this[index] = text },
             chapters = current.chapters.toMutableList().apply { this[index] = chapter },
+            scrollIndex = ReaderScrollIndex(indexedLengths, current.chapters.map { it.inlineImages }, emptyList()),
             readyChapters = current.readyChapters + index),
             chapterIndex, importedBook.chapters)
     }
@@ -949,7 +967,8 @@ internal fun ReaderScreen(
         documentReadError = null
         try {
             if (!raster) {
-                val lengths = readerChapterLengths(context, importedBook)
+                val lengths = readerChapterLengths(context, importedBook, allowScan = !sourceEbook)
+                indexedLengths = lengths
                 document = ReaderDocument(List(book.chapters.size) { "" }, emptyList(), emptyList(),
                     List(book.chapters.size) { null }, List(book.chapters.size) { emptyList() },
                     ReaderScrollIndex(lengths, importedBook.chapters.map { it.inlineImages }, emptyList()), importedBook.chapters,
@@ -963,6 +982,21 @@ internal fun ReaderScreen(
             }
         } catch (cancelled: CancellationException) { throw cancelled }
           catch (error: Exception) { documentReadError = error.message ?: "书籍正文读取失败" }
+    }
+    LaunchedEffect(ebookStore, document != null, chapterIndex, readerForeground, manualDrag, progressDraft != null, ebookViewport.ready, layoutState.preparing) {
+        if (!sourceEbook || importedBook.chapters.all { it.characterCount >= 0 } || document == null || !readerForeground || manualDrag || progressDraft != null || !ebookViewport.ready || layoutState.preparing) return@LaunchedEffect
+        // Current/adjacent pages get first use of IO/CPU. Completed chapters survive cancellation on disk.
+        delay(1500)
+        try {
+            indexEbookChapters(importedBook) { index, length ->
+                if (indexedLengths.getOrNull(index) != length) {
+                    indexedLengths = indexedLengths.toMutableList().apply { this[index] = length }
+                    document?.let { current -> document = current.copy(scrollIndex = ReaderScrollIndex(indexedLengths,
+                        current.chapters.map { it.inlineImages }, emptyList())) }
+                }
+            }
+        } catch (cancelled: CancellationException) { throw cancelled }
+          catch (failure: Exception) { snackbar.showSnackbar("后台索引未完成：${failure.message ?: "请重试"}") }
     }
     // Keep the currently readable mode on screen until the requested mode's current chapter is ready.
     LaunchedEffect(requestedLayoutKey, chapterStore, document != null, chapterIndex, layoutState.preparing, layoutState.restoring) {
@@ -1048,9 +1082,9 @@ internal fun ReaderScreen(
         ebookStore?.retainWindow(target)
         suspend fun read(index: Int) {
             val text = owner.readText(index)
-            val chapter = withContext(Dispatchers.Default) {
+            val chapter = withContext(Dispatchers.IO) {
                 val work = currentCoroutineContext()
-                readerEbookChapterWithFootnotes(importedBook.chapters[index], text) { work.ensureActive() }
+                readerEbookChapterWithFootnotes(DeferredEbookContent.ensure(importedBook.chapters[index]) { work.ensureActive() }, text) { work.ensureActive() }
             }
             publishEbookText(index, text, chapter, owner)
         }
@@ -1443,6 +1477,10 @@ internal fun ReaderScreen(
                     }
                 }
             }
+            if (chromeVisible && sourceEbook && ebookStore != null && seekLocation != null) {
+                EbookSeekPreview(ebookStore, importedBook.chapters, seekLocation, chapterStore::readText,
+                    settings, foreground, dualPage, einkMode, chineseConverter, Modifier.fillMaxSize()) { seekPreviewPage = it }
+            }
         }
         if (!chromeVisible && !showTextSave) ReaderStatus(settings, chapterTitle, muted, currentBookmarks.isNotEmpty())
         if (!chromeVisible) Text("${(progress * 100).toInt()}%  ·  " + if (directScroll && !sourceEbook) scrollPageProgress!!.label else
@@ -1472,7 +1510,20 @@ internal fun ReaderScreen(
                 modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter)
                 .onSizeChanged { toolbarHeight = it.height }) {
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    if (progressDraft != null && seekChapter != null) BoxWithConstraints(Modifier.fillMaxWidth()) {
+                        val bubbleWidth = minOf(maxWidth, 240.dp)
+                        val center = 48.dp + (maxWidth - 96.dp).coerceAtLeast(0.dp) * progressDraft!!
+                        Surface(color = colors.secondaryContainer, contentColor = colors.onSecondaryContainer,
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+                            modifier = Modifier.offset(x = (center - bubbleWidth / 2).coerceIn(0.dp, maxWidth - bubbleWidth))
+                                .width(bubbleWidth).testTag("reader_seek_preview")) {
+                            Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                                Text("目标位置 · ${(progressDraft!! * 100).toInt()}%", fontSize = 10.sp)
+                                Text(book.chapters[seekChapter].title, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("第 ${seekChapter + 1} 章 · $seekPageLabel", fontSize = 11.sp)
+                            }
+                        }
+                    } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(chapterTitle, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f), color = colors.onSurfaceVariant)
                         val previewPercent = ((progressDraft ?: progress) * 100).toInt()
                         Text("$previewPercent% · " + if (directScroll) "第 ${chapterIndex + 1} / ${book.chapters.size} 章" else
@@ -1486,6 +1537,7 @@ internal fun ReaderScreen(
                         onValueChange = { highlightQuery = ""; pauseSpeechForNavigation(); progressDraft = it }, onValueChangeFinished = {
                             progressDraft?.let(::seekProgress)
                             progressDraft = null
+                            seekPreviewPage = null
                         }, enabled = (!raster || totalPages > 1) && !layoutState.preparing && !layoutState.restoring,
                         modifier = Modifier.weight(1f).height(36.dp).testTag("reader_progress").semantics { contentDescription = "全书阅读进度" })
                     IconButton(onClick = { jumpChapter(1) }, enabled = chapterIndex < book.chapters.lastIndex && !layoutState.preparing && !layoutState.restoring) {

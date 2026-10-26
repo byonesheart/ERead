@@ -114,7 +114,7 @@ class EbookSourceWritebackRobolectricTest {
         val originalBytes = source.readBytes()
         val parsed = MobiArchive.read(source)
         val book = mobiBook(source, parsed)
-        val chapter = book.chapters.indexOfFirst { File(it.textPath!!).readText().contains("旧🙂正文") }
+        val chapter = book.chapters.indexOfFirst { readChapterText(it).contains("旧🙂正文") }
         val updated = change(book, chapter, "旧🙂正文", "新的🙂正文".repeat(1000))
         val transaction = EbookSourceWriteback.prepare(context, book, updated, folder("mobi-edit"))
         assertArrayEquals(originalBytes, source.readBytes())
@@ -139,7 +139,7 @@ class EbookSourceWritebackRobolectricTest {
     @Test fun aSecondMobiEditReopensPreviousTextAndDoesNotDuplicateImagesOrLoseChapterBoundaries() {
         val source = mobiFixture()
         val original = mobiBook(source, MobiArchive.read(source))
-        val chapter = original.chapters.indexOfFirst { File(it.textPath!!).readText().contains("旧🙂正文") }
+        val chapter = original.chapters.indexOfFirst { readChapterText(it).contains("旧🙂正文") }
         val first = change(original, chapter, "旧🙂正文", "第一次改动")
         EbookSourceWriteback.prepare(context, original, first, folder("first")).apply { commit(); finish() }
         val firstSize = source.length()
@@ -222,7 +222,7 @@ class EbookSourceWritebackRobolectricTest {
         val mobiSource = mobiFixture()
         val mobi = mobiBook(mobiSource, MobiArchive.read(mobiSource))
         listOf(txt to txt.copy(sourcePath = editedText.absolutePath), epub to change(epub, 0, "旧🙂正文", "新正文"),
-            mobi to change(mobi, mobi.chapters.indexOfFirst { File(it.textPath!!).readText().contains("旧🙂正文") }, "旧🙂正文", "新正文"))
+            mobi to change(mobi, mobi.chapters.indexOfFirst { readChapterText(it).contains("旧🙂正文") }, "旧🙂正文", "新正文"))
             .forEach { (before, edited) ->
                 val preparation = mutableListOf<Pair<String, Float>>()
                 val transaction = EbookSourceWriteback.prepare(context, before, edited, folder("progress-${before.format}"),
@@ -259,13 +259,13 @@ class EbookSourceWritebackRobolectricTest {
         var originalHtml = ""
         MobiArchive.read(source, captureHtml = { originalHtml = it })
         assertNotEquals(SourceHtmlEdit.plain(originalHtml) { null },
-            book.chapters.joinToString("\n\n") { File(it.textPath!!).readText() })
+            book.chapters.joinToString("\n\n") { readChapterText(it) })
         val updated = change(book, 0, "旧正文", "新正文及新增文字")
         val transaction = EbookSourceWriteback.prepare(context, book, updated, folder("pagebreak"))
         transaction.commit()
         val reopened = MobiArchive.read(source)
         assertEquals(book.chapters.map { it.title }, reopened.sections.map { it.title })
-        assertEquals(updated.chapters.map { File(it.textPath!!).readText() },
+        assertEquals(updated.chapters.map { readChapterText(it) },
             reopened.sections.map { SourceHtmlEdit.plain(it.html) { null } })
         transaction.finish()
     }
@@ -274,16 +274,16 @@ class EbookSourceWritebackRobolectricTest {
         val source = mobiFixture("<body><a href='#one'>第一章</a><a href='#two'>第二章</a>" +
             "<p><a id='one'></a>第一章旧正文<a id='two'></a>第二章保留正文</p></body>", includeCover = false)
         val book = importMobi(source)
-        val index = book.chapters.indexOfFirst { File(it.textPath!!).readText().contains("第一章旧正文") }
+        val index = book.chapters.indexOfFirst { readChapterText(it).contains("第一章旧正文") }
         assertTrue(index >= 0)
         val updated = change(book, index, "旧正文", "新正文")
         val first = EbookSourceWriteback.prepare(context, book, updated, folder("inline-first"))
         first.commit(); first.finish()
-        val secondIndex = updated.chapters.indexOfFirst { File(it.textPath!!).readText().contains("第二章保留正文") }
+        val secondIndex = updated.chapters.indexOfFirst { readChapterText(it).contains("第二章保留正文") }
         val secondEdit = change(updated, secondIndex, "保留正文", "也能修改")
         val second = EbookSourceWriteback.prepare(context, updated, secondEdit, folder("inline-second"))
         second.commit(); second.finish()
-        assertEquals(secondEdit.chapters.map { File(it.textPath!!).readText() },
+        assertEquals(secondEdit.chapters.map { readChapterText(it) },
             MobiArchive.read(source).sections.map { SourceHtmlEdit.plain(it.html) { null } })
     }
 
@@ -340,7 +340,7 @@ class EbookSourceWritebackRobolectricTest {
             val directory = folder("roundtrip-${book.id}")
             val text = File(directory, "edited.txt").apply { writeText(edit.text) }
             val updated = edit.book(book, edit.chapter(prepared.chapter, text.absolutePath),
-                book.chapters.map { File(it.textPath!!).readText().length })
+                book.chapters.map { readChapterText(it).length })
             val transaction = EbookSourceWriteback.prepare(context, book, updated, directory)
             transaction.commit(); transaction.finish()
             val saved = repository.readBook(repository.writeBook(updated))
@@ -371,7 +371,7 @@ class EbookSourceWritebackRobolectricTest {
         val started = System.nanoTime()
         val book = importMobi(source)
         val imported = System.nanoTime()
-        val texts = book.chapters.map { File(it.textPath!!).readText() }
+        val texts = book.chapters.map { readChapterText(it) }
         val index = texts.indexOfFirst { text -> text.lineSequence().any { it.length >= 40 } }
         require(index >= 0) { "Smoke fixture needs a normal body paragraph" }
         val prepared = loadChapterContent(context, book, index)
@@ -387,7 +387,7 @@ class EbookSourceWritebackRobolectricTest {
         transaction.commit(); transaction.finish()
         val finished = System.nanoTime()
         val expected = texts.toMutableList().apply { this[index] = edit.text }
-        assertEquals(expected, updated.chapters.map { File(it.textPath!!).readText() })
+        assertEquals(expected, updated.chapters.map { readChapterText(it) })
         val reopened = MobiArchive.read(source)
         val image: (String) -> String? = { attributes ->
             val reference = HtmlChapterParser.attribute(attributes, "recindex")?.toIntOrNull()
@@ -553,7 +553,7 @@ class EbookSourceWritebackRobolectricTest {
         require(from >= 0)
         val edit = EbookTextEdit(chapter, text, from, from + old.length, replacement)
         val file = File(root, "changed-${UUID.randomUUID()}.txt").apply { writeText(edit.text) }
-        return edit.book(book, edit.chapter(book.chapters[chapter], file.absolutePath), book.chapters.map { File(it.textPath!!).readText().length })
+        return edit.book(book, edit.chapter(book.chapters[chapter], file.absolutePath), book.chapters.map { readChapterText(it).length })
     }
     private fun epubBook(source: File): Book {
         val parsed = EpubArchive.read(source)

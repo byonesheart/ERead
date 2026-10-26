@@ -9,6 +9,21 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 class EpubArchiveTest {
+    @Test fun epub3NavTakesPriorityOverTheLegacyNcxWithoutAddingDuplicateSections() {
+        val file = archive(mapOf(
+            "META-INF/container.xml" to "<container><rootfile full-path='book.opf'/></container>",
+            "book.opf" to """<package><manifest><item id="body" href="body.xhtml"/><item id="nav" href="nav.xhtml" properties="nav"/><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest><spine toc="ncx"><itemref idref="body"/></spine></package>""",
+            "nav.xhtml" to """<html xmlns:epub="http://www.idpf.org/2007/ops"><nav epub:type="toc"><a href="body.xhtml#one">原书第一节</a><a href="body.xhtml#two">原书第二节</a></nav></html>""",
+            "toc.ncx" to """<ncx><navMap><navPoint><navLabel><text>旧目录额外条目</text></navLabel><content src="body.xhtml#legacy"/></navPoint></navMap></ncx>""",
+            "body.xhtml" to """<html><body><h1 id="one">标题一</h1><p>正文甲</p><p id="legacy">中间正文</p><h1 id="two">标题二</h1><p>正文乙</p></body></html>"""))
+        try {
+            assertEquals(listOf("原书第一节", "原书第二节"), EpubArchive.read(file).sections.map { it.title })
+            assertEquals(listOf("原书第一节", "旧目录额外条目", "原书第二节"),
+                EpubArchive.readForChapters(file, 3).sections.map { it.title })
+            assertEquals(2, EpubArchive.readForChapters(file, 2).sections.size)
+        } finally { file.delete() }
+    }
+
     @Test fun indexesSameFileAndCrossFileNotesWithoutAddingChaptersOrFollowingExternalLinks() {
         val body = "<html><body><p>正文<a epub:type='noteref' href='#fn1'>[1]</a>" +
             "<a role='doc-noteref' href='notes.xhtml#fn2'>②</a><a href='#next'>下一章</a>" +

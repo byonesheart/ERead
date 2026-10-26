@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 
 internal data class ReaderPageProgress(val label: String)
 
@@ -27,13 +28,14 @@ private data class ReaderPageCatalog(
 /** Scroll blocks stay unchanged; only page boundaries are retained for the footer. */
 @Composable
 internal fun rememberReaderPageProgress(book: Book, settings: ReaderSettings, spec: ReaderLayoutSpec,
-                                       chapter: Int, offset: Int, imageIndex: Int? = null): ReaderPageProgress {
+                                       chapter: Int, offset: Int, imageIndex: Int? = null, delayMillis: Long = 0): ReaderPageProgress {
     val context = LocalContext.current
     val catalog by key(book.id, book.contentVersion, book.chapters, chapter, spec, settings.paragraphSpacing, settings.chineseConversion, settings.useSourceCss,
         settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom) {
         produceState(ReaderPageCatalog()) {
             if (spec.textWidth <= 1 || spec.textHeight <= 1) return@produceState
             try {
+                if (delayMillis > 0) delay(delayMillis)
                 val pages = readerProgressChapterPages(context, book, settings, spec, chapter)
                 currentCoroutineContext().ensureActive()
                 value = ReaderPageCatalog(mapOf(chapter to pages))

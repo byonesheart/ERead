@@ -18,12 +18,15 @@ import com.eyue.reader.data.PageTurnStyle
 import kotlin.math.PI
 import kotlin.math.sin
 
-/** One bounded viewport snapshot; publisher DOM stays mounted throughout a page turn. */
+/** Two bounded viewport snapshots; hand back to Chromium only after its target frame has drawn. */
 internal open class EbookPageTurnWebView(context: Context) : WebView(context) {
+    private enum class TurnPhase { IDLE, WAITING_TARGET, ANIMATING, SETTLING, SETTLING_FRAME }
     private var snapshot: Bitmap? = null
+    private var targetSnapshot: Bitmap? = null
+    private var drawingPage = false
     private var turn: ValueAnimator? = null
     private var fraction = 1f
-    private var holding = false
+    private var phase = TurnPhase.IDLE
     private var direction = 1
     private var style = PageTurnStyle.SLIDE
     var paperColor: Int = android.graphics.Color.WHITE
@@ -38,10 +41,8 @@ internal open class EbookPageTurnWebView(context: Context) : WebView(context) {
     fun turnPage(page: Int, forward: Int, animation: PageTurnStyle) {
         finishTurn()
         if (width <= 0 || height <= 0) { evaluateJavascript("ERead.command({type:'page',page:$page})", null); return }
-        val old = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val capture = Canvas(old).apply { translate(-scrollX.toFloat(), -scrollY.toFloat()) }
-        draw(capture)
-        snapshot = old; direction = if (forward < 0) -1 else 1; style = animation; fraction = 0f; holding = true
+        val old = capturePage()
+        snapshot = old; direction = if (forward < 0) -1 else 1; style = animation; fraction = 0f; phase = TurnPhase.WAITING_TARGET
         evaluateJavascript("ERead.command({type:'page',page:$page})") {
             if (snapshot !== old) return@evaluateJavascript
             // JS completion precedes Chromium's display-list commit. Starting the
@@ -49,13 +50,16 @@ internal open class EbookPageTurnWebView(context: Context) : WebView(context) {
             postVisualStateCallback(0, object : VisualStateCallback() {
                 override fun onComplete(requestId: Long) {
                     if (snapshot !== old) return
-                    holding = false
+                    targetSnapshot = capturePage()
+                    phase = TurnPhase.ANIMATING
                     turn = ValueAnimator.ofFloat(0f, 1f).apply {
                         duration = if (style == PageTurnStyle.CURL) 280 else 180
                         interpolator = DecelerateInterpolator()
                         addUpdateListener { fraction = it.animatedValue as Float; invalidate() }
                         addListener(object : AnimatorListenerAdapter() {
-                            override fun onAnimationEnd(animation: Animator) { if (snapshot === old) releaseSnapshot() }
+                            override fun onAnimationEnd(animation: Animator) {
+                                if (snapshot === old && phase == TurnPhase.ANIMATING) { phase = TurnPhase.SETTLING; invalidate() }
+                            }
                         })
                         start()
                     }
@@ -68,14 +72,13 @@ internal open class EbookPageTurnWebView(context: Context) : WebView(context) {
     fun holdPage() {
         finishTurn()
         if (width <= 0 || height <= 0) return
-        val old = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        draw(Canvas(old).apply { translate(-scrollX.toFloat(), -scrollY.toFloat()) })
+        val old = capturePage()
         snapshot = old
-        holding = true
+        phase = TurnPhase.WAITING_TARGET
         invalidate()
     }
 
-    fun finishTurn() { holding = false; turn?.cancel(); turn = null; releaseSnapshot() }
+    fun finishTurn() { phase = TurnPhase.IDLE; turn?.cancel(); turn = null; releaseSnapshot() }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         if (w != oldw || h != oldh) finishTurn()
@@ -83,24 +86,44 @@ internal open class EbookPageTurnWebView(context: Context) : WebView(context) {
     }
 
     private fun releaseSnapshot() {
-        snapshot?.recycle(); snapshot = null; fraction = 1f; invalidate()
+        snapshot?.recycle(); snapshot = null; targetSnapshot?.recycle(); targetSnapshot = null; fraction = 1f; phase = TurnPhase.IDLE; invalidate()
+    }
+
+    protected open fun drawWebContent(canvas: Canvas) {
+        drawingPage = true
+        try { super.draw(canvas) } finally { drawingPage = false }
+    }
+
+    private fun capturePage(): Bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
+        drawWebContent(Canvas(it).apply { translate(-scrollX.toFloat(), -scrollY.toFloat()) })
     }
 
     override fun onDraw(canvas: Canvas) {
+        // View.draw supplies the WebView's background and clipping; omit only our transition overlay during capture.
+        if (drawingPage) { super.onDraw(canvas); return }
         val old = snapshot
-        if (holding && old != null) {
+        if ((phase == TurnPhase.WAITING_TARGET || phase == TurnPhase.SETTLING || phase == TurnPhase.SETTLING_FRAME) && old != null) {
             // Chromium must still draw to acknowledge postVisualStateCallback.
             // Keep that draw offscreen, otherwise waiting on it while returning
             // early from onDraw can leave the old snapshot on screen indefinitely.
             val layer = canvas.saveLayer(null, null)
-            super.onDraw(canvas)
+            drawWebContent(canvas)
             canvas.drawColor(android.graphics.Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
             canvas.save(); canvas.translate(scrollX.toFloat(), scrollY.toFloat())
-            canvas.drawBitmap(old, 0f, 0f, bitmapPaint); canvas.restore()
+            canvas.drawBitmap(if (phase == TurnPhase.WAITING_TARGET) old else targetSnapshot ?: old, 0f, 0f, bitmapPaint); canvas.restore()
             canvas.restoreToCount(layer)
+            if (phase == TurnPhase.SETTLING) {
+                phase = TurnPhase.SETTLING_FRAME
+                postVisualStateCallback(0, object : VisualStateCallback() {
+                    override fun onComplete(requestId: Long) { postOnAnimation {
+                        if (snapshot === old && phase == TurnPhase.SETTLING_FRAME) releaseSnapshot()
+                    } }
+                })
+            }
             return
         }
-        if (old == null || fraction >= 1f) { super.onDraw(canvas); return }
+        val target = targetSnapshot
+        if (old == null || target == null) { drawWebContent(canvas); return }
         val distance = width.toFloat()
         fun oldAt(x: Float, left: Float = 0f, right: Float = distance) {
             canvas.save(); canvas.clipRect(scrollX + left, scrollY.toFloat(), scrollX + right, scrollY + height.toFloat())
@@ -108,7 +131,7 @@ internal open class EbookPageTurnWebView(context: Context) : WebView(context) {
         }
         fun currentAt(x: Float, left: Float, right: Float) {
             canvas.save(); canvas.clipRect(scrollX + left, scrollY.toFloat(), scrollX + right, scrollY + height.toFloat())
-            canvas.translate(x, 0f); super.onDraw(canvas); canvas.restore()
+            canvas.translate(scrollX + x, scrollY.toFloat()); canvas.drawBitmap(target, 0f, 0f, bitmapPaint); canvas.restore()
         }
         when (style) {
             PageTurnStyle.SLIDE -> {
@@ -136,8 +159,7 @@ internal open class EbookPageTurnWebView(context: Context) : WebView(context) {
                 }
                 canvas.save(); canvas.clipOutPath(front)
                 if (direction < 0) { canvas.scale(-1f, 1f); canvas.translate(-distance, 0f) }
-                canvas.translate(-scrollX.toFloat(), -scrollY.toFloat())
-                super.onDraw(canvas); canvas.restore()
+                canvas.drawBitmap(target, 0f, 0f, bitmapPaint); canvas.restore()
                 fun printOld() {
                     canvas.save()
                     if (direction < 0) { canvas.translate(distance, 0f); canvas.scale(-1f, 1f) }

@@ -52,7 +52,7 @@ data class AiSpeechBatchProgress(
 internal fun aiSpeechChapterSegments(book: Book, chapterIndex: Int): Sequence<ReaderSpeechSegment> = sequence {
     val chapter = book.chapters[chapterIndex]
     if (chapter.textPath != null) {
-        yield(ReaderSpeechSegment(chapterIndex, 0, 0, File(chapter.textPath).readText()))
+        yield(ReaderSpeechSegment(chapterIndex, 0, 0, readChapterText(book, chapterIndex)))
     } else {
         chapter.pages.forEachIndexed { index, page ->
             page.textPath?.let { yield(ReaderSpeechSegment(chapterIndex, index, 0, File(it).readText())) }

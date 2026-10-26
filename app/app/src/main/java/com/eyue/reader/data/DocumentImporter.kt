@@ -46,6 +46,13 @@ class DocumentImporter(private val context: Context) {
     var lastImportWarnings: List<String> = emptyList()
         private set
 
+    private fun mobiImportStage(fraction: Float): String = when {
+        fraction < .08f -> "读取 MOBI 目录"
+        fraction < .84f -> "解压 MOBI 正文记录"
+        fraction < .96f -> "读取 MOBI 图片资源"
+        else -> "处理 MOBI 正文与注释"
+    }
+
     suspend fun importFiles(uris: List<Uri>, mode: LibraryMode, rule: String, mimeType: String? = null,
                             onBookImported: suspend (Book) -> Unit = {}): List<Book> = withContext(Dispatchers.IO) {
         val work = currentCoroutineContext()
@@ -87,15 +94,15 @@ class DocumentImporter(private val context: Context) {
                         report("读取源文件", item.name)
                         // Keep the complete EPUB, including fonts and resources,
                         // after a transient provider grant or an external file is removed.
-                        val reference = if (format == BookFormat.EPUB) {
-                            val original = File(directory, "source.epub")
+                        val reference = if (format in setOf(BookFormat.EPUB, BookFormat.MOBI)) {
+                            val original = File(directory, "source.${format.name.lowercase()}")
                             copy(item.uri, original)
                             SourceReference(original.absolutePath, false)
                         } else reference(item, directory, "source.${format.name.lowercase()}", retainFallback = format == BookFormat.PDF)
                         val imported = withLocalDocument(context, reference.path) { source ->
                             val parsed = when (format) {
                                 BookFormat.TXT -> importText(source, directory, id, item.name.substringBeforeLast('.'), LibraryMode.NOVEL, rule)
-                                BookFormat.EPUB -> importEpub(source, directory, id, item.name.substringBeforeLast('.'), mode)
+                                BookFormat.EPUB -> importEpub(source, directory, id, item.name.substringBeforeLast('.'), mode) { work.ensureActive() }
                                 BookFormat.MOBI -> importMobi(source, directory, id, item.name.substringBeforeLast('.'), rule, { work.ensureActive() })
                                 BookFormat.PDF -> importPdf(source, reference.path, directory, id, item.name.substringBeforeLast('.'), mode)
                                 BookFormat.IMAGES -> error("图片应合并导入")
@@ -419,7 +426,7 @@ class DocumentImporter(private val context: Context) {
                 splitEditedTextChapters(cached, rule)
             } else withLocalDocument(context, bookSource(book)) { source ->
                 if (book.format == BookFormat.MOBI) mobiTextChapters(source, MobiArchive.read(source, book.title, checkActive = { work.ensureActive() }) {
-                    report(if (it >= .96f) "整理 MOBI 目录" else "读取 MOBI 正文记录", book.title, fraction = it)
+                    report(mobiImportStage(it), book.title, fraction = it)
                 }, directory, rule, { work.ensureActive() })
                 else TextParser.split(TextParser.decode(source.readBytes()), rule)
             }
@@ -452,8 +459,15 @@ class DocumentImporter(private val context: Context) {
             format = BookFormat.TXT, mode = mode, chapters = writeTextChapters(TextParser.split(text, rule), directory))
     }
 
-    private fun importEpub(source: File, directory: File, id: String, fallbackTitle: String, mode: LibraryMode): Book {
-        val parsed = EpubArchive.read(source, fallbackTitle) { report("读取 EPUB 章节", fallbackTitle, fraction = it) }
+    @JvmOverloads
+    private fun importEpub(source: File, directory: File, id: String, fallbackTitle: String, mode: LibraryMode, checkActive: () -> Unit = {}): Book {
+        val original = File(directory, "source.epub")
+        if (original.canonicalFile != source.canonicalFile) source.copyTo(original, overwrite = false)
+        val source = original
+        var directoryReady = false
+        val parsed = EpubArchive.read(source, fallbackTitle, onDirectoryReady = { directoryReady = true }) {
+            checkActive(); report(if (directoryReady) "读取 EPUB 正文与注释" else "读取 EPUB 目录", fallbackTitle, fraction = it)
+        }
         var coverPath: String? = null
         val cover = parsed.coverPath ?: parsed.imagePaths.firstOrNull()
         if (cover != null) {
@@ -461,7 +475,7 @@ class DocumentImporter(private val context: Context) {
             EpubArchive.copyEntry(source, cover, coverFile)
             if (isValidImage(coverFile)) coverPath = BitmapLoader.createThumbnail(coverFile, directory)
         }
-        val content = epubLazyChapters(source, parsed, directory)
+        val content = epubLazyChapters(source, parsed, directory, checkActive)
         val novel = content.any { it.characterCount > 0 }
         val chapters = if (novel) content else content.filter { it.inlineImages.isNotEmpty() }.map {
             it.copy(textPath = null, pages = it.inlineImages.map { image -> PageSource(image.path) },
@@ -470,7 +484,8 @@ class DocumentImporter(private val context: Context) {
         require(chapters.isNotEmpty()) { "EPUB 没有可阅读的正文或图片" }
         return Book(id = id, title = parsed.title, author = parsed.author, format = BookFormat.EPUB,
             mode = if (novel) LibraryMode.NOVEL else LibraryMode.COMIC,
-            coverPath = if (novel) coverPath else cover(chapters.first().pages.first(), directory), chapters = chapters, contentVersion = 9)
+            coverPath = if (novel) coverPath else cover(chapters.first().pages.first(), directory), chapters = chapters, contentVersion = 10,
+            sourcePath = source.absolutePath)
     }
 
     private fun importPdf(source: File, sourceReference: String, directory: File, id: String, title: String, mode: LibraryMode): Book {
@@ -508,8 +523,11 @@ class DocumentImporter(private val context: Context) {
 
     private fun importMobi(source: File, directory: File, id: String, fallbackTitle: String,
                            rule: String, checkActive: () -> Unit): Book {
+        val original = File(directory, "source.mobi")
+        if (original.canonicalFile != source.canonicalFile) source.copyTo(original, overwrite = false)
+        val source = original
         val parsed = MobiArchive.read(source, fallbackTitle, checkActive = checkActive) {
-            report(if (it >= .96f) "整理 MOBI 目录" else "解压 MOBI 正文记录", fallbackTitle, fraction = it)
+            report(mobiImportStage(it), fallbackTitle, fraction = it)
         }
         val coverPath = parsed.cover?.let { cover ->
             File(directory, "cover.${cover.extension}").apply {
@@ -517,7 +535,7 @@ class DocumentImporter(private val context: Context) {
                 validateImage(this)
             }.let { BitmapLoader.createThumbnail(it, directory) }
         }
-        val sections = if (rule != DEFAULT_CHAPTER_RULE || parsed.sections.size == 1 && !parsed.hasEmbeddedToc)
+        val sections = if (!parsed.hasEmbeddedToc && (rule != DEFAULT_CHAPTER_RULE || parsed.sections.size == 1))
             writeTextChapters(mobiTextChapters(source, parsed, directory, rule, checkActive), directory)
         else mobiLazyChapters(source, parsed, directory, checkActive)
         val novel = sections.any { it.characterCount > 0 }
@@ -528,47 +546,67 @@ class DocumentImporter(private val context: Context) {
         require(chapters.isNotEmpty()) { "MOBI 没有可阅读的正文或图片" }
         return Book(id = id, title = parsed.title, author = parsed.author, format = BookFormat.MOBI,
             mode = if (novel) LibraryMode.NOVEL else LibraryMode.COMIC,
-            coverPath = if (novel) coverPath else cover(chapters.first().pages.first(), directory), chapters = chapters, contentVersion = 7)
+            coverPath = if (novel) coverPath else cover(chapters.first().pages.first(), directory), chapters = chapters, contentVersion = 8,
+            sourcePath = source.absolutePath)
     }
 
-    private fun epubLazyChapters(source: File, parsed: ParsedEpub, directory: File): List<Chapter> {
+    private fun epubLazyChapters(source: File, parsed: ParsedEpub, directory: File, checkActive: () -> Unit): List<Chapter> {
         val cache = mutableMapOf<String, String>()
         val available = parsed.imagePaths.toSet()
+        val cssFiles = mutableMapOf<String, File>()
+        val rawDocuments = mutableMapOf<String, String>()
         return ZipFile(source).use { zip ->
             val entries = zip.entries().asSequence().associateBy { EpubArchive.safePath(it.name) }
             val sectionCounts = parsed.sections.groupingBy { it.path }.eachCount()
-            var previousPath: String? = null
-            var raw = ""
-            parsed.sections.mapIndexed { index, section ->
-            report("缓存 EPUB 章节", section.title, index, parsed.sections.size)
-            val images = mutableMapOf<String, String>()
-            val plain = HtmlChapterParser.readPlainWithNotes(section.title, section.html, noteTargets = section.sourceNoteTargets) { attributes ->
-                val reference = HtmlChapterParser.attribute(attributes, "src") ?: HtmlChapterParser.attribute(attributes, "xlink:href")
-                    ?: HtmlChapterParser.attribute(attributes, "href")
-                val path = reference?.let { runCatching { EpubArchive.resolve(section.path, it) }.getOrNull() }
-                if (path == null || path !in available) null else cache.getOrPut(path) {
-                    val key = MessageDigest.getInstance("SHA-256").digest(path.toByteArray()).take(10).joinToString("") { "%02x".format(it) }
-                    val image = File(directory, "epub-inline-$key.${imageExtension(path)}")
-                    val entry = requireNotNull(entries[path]) { "EPUB 图片缺失：$path" }
-                    zip.getInputStream(entry).use { input -> image.outputStream().use { input.copyTo(it) } }
-                    image.absolutePath
-                }.also { images[attributes] = it }
+            val workers = java.util.concurrent.Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors().coerceIn(1, 4))
+            val taskCheck = { checkActive(); if (Thread.currentThread().isInterrupted) throw CancellationException("导入已取消") }
+            try { parsed.sections.withIndex().chunked(32).flatMap { batch ->
+                val pending = batch.map { (index, section) -> workers.submit<Chapter> {
+                    taskCheck()
+                    val images = mutableMapOf<String, String>()
+                    val plain = HtmlChapterParser.readPlainWithNotes(section.title, section.html, checkActive = taskCheck, noteTargets = section.sourceNoteTargets) { attributes ->
+                        val reference = HtmlChapterParser.attribute(attributes, "src") ?: HtmlChapterParser.attribute(attributes, "xlink:href")
+                            ?: HtmlChapterParser.attribute(attributes, "href")
+                        val path = reference?.let { runCatching { EpubArchive.resolve(section.path, it) }.getOrNull() }
+                        if (path == null || path !in available) null else synchronized(cache) { cache.getOrPut(path) {
+                            val key = MessageDigest.getInstance("SHA-256").digest(path.toByteArray()).take(10).joinToString("") { "%02x".format(it) }
+                            val image = File(directory, "epub-inline-$key.${imageExtension(path)}")
+                            val entry = requireNotNull(entries[path]) { "EPUB 图片缺失：$path" }
+                            zip.getInputStream(entry).use { input -> image.outputStream().use { input.copyTo(it) } }
+                            image.absolutePath
+                        } }.also { images[attributes] = it }
+                    }
+                    val raw = if (sectionCounts[section.path] == 1) section.html else synchronized(rawDocuments) {
+                        val document = rawDocuments.getOrPut(section.path) {
+                            zip.getInputStream(requireNotNull(entries[section.path])).use { decodeEpubMarkup(it.readBytes()) }
+                        }
+                        while (rawDocuments.size > 4) rawDocuments.remove(rawDocuments.keys.first())
+                        document
+                    }
+                    val html = ebookHtmlFragment(raw, section.sourceStart, section.sourceEnd)
+                    taskCheck()
+                    saveLazyChapter(directory, index, plain, html, section.css, images, section.sourceNoteTargets, section.path, cssFiles)
+                        .copy(tocParentTitle = section.tocParentTitle)
+                } }
+                try { pending.map { future ->
+                    checkActive()
+                    try { future.get() } catch (error: java.util.concurrent.ExecutionException) { throw error.cause ?: error }
+                }.also {
+                    val done = batch.last().index + 1
+                    report("缓存 EPUB 章节", batch.last().value.title, done, parsed.sections.size)
+                } } finally { pending.forEach { it.cancel(true) } }
+            } } finally {
+                workers.shutdownNow()
+                workers.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
             }
-            if (previousPath != section.path) {
-                raw = if (sectionCounts[section.path] == 1) section.html
-                    else zip.getInputStream(requireNotNull(entries[section.path])).use { decodeEpubMarkup(it.readBytes()) }
-                previousPath = section.path
-            }
-            val html = ebookHtmlFragment(raw, section.sourceStart, section.sourceEnd)
-            saveLazyChapter(directory, index, plain, html, section.css, images, section.sourceNoteTargets, section.path)
-                .copy(tocParentTitle = section.tocParentTitle)
-        } }
+        }
     }
 
     private fun mobiLazyChapters(source: File, parsed: ParsedMobi, directory: File, checkActive: () -> Unit): List<Chapter> {
         val resources = parsed.images.associateBy { it.recIndex }
         val cache = mutableMapOf<Int, String>()
         return parsed.sections.mapIndexed { index, section ->
+            checkActive()
             report("缓存 MOBI 章节", section.title, index, parsed.sections.size)
             val images = mutableMapOf<String, String>()
             val plain = HtmlChapterParser.readPlainWithNotes(section.title, section.html, checkActive, section.sourceNoteTargets) { attributes ->
@@ -585,7 +623,7 @@ class DocumentImporter(private val context: Context) {
                 }.also { images[attributes] = it }
             }
             saveLazyChapter(directory, index, plain, section.html, parsed.css, images, section.sourceNoteTargets).copy(tocParentTitle = section.tocParentTitle)
-        }.filter { it.characterCount > 0 || it.inlineImages.isNotEmpty() }
+        }.let { chapters -> if (parsed.hasEmbeddedToc) chapters else chapters.filter { it.characterCount > 0 || it.inlineImages.isNotEmpty() } }
     }
 
     private fun epubTextChapters(source: File, parsed: ParsedEpub, directory: File): List<ParsedTextChapter> {
@@ -637,7 +675,7 @@ class DocumentImporter(private val context: Context) {
             }.copy(tocParentTitle = section.tocParentTitle)
         }
         val sections = (if (content.none { it.text.isNotBlank() }) content
-            else if (rule != DEFAULT_CHAPTER_RULE) HtmlChapterParser.split(HtmlChapterParser.merge(content), rule)
+            else if (!parsed.hasEmbeddedToc && rule != DEFAULT_CHAPTER_RULE) HtmlChapterParser.split(HtmlChapterParser.merge(content), rule)
             else if (content.size == 1 && !parsed.hasEmbeddedToc) HtmlChapterParser.split(content.single(), rule) else content)
             .filter { it.text.isNotBlank() || it.inlineImages.isNotEmpty() }
         require(sections.isNotEmpty()) { "MOBI 没有可阅读的正文或图片" }

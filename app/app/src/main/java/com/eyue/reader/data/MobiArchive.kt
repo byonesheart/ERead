@@ -120,6 +120,11 @@ object MobiArchive {
         } else null
         require(compression in setOf(1, 2, 0x4448)) { "不支持此 MOBI 压缩方式：$compression" }
         val extraFlags = if (headerLength >= 228 && headerEnd >= 244 && u32(header, 104) >= 5) u16(header, 242) else 0
+        val tocIndex = if (headerEnd >= 248) u32(header, 244).takeIf { it in 1 until count.toLong() }?.toInt() else null
+        val toc = tocIndex?.let { MobiToc.read(it, count, textLength, encoding, { index ->
+            require(offsets[index + 1] - offsets[index] <= 8 * 1024 * 1024) { "MOBI 目录记录过大" }
+            record(index)
+        }, checkActive) }.orEmpty()
         progress(0.08f, force = true)
         val content = ByteArray(textLength)
         var expandedLength = 0L
@@ -168,25 +173,20 @@ object MobiArchive {
             }
         }
         progress(0.96f, force = true)
-        val cleanHtml = removeHtmlComments(html)
-        val css = sourceHtmlElements(cleanHtml, setOf("style"), checkActive).joinToString("\n") {
-            cleanHtml.substring(it.tag.end, it.contentEnd)
+        val scan = SourceHtmlScan(html, checkActive)
+        val css = scan.elements(setOf("style"), visible = false).joinToString("\n") {
+            removeHtmlComments(html.substring(it.tag.end, it.contentEnd))
         }
         progress(0.965f, force = true)
-        val tocIndex = if (headerEnd >= 248) u32(header, 244).takeIf { it in 1 until count.toLong() }?.toInt() else null
-        val toc = tocIndex?.let { MobiToc.read(it, count, textLength, encoding, { index ->
-            require(offsets[index + 1] - offsets[index] <= 8 * 1024 * 1024) { "MOBI 目录记录过大" }
-            record(index)
-        }, checkActive) }.orEmpty()
-        val (sections, hasEmbeddedToc) = splitHtml(html, content, encoding, toc, checkActive) { progress(0.965f + 0.034f * it, force = true) }
-        val noteReferences = sourceNoteReferences(html, checkActive)
+        val (sections, hasEmbeddedToc) = splitHtml(scan, content, encoding, toc, checkActive) { progress(0.965f + 0.034f * it, force = true) }
+        val noteReferences = sourceNoteReferences(html, checkActive, scan)
         val notePositions = try { fileposLocations(content, encoding, noteReferences.mapNotNull { it.filepos?.takeIf { at -> at in content.indices } }, checkActive) }
             catch (_: IllegalArgumentException) { emptyMap() }
         val noteTargets = sourceNoteTargets(html, noteReferences.filter { it.href?.startsWith('#') == true }
             .mapNotNull { ref -> ref.href?.let(::sourceNoteFragment)?.let { ref.target to it } }.toMap(),
-            noteReferences.mapNotNull { ref -> ref.filepos?.let(notePositions::get)?.let { ref.target to it } }.toMap(), checkActive)
+            noteReferences.mapNotNull { ref -> ref.filepos?.let(notePositions::get)?.let { ref.target to it } }.toMap(), checkActive, scan.tags.asSequence())
         val notedSections = if (noteTargets.isEmpty()) sections else sections.map { section ->
-            val keys = sourceNoteReferences(section.html, checkActive).map { it.target }.toSet()
+            val keys = noteReferences.filter { it.tag.start in section.sourceStart until section.sourceEnd }.map { it.target }.toSet()
             section.copy(sourceNoteTargets = noteTargets.filterKeys { it in keys })
         }
         progress(1f, force = true)
@@ -266,12 +266,12 @@ object MobiArchive {
         return if (end == record.size) record else record.copyOf(end)
     }
 
-    private fun splitHtml(html: String, raw: ByteArray, encoding: Charset, toc: List<MobiTocEntry>, checkActive: () -> Unit,
+    private fun splitHtml(scan: SourceHtmlScan, raw: ByteArray, encoding: Charset, toc: List<MobiTocEntry>, checkActive: () -> Unit,
                           onProgress: (Float) -> Unit): Pair<List<MobiSection>, Boolean> {
-        val bodyTag = sourceBodyTag(html, checkActive)
-        val scanned = hideHtmlContent(maskHtmlComments(html), preserveOffsets = true, checkActive = checkActive)
+        val html = scan.html
+        val scanned = scan.visibleHtml
         onProgress(.15f)
-        val notes = SourceHtmlNotes(scanned, checkActive)
+        val notes = scan.notes
         onProgress(.3f)
         val boundaries = mutableMapOf<Int, String>()
         if (toc.isNotEmpty()) {
@@ -285,13 +285,13 @@ object MobiArchive {
                     }
             }
             if (boundaries.isNotEmpty()) {
-                val output = sectionsAtBoundaries(html, bodyTag, boundaries, checkActive)
+                val output = sectionsAtBoundaries(scan, boundaries, checkActive)
                     .map { it.copy(tocParentTitle = parents[it.sourceStart]) }
                 onProgress(1f)
                 return output to true
             }
         }
-        val links = sourceHtmlElements(scanned, setOf("a"), checkActive).mapNotNull { link ->
+        val links = scan.elements(setOf("a")).mapNotNull { link ->
             val label = labelText(scanned.substring(link.tag.end, link.contentEnd), checkActive)
             if (label.isBlank() || notes.contains(link.tag.start) || isNoteReference(link.tag.attributes, label)) null else TocLink(label, attribute(link.tag.attributes, "href"),
                 attribute(link.tag.attributes, "filepos")?.toIntOrNull(), link.end - 1)
@@ -299,7 +299,7 @@ object MobiArchive {
         onProgress(.45f)
         val wantedIds = links.mapNotNull { it.href?.takeIf { href -> href.startsWith('#') }?.drop(1)?.lowercase() }.toSet()
         val locations = mutableMapOf<String, Int>()
-        if (wantedIds.isNotEmpty()) sourceHtmlTags(scanned, checkActive).forEach { tag ->
+        if (wantedIds.isNotEmpty()) scan.visibleTags.forEach { tag ->
             htmlAttributes.findAll(tag.attributes).forEach { attr ->
                 if (attr.groupValues[1].equals("id", true) || attr.groupValues[1].equals("name", true)) {
                     val id = attr.groupValues[2].ifEmpty { attr.groupValues[3] }.lowercase()
@@ -316,27 +316,28 @@ object MobiArchive {
         }
         val firstTarget = resolved.minOfOrNull { it.second } ?: html.length
         resolved.filter { it.first.end < firstTarget }.forEach { (link, location) -> boundaries.putIfAbsent(location, link.label) }
+        val hasLinkedDirectory = boundaries.size >= 2
         if (boundaries.size < 2) {
             boundaries.clear()
-            sourceHtmlElements(scanned, setOf("h1", "h2"), checkActive).filterNot { notes.contains(it.tag.start) }.forEach {
+            scan.elements(setOf("h1", "h2")).filterNot { notes.contains(it.tag.start) }.forEach {
                 val title = labelText(scanned.substring(it.tag.end, it.contentEnd), checkActive)
                 if (title.isNotBlank() && !isNoteReference("", title)) boundaries[it.tag.start] = title
             }
         }
         onProgress(.8f)
         if (boundaries.size < 2) {
-            val breaks = sourceHtmlTags(scanned, checkActive).filter { it.name in setOf("pagebreak", "mbp:pagebreak") && !it.closing && !notes.contains(it.start) }.toList()
+            val breaks = scan.visibleTags.filter { it.name in setOf("pagebreak", "mbp:pagebreak") && !it.closing && !notes.contains(it.start) }
             if (breaks.isNotEmpty()) {
                 val pieces = mutableListOf<MobiSection>()
                 var start = 0
                 breaks.forEach { boundary ->
                     checkActive()
                     val part = html.substring(start, boundary.start)
-                    if (hasReadingContent(part, checkActive)) pieces += MobiSection(headingTitle(part, checkActive) ?: "第 ${pieces.size + 1} 章", sourceBodyFragment(part, bodyTag), start, boundary.start)
+                    if (hasReadingContent(part, checkActive)) pieces += MobiSection(headingTitle(part, checkActive) ?: "第 ${pieces.size + 1} 章", scan.bodyFragment(start, boundary.start), start, boundary.start)
                     start = boundary.end
                 }
                 val tail = html.substring(start)
-                if (hasReadingContent(tail, checkActive)) pieces += MobiSection(headingTitle(tail, checkActive) ?: "第 ${pieces.size + 1} 章", sourceBodyFragment(tail, bodyTag), start, html.length)
+                if (hasReadingContent(tail, checkActive)) pieces += MobiSection(headingTitle(tail, checkActive) ?: "第 ${pieces.size + 1} 章", scan.bodyFragment(start, html.length), start, html.length)
                 if (pieces.isNotEmpty()) { onProgress(1f); return pieces to false }
             }
         }
@@ -345,12 +346,13 @@ object MobiArchive {
             onProgress(1f)
             return output to false
         }
-        val output = sectionsAtBoundaries(html, bodyTag, boundaries, checkActive)
+        val output = sectionsAtBoundaries(scan, boundaries, checkActive)
         onProgress(1f)
-        return output to false
+        return output to hasLinkedDirectory
     }
 
-    private fun sectionsAtBoundaries(html: String, bodyTag: String?, boundaries: Map<Int, String>, checkActive: () -> Unit): List<MobiSection> {
+    private fun sectionsAtBoundaries(scan: SourceHtmlScan, boundaries: Map<Int, String>, checkActive: () -> Unit): List<MobiSection> {
+        val html = scan.html
         val sorted = boundaries.entries.sortedBy { it.key }
         val output = mutableListOf<MobiSection>()
         val prefix = html.substring(0, sorted.first().key)
@@ -358,7 +360,7 @@ object MobiArchive {
         sorted.forEachIndexed { index, entry ->
             checkActive()
             val end = sorted.getOrNull(index + 1)?.key ?: html.length
-            output += MobiSection(entry.value, sourceBodyFragment(html.substring(entry.key, end), bodyTag), entry.key, end)
+            output += MobiSection(entry.value, scan.bodyFragment(entry.key, end), entry.key, end)
         }
         return output
     }

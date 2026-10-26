@@ -26,8 +26,9 @@ internal object HtmlChapterParser {
                             checkActive: () -> Unit, noteTargets: Map<String, String>, image: (String) -> String?): ParsedTextChapter {
         val prefix = "\uE000${UUID.randomUUID()}_"
         val paths = mutableListOf<String>()
-        val references = sourceNoteReferences(html, checkActive)
-        val targets = sourceLocalNoteTargets(html, references.filter { it.target !in noteTargets }, checkActive) + noteTargets
+        val scan = SourceHtmlScan(html, checkActive)
+        val references = sourceNoteReferences(html, checkActive, scan)
+        val targets = sourceLocalNoteTargets(html, references.filter { it.target !in noteTargets }, checkActive, scan) + noteTargets
         val bodies = mutableMapOf<String, String>()
         val notes = references.mapNotNull { reference ->
             targets[reference.target]?.let { body ->
@@ -48,7 +49,7 @@ internal object HtmlChapterParser {
             append(html, cursor, html.length)
         }
         val source = if (includeStyles) SourceStyleParser.markWithSourceCss(notedHtml, css, "${prefix}S", checkActive)
-            else MarkedSourceHtml(hideHtmlContent(removeHtmlComments(notedHtml), false, checkActive), emptyList())
+            else MarkedSourceHtml(if (notes.isEmpty()) scan.readingHtml else hideHtmlContent(removeHtmlComments(notedHtml), false, checkActive), emptyList())
         val marked = buildString(source.html.length) {
             var cursor = 0
             sourceHtmlTags(source.html, checkActive).filter { !it.closing && it.name in setOf("img", "image") }.forEach { tag ->

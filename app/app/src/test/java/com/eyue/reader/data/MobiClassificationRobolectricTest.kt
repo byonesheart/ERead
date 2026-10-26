@@ -61,7 +61,7 @@ class MobiClassificationRobolectricTest {
         val book = import(source)
         assertEquals(BookFormat.MOBI, book.format)
         assertEquals(LibraryMode.COMIC, book.mode)
-        assertEquals(7, book.contentVersion)
+        assertEquals(8, book.contentVersion)
         assertEquals(listOf(Color.GREEN, Color.RED, Color.GREEN), book.chapters.flatMap { it.pages }.map { pixel(it.path) })
         assertTrue(book.chapters.all { it.textPath == null && it.inlineImages.isEmpty() })
         val cover = pixel(book.coverPath!!)
@@ -101,7 +101,8 @@ class MobiClassificationRobolectricTest {
         val book = import(source)
         assertEquals(2, book.chapters.size)
         assertTrue(book.chapters.all { it.lazySourcePath != null && it.sourceStyles.isEmpty() })
-        assertTrue(book.chapters.all { it.characterCount == File(it.textPath!!).readText().length })
+        assertTrue(File(book.chapters.first().textPath!!).isFile)
+        assertTrue(book.chapters.all { File(it.textPath!!).isFile && it.characterCount >= 0 })
         assertTrue(source.delete())
         val prepared = loadChapterContent(context, book, 0)
         assertEquals("🙂乙", prepared.chapter.sourceStyles.first { !it.paragraph && it.bold == true }
@@ -198,7 +199,33 @@ class MobiClassificationRobolectricTest {
         assertTrue(importer.lastImportErrors.isEmpty())
     }
 
-    private fun import(source: File): Book {
+    @Test fun nativeDirectoryWinsOverCustomRulesAndAllChaptersAreCachedBeforeImportReturns() = runBlocking {
+        val html = "<body><h1>第一章</h1><p>正文甲</p><h1>第二章</h1><p>正文乙</p></body>"
+        val source = File(fixtures, "before-native.mobi").apply { writeBytes(mobiFixture(html)) }
+        val native = File(fixtures, "native.mobi")
+        val boundary = html.indexOf("<h1>第二章")
+        MobiSourceWriter.write(source, native, html, SourceHtmlEdit.apply(html, emptyList()), listOf(
+            MobiSection("原书开篇", html.substring(0, boundary), 0, boundary),
+            MobiSection("原书续篇", html.substring(boundary), boundary, html.length, tocParentTitle = "原书开篇")))
+        assertTrue(MobiArchive.read(native).hasEmbeddedToc)
+        val book = import(native, "(?!)")
+        assertEquals(listOf("原书开篇", "原书续篇"), book.chapters.map { it.title })
+        assertEquals(listOf(null, "原书开篇"), book.chapters.map { it.tocParentTitle })
+        assertTrue(book.chapters.all { File(it.textPath!!).isFile && it.characterCount >= 0 && File(it.lazySourcePath!!).isFile })
+        assertTrue(book.chapters.none { DeferredEbookContent.pending(it) })
+    }
+
+    @Test fun linkedHtmlDirectoryAlsoWinsOverCustomRules() = runBlocking {
+        val html = "<body><a href='#one'>原目录甲</a><a href='#two'>原目录乙</a>" +
+            "<h1 id='one'>正文标题一</h1><p>正文甲</p><h1 id='two'>正文标题二</h1><p>正文乙</p></body>"
+        val source = File(fixtures, "linked-toc.mobi").apply { writeBytes(mobiFixture(html)) }
+        assertTrue(MobiArchive.read(source).hasEmbeddedToc)
+        val book = import(source, "(?!)")
+        assertEquals(listOf("前言", "原目录甲", "原目录乙"), book.chapters.map { it.title })
+        assertTrue(book.chapters.all { File(it.textPath!!).isFile && it.characterCount >= 0 })
+    }
+
+    private fun import(source: File, rule: String = DEFAULT_CHAPTER_RULE): Book {
         val id = UUID.randomUUID().toString()
         val directory = File(context.filesDir, "books/$id").apply { mkdirs() }
         // Android's Uri.fromFile uses Unix paths; call the actual parser directly on Windows.
@@ -207,7 +234,7 @@ class MobiClassificationRobolectricTest {
         method.isAccessible = true
         val checkActive: () -> Unit = {}
         return try {
-            method.invoke(importer, source, directory, id, source.nameWithoutExtension, DEFAULT_CHAPTER_RULE, checkActive) as Book
+            method.invoke(importer, source, directory, id, source.nameWithoutExtension, rule, checkActive) as Book
         } catch (error: InvocationTargetException) { throw error.targetException }
     }
 

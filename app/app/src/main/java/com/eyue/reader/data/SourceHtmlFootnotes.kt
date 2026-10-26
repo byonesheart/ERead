@@ -24,9 +24,10 @@ internal fun sourceNoteFragment(href: String): String? = href.substringAfter('#'
     ?.let { runCatching { URLDecoder.decode(it.replace("+", "%2B"), "UTF-8") }.getOrNull() }
 
 /** Candidate references only; normal navigation links never become notes merely because they have a target. */
-internal fun sourceNoteReferences(html: String, checkActive: () -> Unit = {}): List<SourceNoteReference> {
-    val scanned = hideHtmlContent(maskHtmlComments(html), true, checkActive)
-    val references = sourceHtmlElements(scanned, setOf("a"), checkActive).mapNotNull { link ->
+internal fun sourceNoteReferences(html: String, checkActive: () -> Unit = {}, scan: SourceHtmlScan? = null): List<SourceNoteReference> {
+    val document = scan ?: SourceHtmlScan(html, checkActive)
+    val scanned = document.visibleHtml
+    val references = document.elements(setOf("a")).mapNotNull { link ->
         val attributes = link.tag.attributes
         val href = sourceHtmlAttribute(attributes, "href")?.replace("&amp;", "&")
         val position = sourceHtmlAttribute(attributes, "filepos")?.toIntOrNull()?.takeIf { it >= 0 }
@@ -54,9 +55,9 @@ internal fun sourceNoteReferences(html: String, checkActive: () -> Unit = {}): L
     if (references.map { it.label }.distinct().size == references.size) return references
     // Calibre uses the same [n] label for both the body reference and the return link at the
     // start of its note paragraph. Generic filepos IDs alone cannot distinguish the two.
-    val blocks = sourceHtmlElements(scanned, noteBlocks, checkActive)
+    val blocks = document.elements(noteBlocks)
     val idOffsets = mutableMapOf<String, Int>()
-    sourceHtmlTags(scanned, checkActive).filter { !it.closing }.forEach { tag ->
+    document.visibleTags.filter { !it.closing }.forEach { tag ->
         listOfNotNull(sourceHtmlAttribute(tag.attributes, "id"), sourceHtmlAttribute(tag.attributes, "name"))
             .forEach { idOffsets.putIfAbsent(it, tag.start) }
     }
@@ -83,7 +84,7 @@ internal fun sourceNoteReferences(html: String, checkActive: () -> Unit = {}): L
 
 /** One document scan builds only the requested local note bodies, including empty named-anchor targets. */
 internal fun sourceNoteTargets(html: String, fragments: Map<String, String>, positions: Map<String, Int> = emptyMap(),
-                               checkActive: () -> Unit = {}): Map<String, String> {
+                               checkActive: () -> Unit = {}, tags: Sequence<SourceHtmlTag>? = null): Map<String, String> {
     if (fragments.isEmpty() && positions.isEmpty()) return emptyMap()
     data class Scope(val tag: SourceHtmlTag, val keys: MutableSet<String> = mutableSetOf())
     val requestedIds = fragments.entries.groupBy({ it.value }, { it.key })
@@ -99,7 +100,7 @@ internal fun sourceNoteTargets(html: String, fragments: Map<String, String>, pos
         val body = html.substring(scope.tag.end, end)
         scope.keys.forEach { output.putIfAbsent(it, body) }
     }
-    sourceHtmlTags(html, checkActive).forEach { tag ->
+    (tags ?: sourceHtmlTags(html, checkActive)).forEach { tag ->
         val keys = mutableSetOf<String>()
         while (offsetIndex < offsets.size && offsets[offsetIndex].value <= tag.start) {
             val target = offsets[offsetIndex++]
@@ -130,18 +131,18 @@ internal fun sourceNoteTargets(html: String, fragments: Map<String, String>, pos
 }
 
 internal fun sourceLocalNoteTargets(html: String, references: List<SourceNoteReference>,
-                                    checkActive: () -> Unit = {}): Map<String, String> {
+                                    checkActive: () -> Unit = {}, scan: SourceHtmlScan? = null): Map<String, String> {
     if (references.isEmpty()) return emptyMap()
     val fragments = references.mapNotNull { ref ->
         ref.href?.takeIf { !it.substringBefore('#').contains(':') && !it.startsWith("//") }
             ?.let(::sourceNoteFragment)?.let { ref.target to it }
     }.toMap()
-    val local = sourceNoteTargets(html, fragments, checkActive = checkActive)
+    val local = sourceNoteTargets(html, fragments, checkActive = checkActive, tags = scan?.tags?.asSequence())
     val native = references.filter { it.filepos != null }.groupBy { it.label }
     val qualified = references.filter { it.href?.startsWith('#') == false && it.target in local }
-    val blocks = if (native.isNotEmpty() || qualified.isNotEmpty()) sourceHtmlElements(html, noteBlocks, checkActive) else emptyList()
+    val blocks = if (native.isNotEmpty() || qualified.isNotEmpty()) sourceHtmlElements(html, noteBlocks, checkActive, scan?.tags?.asSequence()) else emptyList()
     val ids = mutableMapOf<String, Int>()
-    if (qualified.isNotEmpty()) sourceHtmlTags(html, checkActive).filter { !it.closing }.forEach { tag ->
+    if (qualified.isNotEmpty()) (scan?.tags?.asSequence() ?: sourceHtmlTags(html, checkActive)).filter { !it.closing }.forEach { tag ->
         listOfNotNull(sourceHtmlAttribute(tag.attributes, "id"), sourceHtmlAttribute(tag.attributes, "name"))
             .forEach { ids.putIfAbsent(it, tag.start) }
     }

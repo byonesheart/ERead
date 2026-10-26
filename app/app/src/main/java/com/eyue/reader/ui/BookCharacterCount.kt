@@ -2,6 +2,7 @@ package com.eyue.reader.ui
 
 import com.eyue.reader.data.Book
 import com.eyue.reader.data.LibraryMode
+import com.eyue.reader.data.readChapterText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -17,7 +18,13 @@ internal fun Book.hasSpeechText(): Boolean = mode == LibraryMode.NOVEL && !cloud
 internal suspend fun bookCharacterCount(book: Book): Long = withContext(Dispatchers.IO) {
     if (book.mode == LibraryMode.COMIC) return@withContext 0L
     var total = 0L
-    for (chapter in book.chapters) {
+    for ((index, chapter) in book.chapters.withIndex()) {
+        if (chapter.textPath != null) {
+            val work = currentCoroutineContext()
+            val text = readChapterText(book, index) { work.ensureActive() }
+            total += countTextCharacters(text.reader()) { work.ensureActive() }
+            continue
+        }
         val paths = chapter.textPath?.let { listOf(it) } ?: chapter.pages.mapNotNull { it.textPath }
         for (path in paths) {
             currentCoroutineContext().ensureActive()

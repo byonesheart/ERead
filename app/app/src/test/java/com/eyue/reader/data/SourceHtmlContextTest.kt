@@ -6,6 +6,31 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SourceHtmlContextTest {
+    @Test fun sharedScanPreservesVisibleOffsetsAndTheExactCommentStrippedReadingText() {
+        val html = "<html><head><style>p:before{content:'<h1>假标题</h1>'}</style></head>" +
+            "<body class='book'>甲<!-- 注释 -->🙂乙<a href='#fn1'>[1]</a><aside id='fn1'>释文</aside></body></html>"
+        val scan = SourceHtmlScan(html)
+        assertEquals(hideHtmlContent(maskHtmlComments(html), true), scan.visibleHtml)
+        assertEquals(hideHtmlContent(removeHtmlComments(html), false), scan.readingHtml)
+        assertTrue(scan.readingHtml.contains("甲🙂乙"))
+        assertEquals(html.indexOf("🙂"), scan.visibleHtml.indexOf("🙂"))
+        assertEquals(sourceNoteReferences(html), sourceNoteReferences(html, scan = scan))
+        assertTrue(scan.notes.contains(html.indexOf("释文")))
+        assertFalse(scan.notes.contains(html.indexOf("甲")))
+    }
+
+    @Test fun sharedScanRecoversMalformedHeadsAndRetainsFragmentBodyAttributes() {
+        for (html in listOf("<head><style>css<h1>假标题</h1><body class='book'><h1>真标题</h1></body>",
+            "<body>甲<!-- 未结束注释", "<style/><body>正文</body>")) {
+            val scan = SourceHtmlScan(html)
+            assertEquals(hideHtmlContent(maskHtmlComments(html), true), scan.visibleHtml)
+            assertEquals(hideHtmlContent(removeHtmlComments(html), false), scan.readingHtml)
+        }
+        val html = "<body class='book'><h1>第一章</h1><h1>第二章</h1></body>"
+        val at = html.indexOf("<h1>第二章")
+        assertEquals(sourceBodyFragment(html.substring(at), sourceBodyTag(html)), SourceHtmlScan(html).bodyFragment(at, html.length))
+    }
+
     @Test fun quoteAwareTagsKeepGreaterThanCharactersAndExactUtf16Boundaries() {
         val html = "甲🙂<a href='#chapter' title='x > y'>章</a><h1 id=chapter>标题</h1>"
         val tags = sourceHtmlTags(html).toList()

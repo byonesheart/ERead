@@ -90,9 +90,9 @@ internal fun EbookContinuousSurface(
             try {
                 val text = latestRead(index)
                 val source = store.load(index, text)
-                val chapter = withContext(Dispatchers.Default) {
+                val chapter = withContext(Dispatchers.IO) {
                     val work = currentCoroutineContext()
-                    readerEbookChapterWithFootnotes(chapters[index], text) { work.ensureActive() }
+                    readerEbookChapterWithFootnotes(DeferredEbookContent.ensure(chapters[index]) { work.ensureActive() }, text) { work.ensureActive() }
                 }
                 ensureActive()
                 if (browser !== view || jobs[index]?.first != token) return@launch

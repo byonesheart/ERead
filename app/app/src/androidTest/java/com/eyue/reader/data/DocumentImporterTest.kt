@@ -101,7 +101,7 @@ class DocumentImporterTest {
     @Test fun versionSixMobiUpdatesOnceWithoutReparsingCurrentEpub() = runBlocking {
         val source = File(fixtures, "version-five.mobi").apply { writeBytes(mobiFixture()) }
         val imported = import(source, LibraryMode.NOVEL)
-        assertEquals(7, imported.contentVersion)
+        assertEquals(8, imported.contentVersion)
         val previous = imported.copy(contentVersion = 6)
         val epub = Book(title = "保留 EPUB 缓存", format = BookFormat.EPUB, mode = LibraryMode.NOVEL,
             chapters = listOf(Chapter(title = "原目录")), contentVersion = 6)

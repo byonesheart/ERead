@@ -36,7 +36,7 @@ internal suspend fun materializeCloudBookCached(context: Context, book: Book, ca
         check()
         // The reader's existing prepared file is keyed by text hash only. Reproject on a cache miss
         // so an external source/CSS edit is also reflected in the cloud metadata.
-        val result = if (before != null && manifest != null) projectCloudChapter(chapter, loaded.text, manifest, check)
+        val result = if (before != null && manifest != null) projectCloudChapter(loaded.chapter, loaded.text, manifest, check)
             else loaded.chapter
         val portable = result.copy(lazySourcePath = null)
         val versions = cache.snapshot(inputs + "$source.prepared.json")

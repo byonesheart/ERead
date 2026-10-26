@@ -7,13 +7,44 @@ internal data class ReaderContentsEntry(val key: String, val title: String, val 
     val startPage: Int, val endPage: Int, val depth: Int, val parentKey: String? = null,
     val groupChapters: Set<Int> = setOf(chapter))
 
-private val numberedContentsTitle = Regex("^第[ \\t\\u3000]*[零〇一二三四五六七八九十百千万两0-9]{1,12}[ \\t\\u3000]*(小节|卷|章|节)(?=$|[ \\t\\u3000:：、.．—-])[^\\r\\n。；;！？!?]{0,60}$")
+private val numberedContentsTitle = Regex("^第[ \\t\\u3000]*[零〇一二三四五六七八九十百千万两0-9]{1,12}[ \\t\\u3000]*(小节|卷|章|幕|回|话|节)(?=$|[ \\t\\u3000:：、.．—-])[^\\r\\n。；;！？!?]{0,60}$")
 
 private fun contentsTitleLevel(title: String): Int? = numberedContentsTitle.matchEntire(title.trim())?.let { match ->
-    when (match.groupValues[1]) { "卷" -> 0; "章" -> 1; else -> 2 }
+    when (match.groupValues[1]) { "卷" -> 0; "章", "幕", "回", "话" -> 1; else -> 2 }
 }
 
 private fun Chapter.contentsParent(): String? = tocParentTitle?.trim()?.takeIf { it.isNotEmpty() && it != title.trim() }
+
+private val seriesVolumeTitle = Regex("^(.{1,30}?)[ \\t\\u3000]*(?:[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅪⅫ]+|[IVXLCDM]+|[0-9]+)(?=$|[ \\t\\u3000·•:：、.．（(—-])[^\\r\\n。；;！？!?]{0,60}$")
+private val seriesExtraTitle = Regex("^(.{1,30}?)[ \\t\\u3000]*(?:前传|外传|后传|番外)(?=$|[ \\t\\u3000·•:：、.．（(—-])[^\\r\\n。；;！？!?]{0,60}$")
+
+/** Flat omnibus TOCs often number book titles, then restart chapter numbers inside each book. */
+private fun seriesVolumeEnds(chapters: List<Chapter>): Map<Int, Int> {
+    val candidates = chapters.indices.filter { chapters[it].contentsParent() == null && contentsTitleLevel(chapters[it].title) == null }
+    val numbered = candidates.mapNotNull { index -> seriesVolumeTitle.matchEntire(chapters[index].title.trim())
+        ?.groupValues?.get(1)?.trim()?.let { it to index } }.groupBy({ it.first }, { it.second })
+    return buildMap {
+        numbered.filterValues { it.size >= 2 }.forEach { (prefix, volumes) ->
+            val extras = candidates.filter { seriesExtraTitle.matchEntire(chapters[it].title.trim())?.groupValues?.get(1)?.trim() == prefix }
+            fun normalizedTitle(index: Int) = java.text.Normalizer.normalize(chapters[index].title, java.text.Normalizer.Form.NFKC)
+                .filterNot(Char::isWhitespace).lowercase()
+            if (volumes.map(::normalizedTitle).distinct().size < 2) return@forEach
+            val roots = mutableListOf<Int>()
+            (volumes + extras).sorted().forEach { index ->
+                val previous = roots.lastOrNull()
+                // Some packages repeat a volume title after its copyright/TOC,
+                // using ASCII rather than Unicode Roman numerals on the title page.
+                if (previous == null || normalizedTitle(previous) != normalizedTitle(index) ||
+                    (previous + 1 until index).any { contentsTitleLevel(chapters[it].title) == 1 }) roots += index
+            }
+            roots.forEachIndexed { position, start ->
+                val end = roots.getOrNull(position + 1) ?: chapters.size
+                if ((start + 1 until end).any { contentsTitleLevel(chapters[it].title) == 1 } &&
+                    (start + 1 until end).all { chapters[it].contentsParent() == null }) put(start, end)
+            }
+        }
+    }
+}
 
 /** Directory grouping never changes physical chapter indices or cached chapter content. */
 internal fun readerContentsEntries(chapters: List<Chapter>, hierarchical: Boolean = false): List<ReaderContentsEntry> = buildList {
@@ -34,9 +65,17 @@ internal fun readerContentsEntries(chapters: List<Chapter>, hierarchical: Boolea
         chapters.indices.forEach { appendChapter(it) }
         return@buildList
     }
+    val volumeEnds = seriesVolumeEnds(chapters)
     var index = 0
     while (index < chapters.size) {
         val chapter = chapters[index]
+        val volumeEnd = volumeEnds[index]
+        if (volumeEnd != null) {
+            appendChapter(index, groupChapters = (index until volumeEnd).toSet())
+            (index + 1 until volumeEnd).forEach { appendChapter(it, 1, chapter.id) }
+            index = volumeEnd
+            continue
+        }
         val nativeParent = chapter.contentsParent()
         if (nativeParent != null) {
             var end = index + 1

@@ -70,10 +70,11 @@ internal fun sourceHtmlTags(html: String, checkActive: () -> Unit = {}, onProgre
 }
 
 /** Unclosed elements are discarded, rather than restarting a regex at every opening tag. */
-internal fun sourceHtmlElements(html: String, names: Set<String>, checkActive: () -> Unit = {}): List<SourceHtmlElement> {
+internal fun sourceHtmlElements(html: String, names: Set<String>, checkActive: () -> Unit = {},
+                                tags: Sequence<SourceHtmlTag>? = null): List<SourceHtmlElement> {
     val elements = mutableListOf<SourceHtmlElement>()
     var pending: SourceHtmlTag? = null
-    sourceHtmlTags(html, checkActive).forEach { tag ->
+    (tags ?: sourceHtmlTags(html, checkActive)).forEach { tag ->
         if (tag.name in names) {
             if (!tag.closing) pending = if (tag.selfClosing) null else tag
             else pending?.takeIf { it.name == tag.name }?.let {
@@ -89,10 +90,10 @@ internal fun isHtmlAnchorMarker(tag: SourceHtmlTag): Boolean = tag.name == "a" &
     sourceHtmlAttribute(tag.attributes, "href") == null && sourceHtmlAttribute(tag.attributes, "filepos") == null &&
     (sourceHtmlAttribute(tag.attributes, "name") != null || sourceHtmlAttribute(tag.attributes, "id") != null)
 
-private fun sourceHtmlHiddenRanges(html: String, checkActive: () -> Unit): List<IntRange> {
+private fun sourceHtmlHiddenRanges(html: String, checkActive: () -> Unit, tags: Sequence<SourceHtmlTag>? = null): List<IntRange> {
     val ranges = mutableListOf<IntRange>()
     var hidden: SourceHtmlTag? = null
-    sourceHtmlTags(html, checkActive).forEach { tag ->
+    (tags ?: sourceHtmlTags(html, checkActive)).forEach { tag ->
         val opening = hidden
         if (opening != null) {
             if (tag.closing && tag.name == opening.name) { ranges += opening.start until tag.end; hidden = null }
@@ -139,24 +140,28 @@ internal fun sourceHtmlAttribute(attributes: String, name: String): String? = ht
     .firstOrNull { it.groupValues[1].equals(name, true) }?.let { it.groupValues.drop(2).firstOrNull { value -> value.isNotEmpty() }.orEmpty() }
 
 internal fun isNoteReference(attributes: String, label: String): Boolean {
+    if (referenceMarkers.matches(label.trim())) return true
+    if (!attributes.contains("note", ignoreCase = true)) return false
     val tokens = listOf("epub:type", "role", "rel", "class").flatMap { sourceHtmlAttribute(attributes, it).orEmpty().lowercase().split(tokenWhitespace) }
-    return tokens.any { it in setOf("noteref", "doc-noteref", "footnote", "endnote", "footnote-ref", "endnote-ref") } || referenceMarkers.matches(label.trim())
+    return tokens.any { it in setOf("noteref", "doc-noteref", "footnote", "endnote", "footnote-ref", "endnote-ref") }
 }
 
 internal fun isFootnoteTarget(attributes: String): Boolean {
+    if (!attributes.contains("fn", true) && !attributes.contains("ftn", true) &&
+        !attributes.contains("footnote", true) && !attributes.contains("endnote", true)) return false
     val tokens = listOf("epub:type", "role", "class").flatMap { sourceHtmlAttribute(attributes, it).orEmpty().lowercase().split(tokenWhitespace) }
     return tokens.any { it in setOf("footnote", "endnote", "footnotes", "endnotes", "doc-footnote", "doc-endnote", "doc-endnotes") } ||
         listOf("id", "name").any { footnoteIds.matches(sourceHtmlAttribute(attributes, it).orEmpty()) }
 }
 
-internal class SourceHtmlNotes(html: String, checkActive: () -> Unit = {}) {
+internal class SourceHtmlNotes(html: String, checkActive: () -> Unit = {}, tags: Sequence<SourceHtmlTag>? = null) {
     private data class Scope(val tag: String, val start: Int, val note: Boolean)
     private val ranges = mutableListOf<IntRange>()
     init {
         val stack = mutableListOf<Scope>()
         val positions = mutableMapOf<String, MutableList<Int>>()
         var insideNote = false
-        sourceHtmlTags(html, checkActive).forEach { item ->
+        (tags ?: sourceHtmlTags(html, checkActive)).forEach { item ->
             val tag = item.name
             if (item.closing) {
                 val index = positions[tag]?.lastOrNull() ?: -1
@@ -195,3 +200,49 @@ internal fun sourceBodyTag(html: String, checkActive: () -> Unit = {}): String? 
 
 internal fun sourceBodyFragment(fragment: String, bodyTag: String?): String =
     if (bodyTag == null || sourceBodyTag(fragment) != null) fragment else "$bodyTag$fragment</body>"
+
+/** One tokenization per document; derived views keep original UTF-16 offsets. Import-scoped only. */
+internal class SourceHtmlScan(val html: String, private val checkActive: () -> Unit = {}) {
+    val tags = sourceHtmlTags(html, checkActive).toList()
+    private val hidden = sourceHtmlHiddenRanges(html, checkActive, tags.asSequence())
+    private val omitted by lazy {
+        val merged = mutableListOf<IntRange>()
+        (hidden + htmlComments.findAll(html).map { it.range }.toList()).sortedBy { it.first }.forEach { range ->
+            val last = merged.lastOrNull()
+            if (last != null && range.first <= last.last + 1) merged[merged.lastIndex] = last.first..maxOf(last.last, range.last)
+            else merged += range
+        }
+        merged
+    }
+    val visibleTags by lazy {
+        var index = 0
+        tags.filter { tag ->
+            while (index < hidden.size && hidden[index].last < tag.start) index++
+            index >= hidden.size || tag.start < hidden[index].first
+        }
+    }
+    val visibleHtml by lazy {
+        if (omitted.isEmpty()) html else html.toCharArray().also { text ->
+            omitted.forEach { range -> checkActive(); java.util.Arrays.fill(text, range.first, range.last + 1, ' ') }
+        }.concatToString()
+    }
+    val readingHtml by lazy { if (omitted.isEmpty()) html else buildString(html.length) {
+        var at = 0
+        omitted.forEach { range -> checkActive(); append(html, at, range.first); at = range.last + 1 }
+        append(html, at, html.length)
+    } }
+    val notes by lazy {
+        if (visibleTags.none { !it.closing && isFootnoteTarget(it.attributes) }) SourceHtmlNotes("", checkActive)
+        else SourceHtmlNotes(visibleHtml, checkActive, visibleTags.asSequence())
+    }
+    val bodyTag by lazy { tags.firstOrNull { it.name == "body" && !it.closing }?.let { html.substring(it.start, it.end) } }
+    private val bodyStarts by lazy { tags.filter { it.name == "body" && !it.closing }.map { it.start } }
+    fun elements(names: Set<String>, visible: Boolean = true): List<SourceHtmlElement> =
+        sourceHtmlElements(html, names, checkActive, (if (visible) visibleTags else tags).asSequence())
+    fun bodyFragment(start: Int, end: Int): String {
+        val fragment = html.substring(start, end)
+        val body = bodyTag
+        return if (body == null || bodyStarts.any { it in start until end }) fragment
+            else "$body$fragment</body>"
+    }
+}
