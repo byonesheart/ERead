@@ -12,8 +12,8 @@
 
 | 渠道 | 下载链接 | 提取码 |
 | --- | --- | --- |
-| 百度网盘 | [点击下载](https://pan.baidu.com/s/1K568KZaEIoNvSN7xntU43A?pwd=READ) | `READ` |
-| 夸克网盘 | [点击下载](https://pan.quark.cn/s/ef420b658cdc) | `HC1G` |
+| 百度网盘 | [点击下载](https://pan.baidu.com/s/1-byh2CdMtSwspG1TU_suRA?pwd=READ) | `READ` |
+| 夸克网盘 | [点击下载](https://pan.quark.cn/s/350320208b0c) | `STpm` |
 | GitHub Releases | [查看版本与安装包](https://github.com/byonesheart/ERead/releases) | 无 |
 
 下载 APK 后安装即可使用。
