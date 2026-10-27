@@ -41,6 +41,27 @@ import java.util.concurrent.atomic.AtomicReference
 class EbookReaderChapterSwitchRobolectricTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun delayedFontRequestsReadTheirOwnSelectionInsteadOfTheMostRecentFont() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val folder = File(context.cacheDir, "font-urls-${UUID.randomUUID()}").apply { mkdirs() }
+        val first = File(folder, "first.ttf").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val second = File(folder, "second.ttf").apply { writeBytes(byteArrayOf(4, 5, 6)) }
+        val settings = mutableStateOf(ReaderSettings(fontPath = first.path))
+        val firstUrl = ebookReaderFontUrl(settings.value)
+        var open: ((String) -> java.io.InputStream?)? = null
+        try {
+            compose.setContent { open = rememberEbookFontOpener(settings.value) }
+            compose.runOnIdle { settings.value = settings.value.copy(fontPath = second.path) }
+            compose.runOnIdle {
+                val secondUrl = ebookReaderFontUrl(settings.value)
+                assertNotEquals(firstUrl, secondUrl)
+                assertArrayEquals(first.readBytes(), open!!(firstUrl)!!.use { it.readBytes() })
+                assertArrayEquals(second.readBytes(), open!!(secondUrl)!!.use { it.readBytes() })
+                assertNull(open!!("https://eread.local/reader-font?v=unknown"))
+            }
+        } finally { folder.deleteRecursively() }
+    }
+
     @Test fun revisitingChaptersAndReopeningTheBookReusesTheirDomAndRejectsOldCallbacks() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val root = File(context.cacheDir, "ebook-switch-${UUID.randomUUID()}").apply { mkdirs() }
@@ -53,6 +74,7 @@ class EbookReaderChapterSwitchRobolectricTest {
         val session = EbookReaderSession(context)
         val rootView = AtomicReference<View>()
         val observed = AtomicReference<EbookViewportState>()
+        val conversion = mutableStateOf<com.eyue.reader.data.ChineseTextConverter?>(null)
         val controller = EbookReaderController()
         fun browser() = rootView.get()?.findBrowser()
         fun awaitBrowser(expected: WebView? = null): WebView {
@@ -69,6 +91,7 @@ class EbookReaderChapterSwitchRobolectricTest {
                         val index = chapter.intValue
                         EbookReaderSurface(currentStore.value, index, book.chapters[index], readChapterText(book, index), ReaderSettings(),
                             emptyList(), controller, Modifier.fillMaxSize(), foreground = Color.Black, session = session,
+                            chineseConverter = conversion.value,
                             onViewport = observed::set, onTap = {}, onManualStart = {}, onManualEnd = {}, onChapterStep = {},
                             onSelectionActive = {}, onAction = { _, _ -> }, onAnnotationTap = { _, _ -> }, onFootnote = { _, _ -> })
                     }
@@ -79,6 +102,15 @@ class EbookReaderChapterSwitchRobolectricTest {
             send(previous, """{"type":"ready"}""")
             send(previous, """{"type":"viewport","offset":1,"endOffset":4,"pages":1}""")
             compose.waitUntil { observed.get()?.ready == true }
+            val documentGeneration = (first as EbookWebView).documentGeneration
+            val traditional = runBlocking { com.eyue.reader.data.ChineseTextConverter.load(context, com.eyue.reader.data.ChineseConversion.TRADITIONAL) }
+            compose.runOnIdle { conversion.value = traditional }
+            compose.runOnIdle {
+                assertSame(first, browser())
+                assertEquals(documentGeneration, first.documentGeneration)
+                assertTrue(shadowOf(first).lastEvaluatedJavascript.contains("convert"))
+                assertTrue(observed.get().ready)
+            }
             compose.runOnIdle { chapter.intValue = 1 }
             compose.waitUntil(15_000) { compose.runOnIdle { browser() !== first && browser()?.onBridgeEventReady() == true } }
             val second = requireNotNull(browser())

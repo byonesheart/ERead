@@ -146,6 +146,23 @@ class EReadAppStartupRobolectricTest {
         }
     }
 
+    @Test fun generatingSpeechWithoutAiConfigurationShowsAnActionablePromptAndEnqueuesNothing() {
+        compose.runOnIdle { vm = ReaderViewModel(application); store.put("reader", vm) }
+        val updates = AppUpdateSession(checker = {
+            com.eyue.reader.data.AppUpdateResult(false, "", 0, "", null, "https://github.com/byonesheart/ERead/releases")
+        })
+        compose.setContent { EReadApp(vm, emptyFlow(), updates) }
+        awaitState(30_000) { !vm.loading && vm.state.books.isNotEmpty() }
+        val book = compose.runOnIdle { vm.state.books.first { it.mode == LibraryMode.NOVEL } }
+        compose.onNodeWithText("书架").performClick()
+        compose.onNodeWithContentDescription("更多选项：${book.title}").performClick()
+        compose.onNodeWithTag("shelf_book_generate_speech_${book.id}").performClick()
+        compose.onNodeWithTag("speech_cache_missing_config").assertIsDisplayed()
+        compose.runOnIdle { assertTrue(vm.aiSpeechGenerations.isEmpty()) }
+        compose.onNodeWithText("去配置").performClick()
+        compose.onNodeWithTag("speech_engine_dialog").assertIsDisplayed()
+    }
+
     private fun awaitState(timeoutMillis: Long, condition: () -> Boolean) {
         compose.waitUntil(timeoutMillis) {
             // IO callbacks resume on Android's paused main looper, outside Compose's frame clock.

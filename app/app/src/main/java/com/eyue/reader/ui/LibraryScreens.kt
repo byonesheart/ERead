@@ -7,6 +7,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -321,13 +323,15 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 }
             }
         } else if (grid) {
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val coverHeight = ((maxWidth - 88.dp) / 3f / .8f).coerceAtLeast(1.dp)
             LazyVerticalGrid(GridCells.Fixed(3), contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                items(pendingImports, key = { "import-${it.id}" }) { PendingShelfBook(it, grid = true) }
+                items(pendingImports, key = { "import-${it.id}" }) { PendingShelfBook(it, grid = true, coverHeight = coverHeight) }
                 items(displayed, key = { it.id }) { book ->
                     Column {
                         Box {
-                            BookCover(book, Modifier.fillMaxWidth().aspectRatio(.80f).testTag("shelf_book_cover_${book.id}")
+                            BookCover(book, Modifier.fillMaxWidth().height(coverHeight).testTag("shelf_book_cover_${book.id}")
                                 .combinedClickable(
                                     onClick = { if (selectingBackup) selectBackup(book) else onOpen(book) },
                                     onLongClick = { if (!selectingBackup) actionBookId = book.id }),
@@ -343,9 +347,11 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                                 .background(MaterialTheme.colorScheme.surface.copy(alpha = .9f), CircleShape),
                                 onClick = { actionBookId = book.id })
                         }
-                        Text(book.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 11.dp).testTag("shelf_book_title_${book.id}").combinedClickable(
+                        Text(book.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp,
+                            minLines = 2, maxLines = 2,
+                            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 11.dp)
+                                .height(with(androidx.compose.ui.platform.LocalDensity.current) { 40.sp.toDp() })
+                                .testTag("shelf_book_title_${book.id}").combinedClickable(
                                 onClick = { if (selectingBackup) selectBackup(book) else onOpen(book) },
                                 onLongClick = { if (!selectingBackup) actionBookId = book.id }))
                         Text(book.displayAuthor, fontSize = 10.sp, color = Muted,
@@ -359,6 +365,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                             modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(2.dp))
                     }
                 }
+            }
             }
         } else {
             LazyColumn(contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
@@ -498,7 +505,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
             catch (error: Exception) { Result.failure(error) }
         }
         AlertDialog(onDismissRequest = { details = null }, title = { Text(book.title, fontFamily = FontFamily.Serif) },
-            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            text = { Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("作者：${book.displayAuthor}")
                 Text("格式：${book.format.name}${if (book.isDemo) " · 原创示例" else ""}")
                 Text("目录：${book.chapters.size} 章")
@@ -513,6 +520,9 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 } ?: "统计中…"), modifier = Modifier.testTag("book_ai_speech_cache_size"))
                 Text("分组：${groups.firstOrNull { it.id == book.groupId }?.name ?: "未分组"}")
                 if (!book.isDemo) Text(if (book.cloudOnly) "存储：云端，尚未下载" else if (book.sourceLinked) "存储：引用原文件" else "存储：应用内保存")
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text("位置：${bookStorageLocation(book)}", fontSize = 11.sp, modifier = Modifier.testTag("book_storage_location"))
+                }
                 if (book.cloudBackupAt > 0) Text("云端备份：${SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.CHINA).format(Date(book.cloudBackupAt))}")
                 Text("进度：第 ${book.chapterIndex + 1} 章 · ${(book.progress * 100).toInt()}%")
                 Text("最新章节：${book.chapters.lastOrNull()?.title.orEmpty()}")
@@ -632,11 +642,12 @@ private const val UNGROUPED_FILTER = "@ungrouped"
         })
 }
 
-@Composable private fun PendingShelfBook(pending: PendingImport, grid: Boolean) {
+@Composable private fun PendingShelfBook(pending: PendingImport, grid: Boolean, coverHeight: androidx.compose.ui.unit.Dp? = null) {
     val fraction = pending.progress?.fraction?.coerceIn(0f, 1f)
     val stage = if (pending.queued) "等待导入" else pending.progress?.stage ?: "准备导入"
     val cover: @Composable () -> Unit = {
-        Box((if (grid) Modifier.fillMaxWidth().aspectRatio(.80f) else Modifier.width(56.dp).height(78.dp))
+        Box((if (grid) Modifier.fillMaxWidth().then(coverHeight?.let { Modifier.height(it) } ?: Modifier.aspectRatio(.80f))
+            else Modifier.width(56.dp).height(78.dp))
             .clip(appShape(7.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh)
             .testTag("pending_import_cover"), contentAlignment = Alignment.Center) {
             val indicator = Modifier.size(if (grid) 42.dp else 26.dp).testTag("pending_import_progress")

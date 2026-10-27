@@ -315,6 +315,7 @@ class LibraryRepository(private val context: Context) {
             hierarchicalContents = json.optBoolean("hierarchicalContents", defaults.hierarchicalContents),
             useSourceCss = json.optBoolean("useSourceCss", defaults.useSourceCss),
             continuousEbookScroll = json.optBoolean("continuousEbookScroll", defaults.continuousEbookScroll),
+            verticalText = json.optBoolean("verticalText", defaults.verticalText),
             marginLeft = margin("marginLeft", defaults.marginLeft), marginRight = margin("marginRight", defaults.marginRight),
             marginTop = margin("marginTop", defaults.marginTop), marginBottom = margin("marginBottom", defaults.marginBottom)
         )
@@ -346,6 +347,7 @@ class LibraryRepository(private val context: Context) {
         .put("hierarchicalContents", settings.hierarchicalContents)
         .put("useSourceCss", settings.useSourceCss)
         .put("continuousEbookScroll", settings.continuousEbookScroll)
+        .put("verticalText", settings.verticalText)
         .put("marginLeft", settings.marginLeft.toDouble()).put("marginRight", settings.marginRight.toDouble())
         .put("marginTop", settings.marginTop.toDouble()).put("marginBottom", settings.marginBottom.toDouble())
         .put("chapterRules", JSONArray(presets.map {

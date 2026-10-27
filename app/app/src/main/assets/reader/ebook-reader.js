@@ -7,6 +7,8 @@
     let sourceNotes = [];
     let suppressClickUntil = 0;
     let stableOffset = 0;
+    let configurationGeneration = 0, activeFont = null;
+    const loadedFonts = new Map(), sourceMappings = [];
     const rangeGeometry = new Map();
     let lastBridgeReport = 0;
     const readerStyle = document.createElement('style');
@@ -80,18 +82,19 @@
         while (low < high) { const mid = (low + high) >>> 1; if (array[mid] < value) low = mid + 1; else high = mid; }
         return low;
     }
-    function pageStride() { return config.mode === 'PAGED' ? innerWidth / (config.dual ? 2 : 1) : viewBounds().height; }
-    function pageIndex() { return Math.max(0, Math.round((config.mode === 'PAGED' ? scrollX : scrollY) / pageStride())); }
+    function pageHorizontal() { return config.mode === 'PAGED' && !config.vertical; }
+    function pageStride() { return pageHorizontal() ? innerWidth / (config.dual ? 2 : 1) : viewBounds().height; }
+    function pageIndex() { return Math.max(0, Math.round((pageHorizontal() ? scrollX : scrollY) / pageStride())); }
     function pageCount() {
         if (continuousHost) return Math.max(1, Math.ceil(document.body.scrollHeight / pageStride()));
         if (config.mode !== 'SCROLL') return contentPages;
-        const size = config.mode === 'PAGED' ? document.documentElement.scrollWidth : document.documentElement.scrollHeight;
+        const size = pageHorizontal() ? document.documentElement.scrollWidth : document.documentElement.scrollHeight;
         return Math.max(1, Math.ceil((size - 1) / pageStride()));
     }
     function fitPageBoundary() {
         pageBoundary.style.display = 'none';
         if (config.mode === 'SCROLL') return;
-        const horizontal = config.mode === 'PAGED', stride = pageStride();
+        const horizontal = pageHorizontal(), stride = pageStride();
         const size = horizontal ? document.documentElement.scrollWidth : document.documentElement.scrollHeight;
         contentPages = Math.max(1, Math.ceil((size - 1) / stride));
         const span = horizontal && config.dual ? 2 : 1;
@@ -177,9 +180,12 @@
         nodes.forEach(node => {
             const range = document.createRange(); range.selectNodeContents(node);
             Array.from(range.getClientRects()).filter(visible).forEach(rect => {
+                const x = Math.max(1, Math.min(innerWidth - 1, (rect.left + rect.right) / 2));
                 const y = Math.max(view.top + 1, Math.min(view.bottom - 1, (rect.top + rect.bottom) / 2));
-                const start = caret(Math.max(1, rect.left + .5), y, false, true);
-                const end = caret(Math.min(innerWidth - 1, rect.right - .5), y, true, true);
+                const start = caret(config.vertical ? x : Math.max(1, rect.left + .5),
+                    config.vertical ? Math.max(view.top + 1, rect.top + .5) : y, false, true);
+                const end = caret(config.vertical ? x : Math.min(innerWidth - 1, rect.right - .5),
+                    config.vertical ? Math.min(view.bottom - 1, rect.bottom - .5) : y, true, true);
                 if (start !== null) points.push(start);
                 if (end !== null) points.push(end);
             });
@@ -194,7 +200,7 @@
         let end = points.length ? Math.max.apply(null, points) : canonical.length;
         while (start > 0 && whitespace(canonical[start - 1])) start--;
         while (end < canonical.length && whitespace(canonical[end])) end++;
-        const horizontal = config.mode === 'PAGED', position = horizontal ? scrollX : continuousHost ? view.top : scrollY;
+        const horizontal = pageHorizontal(), position = horizontal ? scrollX : continuousHost ? view.top : scrollY;
         const extent = horizontal ? document.documentElement.scrollWidth : document.documentElement.scrollHeight;
         return {offset: start, endOffset: end, page: continuousHost ? Math.floor(position / pageStride()) : pageIndex(), pages: pageCount(), images: shownImages, scrolling: manual,
             atStart: position <= 1, atEnd: position + (horizontal ? innerWidth : view.height) >= extent - 1};
@@ -223,10 +229,10 @@
     }
     function moveToPage(page) {
         finishPageAnimation();
-        const span = config.mode === 'PAGED' && config.dual ? 2 : 1;
+        const span = pageHorizontal() && config.dual ? 2 : 1;
         const target = Math.floor(Math.max(0, Math.min(pageCount() - 1, page)) / span) * span * pageStride();
         automatic = true;
-        scrollTo(config.mode === 'PAGED' ? target : 0, config.mode === 'PAGED' ? 0 : target);
+        scrollTo(pageHorizontal() ? target : 0, pageHorizontal() ? 0 : target);
         requestAnimationFrame(function () { automatic = false; report(true); });
     }
     function navigate(command) {
@@ -247,7 +253,7 @@
             scrollTo(0, Math.max(0, rect.top + scrollY - (config.top || 0)));
             requestAnimationFrame(function () { automatic = false; report(true); });
         } else {
-            const coordinate = config.mode === 'PAGED' ? rect.left + scrollX : rect.top + scrollY;
+            const coordinate = pageHorizontal() ? rect.left + scrollX : rect.top + scrollY;
             moveToPage(Math.floor((coordinate + .5) / pageStride()));
         }
     }
@@ -261,7 +267,7 @@
             endManual();
             return;
         }
-        const span = config.mode === 'PAGED' && config.dual ? 2 : 1;
+        const span = pageHorizontal() && config.dual ? 2 : 1;
         const target = (pageTransition ? pageTransition.page : pageIndex()) + direction * span;
         beginManual();
         if (target < 0 || target >= pageCount()) send('chapterStep', {direction: direction});
@@ -318,14 +324,14 @@
     }
     function animatePage(page) {
         finishPageAnimation();
-        const before = scrollX, span = config.dual ? 2 : 1;
+        const horizontal = pageHorizontal(), before = horizontal ? scrollX : scrollY, span = horizontal && config.dual ? 2 : 1;
         const target = Math.floor(Math.max(0, Math.min(pageCount() - 1, page)) / span) * span * pageStride();
         automatic = true;
-        scrollTo(target, 0);
+        scrollTo(horizontal ? target : 0, horizontal ? 0 : target);
         // One existing column flow, composited by Chromium. No bitmap readback,
         // JavaScript-interface roundtrip, or wait for an Android drawing callback.
         const animation = document.body.animate([
-            {transform:'translateX(' + (target - before) + 'px)'}, {transform:'translateX(0)'}
+            {transform:`translate${horizontal ? 'X' : 'Y'}(${target - before}px)`}, {transform:'translate(0)'}
         ], {duration:180, easing:'cubic-bezier(.2,.65,.3,1)'});
         animation.id = 'eread-page-turn'; pageAnimation = animation;
         if (overlay) overlay.style.visibility = 'hidden';
@@ -336,16 +342,36 @@
             report(true);
         };
     }
-    function configure(next, preserve, force) {
+    async function configure(next, preserve, force) {
+        const generation = ++configurationGeneration;
         if (!force && started && JSON.stringify(next) === JSON.stringify(config)) return;
+        let font = null;
+        if (next.font === 'eread-selected') {
+            if (!loadedFonts.has(next.fontUrl)) {
+                const face = new FontFace('eread-selected', `url(${JSON.stringify(next.fontUrl)})`);
+                loadedFonts.set(next.fontUrl, face.load().catch(error => { loadedFonts.delete(next.fontUrl); throw error; }));
+            }
+            font = await loadedFonts.get(next.fontUrl);
+            if (generation !== configurationGeneration) return;
+        }
         finishPageAnimation();
         const old = preserve && started ? viewport() : null;
         const anchor = old && navigationAnchor && (navigationAnchor.image || Array.from(rangeFor(navigationAnchor.offset,
             Math.min(canonical.length, navigationAnchor.offset + 1)).getClientRects()).some(visible)) ? navigationAnchor : old;
         config = next;
+        if (activeFont !== font) {
+            if (activeFont) document.fonts.delete(activeFont);
+            if (font) document.fonts.add(font);
+            activeFont = font;
+        }
+        while (loadedFonts.size > 3) {
+            const key = loadedFonts.keys().next().value;
+            if (key === config.fontUrl) { const value = loadedFonts.get(key); loadedFonts.delete(key); loadedFonts.set(key, value); }
+            else loadedFonts.delete(key);
+        }
         if (config.paperImage) { const paper = new Image(); paper.src = config.paperImage; }
         rangeGeometry.clear();
-        const horizontal = config.mode === 'PAGED', scrolling = config.mode === 'SCROLL';
+        const horizontal = pageHorizontal(), scrolling = config.mode === 'SCROLL', vertical = !!config.vertical;
         const column = innerWidth / (config.dual && horizontal ? 2 : 1);
         const width = Math.max(32, column - config.left - config.right);
         const height = Math.max(32, viewBounds().height - config.top - config.bottom);
@@ -355,6 +381,7 @@
             [data-eread-body] { font-size:${config.fontSize}px!important; line-height:${config.lineHeight}px!important;
                 letter-spacing:${config.letterSpacing}px!important; font-weight:${config.bold ? 700 : 400}!important;
                 margin-top:0!important; margin-bottom:${config.paragraphGap}px!important; text-indent:2em!important; }
+            ${vertical ? `[data-eread-body] { margin-block-start:0!important; margin-block-end:${config.paragraphGap}px!important; margin-inline:0!important; }` : ''}
             [data-eread-body-size] { font-size:inherit!important; line-height:inherit!important; letter-spacing:inherit!important; }
             [data-eread-body-weight] { font-weight:inherit!important; }
         ` : '';
@@ -363,15 +390,16 @@
             ::view-transition-image-pair(root) { isolation:isolate; }
             ::view-transition-old(root),::view-transition-new(root) { mix-blend-mode:normal; height:100%; object-fit:fill; backface-visibility:hidden;
                 background:${config.paper || '#fff'} ${config.paperImage ? `linear-gradient(${config.night ? 'rgba(0,0,0,.72),rgba(0,0,0,.72)' : 'rgba(255,255,255,.72),rgba(255,255,255,.72)'}),url('${config.paperImage}') center/cover` : ''}; }
-            @font-face { font-family:eread-selected; src:url('${config.fontUrl}'); }
-            html { margin:0!important; padding:0!important; width:100%!important; height:${continuousHost ? 'auto' : '100%'}!important; scroll-behavior:auto!important; overflow:${scrolling && !continuousHost ? 'auto' : 'hidden'}!important; background:transparent!important; }
+            html { margin:0!important; padding:0!important; width:100%!important; height:${continuousHost ? 'auto' : '100%'}!important; writing-mode:horizontal-tb!important; scroll-behavior:auto!important; overflow:${scrolling && !continuousHost ? 'auto' : 'hidden'}!important; background:transparent!important; }
             body { box-sizing:content-box!important; margin:0!important; padding:${config.top}px ${config.right}px ${config.bottom}px ${config.left}px!important;
                 width:${horizontal ? width : Math.max(32, innerWidth - config.left - config.right)}px!important; min-width:0!important;
-                height:${horizontal ? height + 'px' : 'auto'}!important; min-height:${horizontal ? '0' : height + 'px'}!important;
-                column-width:${horizontal ? width + 'px' : 'auto'}!important; column-count:auto!important;
-                column-gap:${config.left + config.right}px!important; column-fill:auto!important; background:transparent!important;
+                height:${horizontal || vertical ? height + 'px' : 'auto'}!important; min-height:${horizontal || vertical ? '0' : height + 'px'}!important;
+                writing-mode:${vertical ? 'vertical-rl' : 'horizontal-tb'}!important; text-orientation:mixed!important;
+                column-width:${vertical ? height + 'px' : horizontal ? width + 'px' : 'auto'}!important; column-count:auto!important;
+                column-gap:${vertical ? config.top + config.bottom : config.left + config.right}px!important; column-fill:auto!important; background:transparent!important;
                 color:${config.color}!important; font-size:${config.fontSize}px; -webkit-text-size-adjust:none!important; overflow:visible!important; }
             body,body * { font-family:${family}!important; }
+            ${vertical ? 'body * { writing-mode:inherit!important; text-orientation:inherit!important; }' : ''}
             ${software}
             ${config.night || config.eink ? `body * { color:${config.color}!important; background-color:transparent!important; }` : ''}
             img,svg,image,video { max-width:100%!important; max-height:${height}px; object-fit:contain; break-inside:avoid; }
@@ -384,7 +412,7 @@
         fitPageBoundary();
         measureChapter();
         if (anchor && (!continuousHost || continuousHost.isActive(frameChapter)))
-            requestAnimationFrame(function () { navigate({offset: anchor.offset, image: anchor.image}); });
+            navigate({offset: anchor.offset, image: anchor.image});
     }
     function rectsFor(start, end) {
         if (end <= start || start < 0 || !characters.length) return [];
@@ -418,8 +446,13 @@
             const line = document.createElement('i');
             line.style.cssText = `left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;`;
             if (kind === 'UNDERLINE' || kind === 'NOTE') {
-                line.style.borderBottom = `2px ${wavy ? 'wavy' : 'solid'} ${color}`;
-                if (wavy) { line.style.borderBottom = '0'; line.style.background = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='4'%3E%3Cpath d='M0 2 Q2 0 4 2 T8 2' fill='none' stroke='%23${color.replace('#', '')}' stroke-width='1.5'/%3E%3C/svg%3E") bottom left/8px 4px repeat-x`; }
+                if (config.vertical) {
+                    line.style.borderRight = `2px solid ${color}`;
+                    if (wavy) { line.style.borderRight = '0'; line.style.background = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='8'%3E%3Cpath d='M2 0 Q0 2 2 4 T2 8' fill='none' stroke='%23${color.replace('#', '')}' stroke-width='1.5'/%3E%3C/svg%3E") top right/4px 8px repeat-y`; }
+                } else {
+                    line.style.borderBottom = `2px solid ${color}`;
+                    if (wavy) { line.style.borderBottom = '0'; line.style.background = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='4'%3E%3Cpath d='M0 2 Q2 0 4 2 T8 2' fill='none' stroke='%23${color.replace('#', '')}' stroke-width='1.5'/%3E%3C/svg%3E") bottom left/8px 4px repeat-x`; }
+                }
             } else { line.style.backgroundColor = color; line.style.opacity = '.3'; }
             overlay.appendChild(line);
         }
@@ -454,7 +487,7 @@
         const originals = [];
         let node;
         while ((node = walker.nextNode())) originals.push(node);
-        const all = originals.map(node => node.data).join(''), domChars = [], domLocations = [], wanted = [], wantedLocations = [];
+        const domChars = [], domLocations = [], wanted = [], wantedLocations = [];
         let position = 0;
         originals.forEach((node, index) => {
             const entry = {node:node, original:node.data, base:position, canonical:[], display:[]};
@@ -487,17 +520,36 @@
         }
         missing += wanted.length - a + domChars.length - b;
         if (missing > Math.max(4, wanted.length * .015)) throw new Error('原书文字与阅读记录不一致，未改动阅读位置');
+        pairs.forEach(pair => {
+            const location = domLocations[pair[1]];
+            sourceMappings.push({source:wantedLocations[pair[0]], entry:location[0], offset:location[1]});
+        });
+        convertText();
+    }
+    function convertText() {
+        const anchor = started ? navigationAnchor || viewport() : null;
+        const all = entries.map(entry => entry.original).join('');
         const converted = JSON.parse(bridge.convert(all));
         const forward = converted.forward;
         const displayOffset = offset => forward ? forward[Math.max(0, Math.min(forward.length - 1, offset))] : offset;
-        entries.forEach(entry => { entry.node.data = converted.text.substring(displayOffset(entry.base), displayOffset(entry.base + entry.original.length)); });
-        pairs.forEach(pair => {
-            const source = wantedLocations[pair[0]], location = domLocations[pair[1]], entry = entries[location[0]];
-            const start = displayOffset(entry.base + location[1]) - displayOffset(entry.base);
-            const end = displayOffset(entry.base + location[1] + 1) - displayOffset(entry.base);
-            characters.push(source); mapped.push({entry:location[0], start:start, end:Math.max(start, end)});
-            entry.canonical.push(source); entry.display.push(start);
+        characters.length = 0; mapped.length = 0;
+        entries.forEach(entry => {
+            entry.canonical.length = 0; entry.display.length = 0;
+            entry.node.data = converted.text.substring(displayOffset(entry.base), displayOffset(entry.base + entry.original.length));
         });
+        sourceMappings.forEach(point => {
+            const entry = entries[point.entry];
+            const start = displayOffset(entry.base + point.offset) - displayOffset(entry.base);
+            const end = displayOffset(entry.base + point.offset + 1) - displayOffset(entry.base);
+            characters.push(point.source); mapped.push({entry:point.entry, start:start, end:Math.max(start, end)});
+            entry.canonical.push(point.source); entry.display.push(start);
+        });
+        rangeGeometry.clear();
+        if (started) {
+            fitPageBoundary(); measureChapter();
+            if (anchor && (!continuousHost || continuousHost.isActive(frameChapter))) navigate(anchor);
+            report(true);
+        }
     }
     async function init(options) {
         if (initialized) return;
@@ -546,7 +598,7 @@
             };
             nodes.forEach(node => node.addEventListener('load', resourceReady));
             document.fonts.addEventListener('loadingdone', resourceReady);
-            configure(options.config, false);
+            await configure(options.config, false);
             overlay = document.createElement('div'); overlay.id = 'eread-overlays'; document.documentElement.appendChild(overlay);
             await Promise.race([document.fonts.ready, new Promise(resolve => setTimeout(resolve, 1500))]);
             await Promise.all(nodes.map(node => node.complete || node.tagName !== 'IMG' ? Promise.resolve() : new Promise(resolve => {
@@ -565,7 +617,7 @@
             });
         } catch (error) { fail(error); }
     }
-    function command(value) {
+    async function command(value) {
         if (!started) return;
         try {
             if (value.type === 'navigate') navigate(value);
@@ -573,19 +625,20 @@
                 const options = value.options;
                 sourceNotes = options.notes || [];
                 decorations = options.decorations;
-                configure(options.config, false);
+                await configure(options.config, false);
                 if (!options.preserveViewport) navigate(options.initialNavigation || {offset:0});
                 requestAnimationFrame(function () { send('ready'); report(true); });
             }
             else if (value.type === 'move') step(value.direction);
             else if (value.type === 'page') moveToPage(value.page);
             else if (value.type === 'clearSelection') getSelection().removeAllRanges();
-            else if (value.type === 'configure') configure(value.config, true);
+            else if (value.type === 'configure') await configure(value.config, true);
+            else if (value.type === 'convert') convertText();
             else if (value.type === 'decorate') { decorations = value.decorations; drawDecorations(); }
             else if (value.type === 'notes') { sourceNotes = value.notes; drawDecorations(); }
             else if (value.type === 'report') report(true);
             else if (value.type === 'hostViewport') report(true);
-            else if (value.type === 'hostResize') configure(config, true, true);
+            else if (value.type === 'hostResize') await configure(config, true, true);
         } catch (error) { fail(error); }
     }
     document.addEventListener('selectionchange', selection);
@@ -596,7 +649,7 @@
     window.addEventListener('scroll', function () { if (!automatic && touch) beginManual(); schedule(); if (manual) endManual(); }, {passive:true});
     window.addEventListener('resize', function () {
         if (continuousHost) return;
-        clearTimeout(resizeTimer); resizeTimer = setTimeout(function () { configure(config, true, true); }, 80);
+        clearTimeout(resizeTimer); resizeTimer = setTimeout(function () { configure(config, true, true).catch(fail); }, 80);
     });
     document.addEventListener('touchstart', function (event) {
         if (!started || event.touches.length !== 1) return;

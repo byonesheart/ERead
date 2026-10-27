@@ -179,10 +179,11 @@ internal fun EbookReaderSurface(
         else -> MaterialTheme.colorScheme.background
     }).toArgb()
     val config = rememberEbookConfig(settings, foreground, dualPage, einkMode)
+    val openFont = rememberEbookFontOpener(settings)
     var document by remember(store) { mutableStateOf<Pair<String, EbookSourceDocument>?>(null) }
-    var loadingError by remember(store, chapterIndex, canonicalText, chineseConverter) { mutableStateOf<String?>(null) }
+    var loadingError by remember(store, chapterIndex, canonicalText) { mutableStateOf<String?>(null) }
     var webView by remember { mutableStateOf<EbookWebView?>(null) }
-    var ready by remember(store, chapterIndex, canonicalText, chineseConverter) { mutableStateOf(false) }
+    var ready by remember(store, chapterIndex, canonicalText) { mutableStateOf(false) }
     var selected by remember(store, chapterIndex, canonicalText) { mutableStateOf<ReaderSelectedPassage?>(null) }
     val latestConfig by rememberUpdatedState(config)
     val latestConverter by rememberUpdatedState(chineseConverter)
@@ -198,7 +199,7 @@ internal fun EbookReaderSurface(
     val latestChapter by rememberUpdatedState(chapter)
     val latestMenuEnabled by rememberUpdatedState(selectionMenuEnabled)
     val script = remember(context) { context.assets.open("reader/ebook-reader.js").bufferedReader().use { it.readText() } }
-    val generation = remember(store, chapterIndex, canonicalText, chineseConverter, contentReady) { UUID.randomUUID().toString() }
+    val generation = remember(store, chapterIndex, canonicalText, contentReady) { UUID.randomUUID().toString() }
     val latestGeneration by rememberUpdatedState(generation)
     var loadingVisible by remember(generation) { mutableStateOf(false) }
     LaunchedEffect(generation, ready, loadingError) {
@@ -244,13 +245,16 @@ internal fun EbookReaderSurface(
     }) }
     val latestSourceNotes by rememberUpdatedState(sourceNotes)
     LaunchedEffect(config.toString(), ready) { if (ready) { webView?.appliedConfig = config.toString(); invoke(JSONObject().put("type", "configure").put("config", config)) } }
+    LaunchedEffect(chineseConverter, ready) { if (ready) {
+        invoke(JSONObject().put("type", "convert")); controller.consumePending()
+    } }
     LaunchedEffect(decorations.toString(), ready) { if (ready) invoke(JSONObject().put("type", "decorate").put("decorations", decorations)) }
     LaunchedEffect(sourceNotes.toString(), ready) { if (ready) invoke(JSONObject().put("type", "notes").put("notes", sourceNotes)) }
     Box(modifier) {
         val prepared = document
         val source = prepared?.second
         if (source != null) {
-            val browserKey = source.key + ":" + settings.chineseConversion.name
+            val browserKey = source.key
             fun loadDocument(browser: EbookWebView) {
                 val reuse = browser.loadedKey == browserKey && browser.pageReady
                 val navigation = controller.initialNavigation(chapterIndex) ?: JSONObject().put("type", "navigate")
@@ -280,11 +284,7 @@ internal fun EbookReaderSurface(
                 browser.webViewClient = EbookReaderWebViewClient(source.baseUrl,
                     if (reuse) browser.envelope else ebookReaderHtml(source, script, UUID.randomUUID().toString(), initialOptions())
                         .also { browser.envelope = it }, openResource = store::openResource,
-                    openFont = {
-                        val chosen = latestSettings
-                        runCatching { chosen.fontPath?.let { File(it).inputStream() }
-                            ?: readerBundledFontResource(chosen)?.let { context.resources.openRawResource(it) } }.getOrNull()
-                    }, openBackground = {
+                    openFont = openFont, openBackground = {
                         latestSettings.backgroundImagePath?.takeIf { latestSettings.background == ReaderBackground.IMAGE }
                             ?.let { path -> File(path).inputStream() }
                     }, onFailure = ::fail, onDocumentLoaded = { view ->
@@ -445,12 +445,11 @@ internal fun rememberEbookConfig(settings: ReaderSettings, foreground: Color, du
         ReaderBackground.GREEN -> Color(0xFFE5EBD9)
         else -> MaterialTheme.colorScheme.background
     }
-    val fontVersion = remember(settings.fontName, settings.fontPath) {
-        settings.fontPath?.let { File(it).let { file -> "${file.length()}-${file.lastModified()}" } } ?: settings.fontName.hashCode().toString()
-    }
-    val config = remember(settings, foreground, dualPage, einkMode, fontScale, calibration, fontVersion, paper) {
+    val fontUrl = remember(settings.fontName, settings.fontPath) { ebookReaderFontUrl(settings) }
+    val config = remember(settings, foreground, dualPage, einkMode, fontScale, calibration, fontUrl, paper) {
         JSONObject().put("mode", settings.readingMode.name).put("turn", settings.pageTurnStyle.name)
             .put("authorCss", settings.useSourceCss).put("dual", dualPage).put("eink", einkMode)
+            .put("vertical", settings.verticalText)
             .put("fontSize", settings.fontSize * calibration.sizeScale * fontScale)
             .put("lineHeight", settings.fontSize * settings.lineHeight * fontScale)
             .put("letterSpacing", (settings.letterSpacing + settings.fontSize * calibration.trackingEm) * fontScale)
@@ -464,9 +463,34 @@ internal fun rememberEbookConfig(settings: ReaderSettings, foreground: Color, du
             .put("top", settings.marginTop).put("bottom", settings.marginBottom)
             .put("font", if (settings.fontPath != null || readerBundledFontResource(settings) != null) "eread-selected"
                 else if (settings.fontName == "等宽字体") "monospace" else "sans-serif")
-            .put("fontUrl", "https://eread.local/reader-font?v=$fontVersion")
+            .put("fontUrl", fontUrl)
     }
     return config
+}
+
+internal fun ebookReaderFontUrl(settings: ReaderSettings): String {
+    val version = settings.fontPath?.let { path -> File(path).let { "${path.hashCode()}-${it.length()}-${it.lastModified()}" } }
+        ?: settings.fontName.hashCode().toString()
+    return "https://eread.local/reader-font?v=$version"
+}
+
+/** A delayed request must read the font identified by its URL, even after another selection. */
+@Composable
+internal fun rememberEbookFontOpener(settings: ReaderSettings): (String) -> java.io.InputStream? {
+    val context = LocalContext.current
+    val selections = remember { linkedMapOf<String, ReaderSettings>() }
+    val url = remember(settings.fontName, settings.fontPath) { ebookReaderFontUrl(settings) }
+    SideEffect { synchronized(selections) {
+        selections.remove(url); selections[url] = settings
+        while (selections.size > 3) selections.remove(selections.keys.first())
+    } }
+    return remember(context) { { requested ->
+        val selected = synchronized(selections) { selections[requested] }
+        selected?.let { chosen -> runCatching {
+            chosen.fontPath?.let { File(it).inputStream() }
+                ?: readerBundledFontResource(chosen)?.let { context.resources.openRawResource(it) }
+        }.getOrNull() }
+    } }
 }
 
 /** Keep Android selection handles, but never display its competing copy/share menu. */

@@ -144,6 +144,34 @@ try{
    assert.ok(readyAt>=0&&readyAt<viewportAt);
    const state=events[viewportAt];assert.ok(state.offset<=offset+2&&state.endOffset>offset);return state;
  });
+ await test('live-conversion-keeps-loaded-chapter-frames-and-the-current-anchor',async()=>{
+   const offset=chapters[5].canonical.indexOf(chapters[5].paragraphs[8]);await jump(5,offset);
+   await page.waitForFunction(()=>document.querySelectorAll('iframe').length===3&&Array.from(document.querySelectorAll('iframe')).every(frame=>frame.style.opacity==='1'));
+   await page.evaluate(()=>{
+     window.conversionFrames=Array.from(document.querySelectorAll('iframe'));
+     __ERead.convert=text=>{
+       let display='';const forward=[0];
+       for(let i=0;i<text.length;i++){display+=text[i]==='第'?'第📚':text[i];forward.push(display.length)}
+       return JSON.stringify({text:display,forward});
+     };
+     ERead.command({type:'convert'});
+   });
+   await page.waitForFunction(()=>document.querySelector('iframe[data-chapter="5"]').contentDocument.body.textContent.includes('第📚'));
+   assert.equal(await page.evaluate(()=>window.conversionFrames.every(frame=>frame.isConnected&&frame.style.opacity==='1')),true);
+   await page.evaluate(()=>{__ERead.convert=text=>JSON.stringify({text});ERead.command({type:'convert'})});
+   await jump(5,offset);
+   const state=await page.evaluate(()=>events.filter(e=>e.type==='viewport').at(-1));
+   assert.ok(state.offset<=offset+2&&state.endOffset>offset);return {sameFrames:true,state};
+ });
+ await test('vertical-writing-keeps-continuous-chapter-navigation-and-a-bounded-dom',async()=>{
+   await page.evaluate(config=>ERead.command({type:'configure',config}),{...config,authorCss:false,vertical:true});
+   const offset=chapters[5].canonical.indexOf(chapters[5].paragraphs[8]);await jump(5,offset);
+   const child=page.frames().find(f=>/\/5\.html/.test(f.url()));
+   assert.equal(await child.locator('#p8').evaluate(node=>getComputedStyle(node).writingMode),'vertical-rl');
+   const state=await page.evaluate(()=>events.filter(e=>e.type==='viewport').at(-1));
+   assert.equal(state.chapter,5);assert.ok(state.offset<=offset+2&&state.endOffset>offset);
+   assert.ok(await page.evaluate(()=>document.querySelectorAll('iframe').length<=3));return state;
+ });
 }catch(error){
  console.log(JSON.stringify(await page.evaluate(()=>({events:window.events,scroll:scrollY,frames:Array.from(document.querySelectorAll('iframe')).map(f=>({src:f.src,height:f.offsetHeight,ready:f.contentDocument?.readyState,reader:!!f.contentWindow?.ERead,text:f.contentDocument?.body?.textContent.slice(-180)}))})),null,2));
  throw error;

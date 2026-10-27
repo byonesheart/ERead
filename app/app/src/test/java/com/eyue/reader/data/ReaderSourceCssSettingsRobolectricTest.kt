@@ -11,6 +11,18 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
 class ReaderSourceCssSettingsRobolectricTest {
+    @Test fun verticalTextIsOptionalPersistsInProfilesAndResetsOnlyTheSelectedLibraryMode() {
+        val repository = LibraryRepository(RuntimeEnvironment.getApplication())
+        assertFalse(repository.readSettings(JSONObject()).verticalText)
+        val novel = ReaderSettings(verticalText = true).saveAppearanceProfile()
+        val saved = repository.readSettings(repository.writeSettings(novel))
+        assertTrue(saved.verticalText)
+        assertTrue(saved.copy(verticalText = false).applyAppearanceProfile(saved.appearanceProfiles.single()).verticalText)
+        val comic = ReaderSettings(verticalText = true)
+        val reset = LibraryState(settings = saved, comicSettings = comic).resetReaderPreferences(LibraryMode.NOVEL)
+        assertFalse(reset.settings.verticalText)
+        assertSame(comic, reset.comicSettings)
+    }
     @Test fun continuousScrollIsTheDefaultAndCanPersistTheOriginalChapterModeIndependently() {
         val repository = LibraryRepository(RuntimeEnvironment.getApplication())
         assertTrue(repository.readSettings(JSONObject()).continuousEbookScroll)

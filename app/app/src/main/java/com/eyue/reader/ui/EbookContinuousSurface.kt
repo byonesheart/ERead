@@ -45,8 +45,8 @@ internal fun EbookContinuousSurface(
     val localSession = remember { if (session == null) EbookReaderSession(context) else null }
     val pool = session ?: requireNotNull(localSession)
     val config = rememberEbookConfig(settings, foreground, einkMode = eink)
+    val openFont = rememberEbookFontOpener(settings)
     val latestConfig by rememberUpdatedState(config)
-    val latestSettings by rememberUpdatedState(settings)
     val latestConverter by rememberUpdatedState(converter)
     val latestRead by rememberUpdatedState(readText)
     val latestAnnotations by rememberUpdatedState(annotations)
@@ -61,7 +61,7 @@ internal fun EbookContinuousSurface(
     val latestAnnotation by rememberUpdatedState(onAnnotation)
     val latestFootnote by rememberUpdatedState(onFootnote)
     val latestMenu by rememberUpdatedState(menuEnabled)
-    val key = store.continuousKey + ":" + settings.chineseConversion.name
+    val key = store.continuousKey
     val generation = remember(store, key) { UUID.randomUUID().toString() }
     val documents = remember(store, key) { mutableMapOf<Int, Pair<EbookSourceDocument, Chapter>>() }
     val html = remember(store, key) { ConcurrentHashMap<String, String>() }
@@ -143,8 +143,7 @@ internal fun EbookContinuousSurface(
         val envelope = if (reuse) view.envelope else ebookReaderHtml(source, windowScript, generation, options, allowReaderFrames = true)
             .also { view.envelope = it }
         view.webViewClient = EbookReaderWebViewClient(store.continuousUrl, envelope, store::openResource,
-            openFont = { latestSettings.fontPath?.let { java.io.File(it).inputStream() }
-                ?: readerBundledFontResource(latestSettings)?.let { context.resources.openRawResource(it) } },
+            openFont = openFont,
             onDocumentLoaded = {}, onFailure = ::fail, openChapterDocument = html::get)
         view.convertText = { text -> latestConverter?.convert(text).let { converted -> JSONObject().put("text", converted?.text ?: text)
             .put("forward", converted?.forward?.let { JSONArray(it.toList()) }).toString() } }
@@ -211,6 +210,9 @@ internal fun EbookContinuousSurface(
     }
     LaunchedEffect(config.toString(), ready) { if (ready) {
         browser?.appliedConfig = config.toString(); invoke(JSONObject().put("type", "configure").put("config", config)); controller.consumePending()
+    } }
+    LaunchedEffect(converter, ready) { if (ready) {
+        invoke(JSONObject().put("type", "convert")); controller.consumePending()
     } }
     LaunchedEffect(annotations, search, spoken, chapterIndex, ready) { if (ready) documents.keys.toList().forEach { index ->
         invoke(JSONObject().put("type", "decorateChapter").put("chapter", index).put("decorations", decorations(index)))

@@ -60,6 +60,10 @@ import kotlinx.coroutines.launch
                 }
             }
             HorizontalDivider(Modifier.padding(top = 14.dp), color = Line)
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                Text("位置：${bookStorageLocation(book)}", fontSize = 11.sp, color = Muted,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp).testTag("sheet_book_location"))
+            }
             Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 12.dp)) {
                 ShelfQuickAction(Icons.Outlined.Info, "书籍信息", Color(0xFF7FA9F0), Modifier.weight(1f)) { choose(onDetails) }
                 ShelfQuickAction(Icons.Outlined.FolderOpen, "移动分组", Color(0xFFFFC24B), Modifier.weight(1f)) { choose(onMove) }
@@ -107,6 +111,13 @@ import kotlinx.coroutines.launch
             }
         }
     }
+}
+
+internal fun bookStorageLocation(book: Book): String = when {
+    book.cloudOnly -> "云端，尚未下载到本机"
+    book.isDemo -> "应用内置示例"
+    book.sourceLinked -> book.sourceUri ?: book.sourcePath ?: "原文件位置不可用"
+    else -> book.sourcePath ?: book.sourceUri ?: "本地文件位置不可用"
 }
 
 @Composable private fun ShelfQuickAction(icon: ImageVector, label: String, color: Color, modifier: Modifier = Modifier,

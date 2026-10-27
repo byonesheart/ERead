@@ -38,7 +38,7 @@ internal class EbookSourceStore(private val context: Context, private val book: 
     @Volatile private var index: JSONObject? = null
     @Volatile private var closed = false
     private val source: String = (if (book.sourceLinked) book.sourceUri ?: book.sourcePath else book.sourcePath ?: book.sourceUri)
-        ?: throw IOException("原文件不存在，请重新选择这本书")
+        ?: if (book.format == BookFormat.TXT) "" else throw IOException("原文件不存在，请重新选择这本书")
     private val bookKey = digest(book.id).take(24)
     private val origin = "https://eread.local/$bookKey/"
     val continuousKey: String get() = "$bookKey:${book.contentVersion}:continuous"
@@ -58,6 +58,20 @@ internal class EbookSourceStore(private val context: Context, private val book: 
             require(chapterIndex in book.chapters.indices) { "原书章节位置无效" }
             val worker = currentCoroutineContext()
             worker.ensureActive()
+            if (book.format == BookFormat.TXT) {
+                synchronized(documents) { documents[chapterIndex] }?.takeIf { it.canonicalText == canonicalText }
+                    ?.let { return@withLock it }
+                val html = canonicalText.lineSequence().joinToString("\n", "<html><head></head><body>", "</body></html>") { line ->
+                    "<p>" + line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + "</p>"
+                }
+                return@withLock EbookSourceDocument("$bookKey:${book.contentVersion}:$chapterIndex:${digest(canonicalText)}",
+                    html, origin + "archive/chapter-$chapterIndex.html", canonicalText).also { document ->
+                    synchronized(documents) {
+                        if (window?.contains(chapterIndex) != false) documents[chapterIndex] = document
+                        while (documents.size > 3) documents.remove(documents.keys.first())
+                    }
+                }
+            }
             val content = DeferredEbookContent.ensure(book.chapters[chapterIndex]) { worker.ensureActive() }
             content.inlineImages.forEach { image ->
                 val file = File(image.path).canonicalFile

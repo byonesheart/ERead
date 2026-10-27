@@ -17,7 +17,7 @@ internal class EbookReaderWebViewClient(
     private val documentUrl: String,
     documentHtml: String,
     private val openResource: (String) -> EbookSourceResource?,
-    private val openFont: () -> InputStream?,
+    private val openFont: (String) -> InputStream?,
     private val onDocumentLoaded: (WebView) -> Unit,
     private val onFailure: (String) -> Unit,
     private val openChapterDocument: (String) -> String? = { null },
@@ -44,7 +44,7 @@ internal class EbookReaderWebViewClient(
         }
         return try {
             if (request.url.scheme == "https" && request.url.authority == "eread.local" && request.url.path == "/reader-font") {
-                openFont()?.let { return WebResourceResponse("font/ttf", null, it) }
+                openFont(request.url.toString())?.let { return WebResourceResponse("font/ttf", null, it) }
             }
             if (request.url.scheme == "https" && request.url.authority == "eread.local" && request.url.path == "/reader-background") {
                 openBackground()?.buffered()?.let { stream -> return WebResourceResponse(

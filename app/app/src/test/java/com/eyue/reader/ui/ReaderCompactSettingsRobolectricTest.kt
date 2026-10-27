@@ -40,6 +40,21 @@ import kotlin.math.roundToInt
 class ReaderCompactSettingsRobolectricTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun ebookTypographyAndScrollSubSettingsStayWithTheirRelatedControls() {
+        var settings by mutableStateOf(ReaderSettings())
+        compose.setContent { MaterialTheme { Surface(Modifier.fillMaxWidth().height(600.dp)) {
+            ReaderCompactSettings(settings, false, { settings = it }, {}, {}, sourceCssAvailable = true)
+        } } }
+        compose.onNodeWithTag("reader_scroll_options").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("reader_continuous_scroll").assertExists()
+        compose.onNodeWithTag("reader_use_source_css").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("reader_vertical_text_true").performScrollTo().performClick().assertIsSelected()
+        compose.runOnIdle { assertTrue(settings.verticalText) }
+        compose.onNodeWithTag("reader_mode_paged").performScrollTo().performClick()
+        compose.onNodeWithTag("reader_continuous_scroll").assertDoesNotExist()
+        compose.runOnIdle { assertTrue(settings.continuousEbookScroll) }
+    }
+
     @Config(qualifiers = "w360dp-h800dp-mdpi")
     @Test fun interfaceAutosavesWhileHalfScreenSettingsScrollWithoutNestedTabsOrSaveButtons() {
         var dark by mutableStateOf(false)

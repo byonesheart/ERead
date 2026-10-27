@@ -22,7 +22,8 @@ data class ReaderAppearance(
     val marginLeft: Float = 24f,
     val marginRight: Float = 24f,
     val marginTop: Float = 18f,
-    val marginBottom: Float = 18f
+    val marginBottom: Float = 18f,
+    val verticalText: Boolean = false
 ) {
     fun mapPaths(path: (String?) -> String?): ReaderAppearance = copy(fontPath = path(fontPath),
         backgroundImagePath = path(backgroundImagePath))
@@ -36,6 +37,7 @@ data class ReaderAppearance(
         .put("showBattery", showBattery).put("showChapter", showChapter)
         .put("marginLeft", marginLeft.toDouble()).put("marginRight", marginRight.toDouble())
         .put("marginTop", marginTop.toDouble()).put("marginBottom", marginBottom.toDouble())
+        .put("verticalText", verticalText)
 
     companion object {
         internal fun fromJson(json: JSONObject, defaults: ReaderAppearance = ReaderAppearance()): ReaderAppearance {
@@ -58,7 +60,8 @@ data class ReaderAppearance(
                 marginLeft = number("marginLeft", defaults.marginLeft, 0f..64f),
                 marginRight = number("marginRight", defaults.marginRight, 0f..64f),
                 marginTop = number("marginTop", defaults.marginTop, 0f..64f),
-                marginBottom = number("marginBottom", defaults.marginBottom, 0f..64f))
+                marginBottom = number("marginBottom", defaults.marginBottom, 0f..64f),
+                verticalText = json.optBoolean("verticalText", defaults.verticalText))
         }
     }
 }
@@ -79,14 +82,15 @@ internal fun readReaderThemeProfiles(array: JSONArray?, defaults: ReaderAppearan
 
 fun ReaderSettings.appearanceSnapshot(): ReaderAppearance = ReaderAppearance(fontSize, lineHeight, paragraphSpacing,
     letterSpacing, fontName, fontPath, bold, background, backgroundImagePath, brightness, showTime, showBattery, showChapter,
-    marginLeft, marginRight, marginTop, marginBottom)
+    marginLeft, marginRight, marginTop, marginBottom, verticalText)
 
 fun ReaderSettings.applyAppearanceProfile(profile: ReaderThemeProfile): ReaderSettings = with(profile.appearance) {
     this@applyAppearanceProfile.copy(fontSize = fontSize, lineHeight = lineHeight, paragraphSpacing = paragraphSpacing,
         letterSpacing = letterSpacing, fontName = fontName, fontPath = fontPath, bold = bold, background = background,
         backgroundImagePath = backgroundImagePath, brightness = brightness, showTime = showTime,
         showBattery = showBattery, showChapter = showChapter, activeAppearanceProfileId = profile.id,
-        marginLeft = marginLeft, marginRight = marginRight, marginTop = marginTop, marginBottom = marginBottom)
+        marginLeft = marginLeft, marginRight = marginRight, marginTop = marginTop, marginBottom = marginBottom,
+        verticalText = verticalText)
 }
 
 fun ReaderSettings.saveAppearanceProfile(profileId: String? = null): ReaderSettings {

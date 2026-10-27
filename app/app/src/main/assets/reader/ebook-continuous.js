@@ -133,6 +133,8 @@
         } else if (value.type === 'configure') {
             options.config = value.config;
             loaded.forEach((item, index) => commandChild(index, {type:'configure', config:Object.assign({}, value.config, {continuous:true})}));
+        } else if (value.type === 'convert') {
+            loaded.forEach((item, index) => commandChild(index, {type:'convert'}));
         } else if (value.type === 'decorateChapter') commandChild(value.chapter, {type:'decorate', decorations:value.decorations});
         else if (value.type === 'notesChapter') commandChild(value.chapter, {type:'notes', notes:value.notes});
     }

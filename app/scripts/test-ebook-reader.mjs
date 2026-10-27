@@ -513,6 +513,86 @@ try {
     return selection;
   });
 
+  await test('font-switch-keeps-old-metrics-until-the-new-face-is-loaded', async () => {
+    await open({authorCss:false, font:'serif'});
+    let requested = false;
+    await page.route('**/reader-font?slow=1', async route => {
+      requested = true;
+      await new Promise(resolve => setTimeout(resolve, 700));
+      await route.fulfill({contentType:'font/otf', body:await fs.readFile(path.join(scriptDir, '../app/src/main/res/font/reader_song.otf'))});
+    });
+    await page.evaluate(config => { window.fontChange = ERead.command({type:'configure', config}); },
+      {...baseConfig, authorCss:false, font:'eread-selected', fontUrl:'https://eread.local/reader-font?slow=1', fontSize:23});
+    await page.waitForTimeout(100);
+    assert.ok(requested);
+    const pending = await page.locator('#intro').evaluate(node => ({size:getComputedStyle(node).fontSize, family:getComputedStyle(node).fontFamily}));
+    assert.deepEqual(pending, {size:'19px', family:'serif'});
+    await page.evaluate(() => window.fontChange);
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('#intro')).fontSize === '23px');
+    return {pending, final:await page.locator('#intro').evaluate(node => getComputedStyle(node).fontFamily)};
+  });
+
+  await test('background-switch-reuses-the-loaded-font-face', async () => {
+    const config = {...baseConfig, font:'eread-selected', fontUrl:'https://eread.local/reader-font?font=reader_hei.otf'};
+    await open(config);
+    await page.evaluate(() => { window.savedFaces = [...document.fonts]; });
+    for (const paper of ['#e5ebd9', '#ffffff', '#f6f6ef']) await command({type:'configure', config:{...config, paper}});
+    assert.equal(await page.evaluate(() => [...document.fonts].every((face, index) => face === window.savedFaces[index])), true);
+    return {fontReused:true};
+  });
+
+  await test('live-conversion-keeps-the-document-and-canonical-selection', async () => {
+    await open();
+    await page.evaluate(() => {
+      window.savedBody = document.body;
+      window.__ERead.convert = text => {
+        let display = ''; const forward = [0];
+        for (const char of text) { display += char === '书' ? '冊📘' : char; forward.push(display.length); }
+        return JSON.stringify({text:display, forward});
+      };
+    });
+    await command({type:'convert'});
+    const bodyText = await page.locator('#intro').textContent();
+    assert.ok(bodyText.includes('原冊📘结构'));
+    assert.equal(await page.evaluate(() => document.body === window.savedBody), true);
+    await page.evaluate(() => {
+      const node = document.querySelector('#intro').firstChild, start = node.data.indexOf('原冊📘结构'), range = document.createRange();
+      range.setStart(node, start); range.setEnd(node, start + '原冊📘结构'.length);
+      getSelection().removeAllRanges(); getSelection().addRange(range);
+    });
+    await page.waitForFunction(() => window.events.some(e => e.type === 'selection' && e.end > e.start));
+    const selection = await page.evaluate(() => window.events.findLast(e => e.type === 'selection' && e.end > e.start));
+    assert.equal(canonical.substring(selection.start, selection.end), '原书结构');
+    await page.evaluate(() => { window.__ERead.convert = text => JSON.stringify({text}); });
+    await command({type:'convert'});
+    assert.ok((await page.locator('#intro').textContent()).includes('原书结构'));
+    return {sameBody:true, selection};
+  });
+
+  for (const mode of ['SCROLL', 'PAGED', 'VERTICAL_PAGED']) for (const authorCss of [false, true]) {
+    await test(`vertical-writing-${mode}-${authorCss}`, async () => {
+      await open({mode, authorCss, vertical:true});
+      assert.equal(await page.locator('#paragraph-0').evaluate(node => getComputedStyle(node).writingMode), 'vertical-rl');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+      const offset = canonical.indexOf(lines[22]);
+      await command({type:'navigate', offset});
+      assert.ok(onScreen(await textRect('paragraph-22')));
+      const current = await viewport();
+      assert.ok(current.offset <= offset && current.endOffset > offset, JSON.stringify(current));
+      if (screenshots) await page.screenshot({path:path.join(outputDir, `vertical-layout-${mode}-${authorCss}.png`)});
+      if (mode !== 'SCROLL') {
+        await command({type:'move', direction:1});
+        const next = await viewport();
+        assert.equal(next.page, current.page + 1);
+        await command({type:'navigate', lastPage:true});
+        assert.equal((await viewport()).atEnd, true);
+      }
+      await command({type:'configure', config:{...baseConfig, mode, authorCss, vertical:false}});
+      assert.equal(await page.locator('#paragraph-0').evaluate(node => getComputedStyle(node).writingMode), 'horizontal-tb');
+      return {mode, authorCss, pages:current.pages};
+    });
+  }
+
   await test('bundled-font-loading-and-switching', async () => {
     const evidence = [];
     for (const font of ['reader_song.otf', 'reader_hei.otf']) {

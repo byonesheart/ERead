@@ -34,7 +34,8 @@ import kotlin.math.roundToInt
 internal fun ReaderCompactSettings(
     settings: ReaderSettings, raster: Boolean, onSettings: (ReaderSettings) -> Unit,
     onImportFont: () -> Unit, onImportBackground: () -> Unit,
-    onFonts: () -> Unit = onImportFont
+    onFonts: () -> Unit = onImportFont,
+    sourceCssAvailable: Boolean = false
 ) {
     var editingProfileId by remember { mutableStateOf<String?>(null) }
     val themedSettings = remember(settings) { settings.autosaveAppearanceProfile() }
@@ -51,18 +52,18 @@ internal fun ReaderCompactSettings(
                 editingProfileId = null
                 updateSettings(themedSettings.saveAppearanceProfile())
             })
-            ReaderInterfaceSettings(themedSettings, raster, updateSettings, onImportBackground, onFonts)
+            ReaderInterfaceSettings(themedSettings, raster, updateSettings, onImportBackground, onFonts, sourceCssAvailable)
         }
     }
 }
 
 @Composable
 internal fun ReaderPreferencesPanel(settings: ReaderSettings, onSettings: (ReaderSettings) -> Unit,
-    onResetDefaults: () -> Unit = {}, sourceCssAvailable: Boolean = false) {
+    onResetDefaults: () -> Unit = {}) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
         Text("设置", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = 12.dp))
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-            ReaderPreferenceSettings(settings, onSettings, onResetDefaults, sourceCssAvailable)
+            ReaderPreferenceSettings(settings, onSettings, onResetDefaults)
         }
     }
 }
@@ -70,7 +71,7 @@ internal fun ReaderPreferencesPanel(settings: ReaderSettings, onSettings: (Reade
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, onSettings: (ReaderSettings) -> Unit,
-    onImportBackground: () -> Unit, onFonts: () -> Unit) {
+    onImportBackground: () -> Unit, onFonts: () -> Unit, sourceCssAvailable: Boolean) {
     val colors = MaterialTheme.colorScheme
     ReaderSettingSection("翻页方式") {
         ReaderSettingOptions("模式") {
@@ -79,6 +80,14 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
                 Triple(ReadingMode.VERTICAL_PAGED, "上下", Icons.Outlined.SwapVert)).forEach { (mode, label, icon) ->
                 ReaderSettingChoice(label, settings.readingMode == mode, { onSettings(settings.copy(readingMode = mode)) },
                     Modifier.weight(1f).testTag("reader_mode_${mode.name.lowercase()}"), leading = { Icon(icon, null, Modifier.size(15.dp)) })
+            }
+        }
+        if (settings.readingMode == ReadingMode.SCROLL && sourceCssAvailable) {
+            Column(Modifier.fillMaxWidth().padding(start = 44.dp).testTag("reader_scroll_options")) {
+                ReaderToggle("连贯滚动", settings.continuousEbookScroll, Modifier.testTag("reader_continuous_scroll")) {
+                    onSettings(settings.copy(continuousEbookScroll = it))
+                }
+                Text("自然衔接相邻章节；关闭后逐章滚动。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             }
         }
         if (settings.readingMode == ReadingMode.PAGED) ReaderSettingOptions("效果") {
@@ -105,12 +114,24 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
                     { onSettings(settings.copy(chineseConversion = value)) }, Modifier.weight(1f).testTag("reader_conversion_${value.name.lowercase()}"))
             }
         }
+        ReaderSettingOptions("排版") {
+            listOf(false to "横排", true to "竖排").forEach { (vertical, label) ->
+                ReaderSettingChoice(label, settings.verticalText == vertical,
+                    { onSettings(settings.copy(verticalText = vertical)) }, Modifier.weight(1f).testTag("reader_vertical_text_$vertical"))
+            }
+        }
         ReaderAdjustableSlider("行距", "阅读行间距", settings.lineHeight, 1.2f..2.4f, .05f,
             { onSettings(settings.copy(lineHeight = it)) }, { String.format(Locale.getDefault(), "%.2f", it) })
         ReaderAdjustableSlider("段距", "阅读段间距", settings.paragraphSpacing, 0f..2f, .1f,
             { onSettings(settings.copy(paragraphSpacing = it)) }, { String.format(Locale.getDefault(), "%.1f", it) })
         ReaderAdjustableSlider("字距", "阅读字间距", settings.letterSpacing, -.2f..3f, .1f,
             { onSettings(settings.copy(letterSpacing = it)) }, { String.format(Locale.getDefault(), "%.1f", it) })
+        if (sourceCssAvailable) {
+            ReaderToggle("使用原书 CSS", settings.useSourceCss, Modifier.testTag("reader_use_source_css")) {
+                onSettings(settings.copy(useSourceCss = it))
+            }
+            Text("保留原书文字排版，字体使用当前所选字体。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+        }
     }
     ReaderSettingSection("纸张与亮度", trailing = {
         Row(verticalAlignment = Alignment.CenterVertically) {

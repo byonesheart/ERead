@@ -170,12 +170,14 @@ internal fun ReaderScreen(
     val chineseDisplay by produceState<Pair<ChineseConversion, ChineseTextConverter?>?>(null, settings.chineseConversion) {
         value = settings.chineseConversion to ChineseTextConverter.load(context, settings.chineseConversion)
     }
-    val chineseConverter = chineseDisplay?.takeIf { it.first == settings.chineseConversion }?.second
-    val conversionReady = settings.chineseConversion == ChineseConversion.ORIGINAL || chineseConverter != null
+    // Keep the previous display while a newly selected conversion dictionary loads.
+    val chineseConverter = chineseDisplay?.second
+    val conversionReady = settings.chineseConversion == ChineseConversion.ORIGINAL || chineseDisplay != null
     val importedBook = book
-    val sourceEbook = importedBook.mode == LibraryMode.NOVEL && !importedBook.isDemo && !importedBook.cloudOnly &&
-        importedBook.format in setOf(BookFormat.EPUB, BookFormat.MOBI) &&
-        (!importedBook.sourcePath.isNullOrBlank() || !importedBook.sourceUri.isNullOrBlank())
+    val sourceEbook = importedBook.mode == LibraryMode.NOVEL && !importedBook.cloudOnly && (
+        importedBook.format == BookFormat.TXT && settings.verticalText ||
+        !importedBook.isDemo && importedBook.format in setOf(BookFormat.EPUB, BookFormat.MOBI) &&
+            (!importedBook.sourcePath.isNullOrBlank() || !importedBook.sourceUri.isNullOrBlank()))
     val ebookStore = remember(sourceEbook, importedBook.id, importedBook.contentVersion, importedBook.sourcePath,
         importedBook.sourceUri, importedBook.sourceLinked, importedBook.chapters) {
         if (sourceEbook) EbookSourceStore(context, importedBook) else null
@@ -313,7 +315,7 @@ internal fun ReaderScreen(
         importedBook.contentVersion, importedBook.chapters, spec.textWidth, spec.textHeight, settings.fontSize,
         settings.lineHeight, settings.letterSpacing, settings.paragraphSpacing, settings.fontPath, settings.fontName,
         settings.bold, density, layoutDirection, mode, settings.chineseConversion, chineseConverter, settings.useSourceCss,
-        settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom)
+        settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom, settings.verticalText)
     val currentLayoutKey = layoutKey(settings.readingMode, layoutSpec)
     val requestedDualPage = readerUseDualPage(tabletDualPage, requestedSettings.readingMode,
         LocalWindowInfo.current.containerSize, density)
@@ -1647,9 +1649,9 @@ internal fun ReaderScreen(
             Surface(color = colors.surface, shadowElevation = 4.dp,
                 modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = halfScreen).testTag("reader_settings_sheet")) {
                 if (panel != ReaderPanel.SETTINGS) ReaderCompactSettings(requestedSettings, raster, onSettings,
-                    onImportFont, onImportBackground, onFonts = { panel = ReaderPanel.FONTS })
-                else ReaderPreferencesPanel(requestedSettings, onSettings, onResetDefaults,
+                    onImportFont, onImportBackground, onFonts = { panel = ReaderPanel.FONTS },
                     sourceCssAvailable = !raster && book.format in setOf(BookFormat.EPUB, BookFormat.MOBI))
+                else ReaderPreferencesPanel(requestedSettings, onSettings, onResetDefaults)
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))

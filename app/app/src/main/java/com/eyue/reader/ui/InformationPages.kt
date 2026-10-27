@@ -173,7 +173,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent() {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 三种主题统一书架与分组设置布局。\n• 阅读界面采用紧凑配置条与分组排版控件。\n• 最近阅读支持开关，默认开启。\n• 优化书架进度与未下载书籍的点击提示。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 新增 TXT／EPUB／MOBI 竖排文字模式。\n• 优化 EPUB／MOBI 字体、背景与简繁切换。\n• 统一三列书架对齐，支持查看书籍位置。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

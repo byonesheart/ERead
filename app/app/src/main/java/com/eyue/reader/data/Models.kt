@@ -118,7 +118,8 @@ data class ReaderSettings(
     val marginRight: Float = 24f,
     val marginTop: Float = 18f,
     val marginBottom: Float = 18f,
-    val continuousEbookScroll: Boolean = true
+    val continuousEbookScroll: Boolean = true,
+    val verticalText: Boolean = false
 )
 
 internal const val LEGACY_DEFAULT_CHAPTER_RULE = "^\\s*(第[零〇一二三四五六七八九十百千万两0-9]+[章节卷回部篇].*|[Cc][Hh][Aa][Pp][Tt][Ee][Rr]\\s+\\d+.*|序章.*|序言.*|前言.*|楔子.*|尾声.*|后记.*)\\s*$"

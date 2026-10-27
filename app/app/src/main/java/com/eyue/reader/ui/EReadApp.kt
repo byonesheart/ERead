@@ -71,6 +71,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
         var showImport by remember { mutableStateOf(false) }
         var showNotes by remember { mutableStateOf(false) }
         var showChapterRules by remember { mutableStateOf(false) }
+        var missingSpeechConfig by remember { mutableStateOf(false) }
+        var cacheSpeechSettings by remember { mutableStateOf(false) }
         var voiceRolesBookId by remember { mutableStateOf<String?>(null) }
         var commonVoiceRolesOpen by remember { mutableStateOf(false) }
         var selectedRoleText by remember { mutableStateOf<String?>(null) }
@@ -84,6 +86,10 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 pendingNotificationTask = action; notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             } else action()
+        }
+        fun generateSpeech(bookId: String, chapters: Set<Int>? = null) {
+            if (vm.aiSpeechConfig == null) missingSpeechConfig = true
+            else startNotifiedTask { vm.generateAiSpeech(bookId, chapters) }
         }
         var selectedImportMode by rememberSaveable { mutableStateOf(vm.mode) }
         var selectedFontMode by rememberSaveable { mutableStateOf(vm.mode) }
@@ -198,7 +204,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                         vm.replaceAllBookMatches(query, replacement)
                     }, textEditBusy = vm.textEditBusy, resumeSearch = resumeSearch, onSearchClosed = { resumeSearch = null },
                     onSpeechSettings = { showSpeechSettings = true },
-                    onGenerateSpeech = if (book.mode == LibraryMode.NOVEL && !book.cloudOnly) { chapters -> startNotifiedTask { vm.generateAiSpeech(book.id, chapters) } } else null,
+                    onGenerateSpeech = if (book.mode == LibraryMode.NOVEL && !book.cloudOnly) { chapters -> generateSpeech(book.id, chapters) } else null,
                     speechGenerationBusy = vm.aiSpeechGenerations[book.id]?.running == true,
                     speechCacheConfig = vm.aiSpeechConfig, speechCacheRevision = vm.aiSpeechCacheRevision,
                     commonVoiceRoles = state.commonVoiceRoles,
@@ -289,7 +295,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                         }, onRestoreCloudBookInfo = {
                                             if (!vm.cloudConfigured) { tab = 2; vm.message = "请先配置 WebDAV 网盘" }
                                             else vm.restoreCloudBookInfo()
-                                        }, onGenerateSpeech = { id -> startNotifiedTask { vm.generateAiSpeech(id) } },
+                                        }, onGenerateSpeech = { id -> generateSpeech(id) },
                                         onVoiceRoles = { id -> selectedRoleText = null; voiceRolesBookId = id },
                                         onRemoveWithCloud = vm::removeBook, onClearSpeechWithCloud = { book, _ -> vm.clearAiSpeechCache(book) },
                                         cloudConfigured = vm.cloudConfigured, meteredNetwork = vm.meteredNetwork,
@@ -326,6 +332,16 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                 }
             }
         }
+        if (missingSpeechConfig) AlertDialog(onDismissRequest = { missingSpeechConfig = false },
+            modifier = Modifier.testTag("speech_cache_missing_config"), title = { Text("尚未配置 AI 语音") },
+            text = { Text("生成语音缓存需要先配置 AI 服务器、模型和声音。请前往朗读引擎设置完成配置。") },
+            confirmButton = { TextButton(onClick = { missingSpeechConfig = false; cacheSpeechSettings = true }) { Text("去配置") } },
+            dismissButton = { TextButton(onClick = { missingSpeechConfig = false }) { Text("取消") } })
+        if (cacheSpeechSettings) SpeechEngineDialog(state.speechEngine, vm.aiSpeechConfig, vm::setSpeechEngine,
+            vm::saveAiSpeech, { cacheSpeechSettings = false }, profiles = vm.aiSpeechProfiles,
+            onSelectProfile = vm::selectAiSpeechProfile, onSaveProfile = vm::saveAiSpeechProfile,
+            onTestConnection = vm::testAiSpeechConnection,
+            fallbackEnabled = state.aiSpeechFallback, onFallbackEnabled = vm::setAiSpeechFallback)
         if (showImport) {
             ModalBottomSheet(onDismissRequest = { showImport = false }, containerColor = Paper) {
                 Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 28.dp)) {

@@ -62,6 +62,21 @@ class EbookSourceDocumentRobolectricTest {
         check(!root.exists())
     }
 
+    @Test fun verticalTxtUsesOnlyTheRequestedCanonicalChapterAndEscapesMarkup() = runBlocking {
+        val text = "第一段 <script> & 内容。\n第二段原文。"
+        val chapter = Chapter(title = "第一章", characterCount = text.length)
+        val book = Book(title = "竖排 TXT", format = BookFormat.TXT, mode = LibraryMode.NOVEL, chapters = listOf(chapter))
+        val store = EbookSourceStore(context, book).also(stores::add)
+        val first = store.load(0, text)
+        assertTrue(first.html.contains("&lt;script&gt; &amp; 内容。"))
+        assertEquals(text, first.canonicalText)
+        assertSame(first, store.load(0, text))
+        val updated = store.load(0, text + "编辑")
+        assertNotEquals(first.key, updated.key)
+        assertTrue(updated.html.contains("编辑"))
+        assertNull(store.openResource(first.baseUrl))
+    }
+
     @Test fun newEpubImportOpensOnlyTheRequestedSavedDomWithoutRescanningTheOriginal() = runBlocking {
         val source = epubFixture(includeImage = false)
         val directory = File(context.filesDir, "books/fast-import").apply { mkdirs() }

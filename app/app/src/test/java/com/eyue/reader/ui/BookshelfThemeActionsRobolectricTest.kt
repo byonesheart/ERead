@@ -36,7 +36,8 @@ class BookshelfThemeActionsRobolectricTest {
     @Test fun xingcaiUsesTheSameShelfAndLongPressActions() = checkTheme(AppThemeStyle.XINGCAI)
 
     private fun checkTheme(style: AppThemeStyle) {
-        val books = (1..4).map { book("book$it") }
+        val books = (1..4).map { book("book$it").copy(title = if (it == 2) "这是一个需要两行甚至更多行显示的长书名" else "短书名$it",
+            sourcePath = "/storage/emulated/0/Books/book$it.txt") }
         var opened = 0
         var renamed = ""
         var dark by mutableStateOf(false)
@@ -56,6 +57,11 @@ class BookshelfThemeActionsRobolectricTest {
         assertEquals(bounds[0].top, bounds[2].top)
         assertTrue(bounds[3].top > bounds[0].bottom)
         assertEquals(.8f, bounds[0].width / bounds[0].height, .01f)
+        val authors = (1..3).map { compose.onNodeWithTag("shelf_book_author_book$it").fetchSemanticsNode().boundsInRoot }
+        val chapters = (1..3).map { compose.onNodeWithTag("shelf_book_chapter_book$it").fetchSemanticsNode().boundsInRoot }
+        assertEquals(authors[0].top, authors[1].top, .1f)
+        assertEquals(authors[0].top, authors[2].top, .1f)
+        assertEquals(chapters[0].top, chapters[1].top, .1f)
         val chapter = compose.onNodeWithTag("shelf_book_chapter_book1").fetchSemanticsNode().boundsInRoot
         val percent = compose.onNodeWithTag("shelf_book_percent_book1").assertTextEquals("25%").fetchSemanticsNode().boundsInRoot
         assertTrue(percent.top >= chapter.bottom)
@@ -65,6 +71,7 @@ class BookshelfThemeActionsRobolectricTest {
         compose.runOnIdle { assertEquals(1, opened) }
         compose.onNodeWithTag("shelf_book_cover_book1", useUnmergedTree = true).performTouchInput { longClick() }
         compose.onNodeWithTag("book_action_sheet").assertIsDisplayed()
+        compose.onNodeWithTag("sheet_book_location").assertTextEquals("位置：/storage/emulated/0/Books/book1.txt")
         compose.runOnIdle { assertEquals(1, opened) }
         capture("shelf-actions-${style.name.lowercase()}", dialog = true)
         compose.onNodeWithTag("shelf_book_rename_book1").performClick()

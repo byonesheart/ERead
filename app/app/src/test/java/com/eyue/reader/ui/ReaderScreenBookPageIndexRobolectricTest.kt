@@ -537,7 +537,9 @@ class ReaderScreenBookPageIndexRobolectricTest {
         .filter { it.name.startsWith(prefix(book) + "_") && it.extension == "bin" }
     private fun openPreferences() {
         compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(width / 2f, height * .1f)) }
-        compose.onNodeWithContentDescription("阅读设置").performClick()
+        compose.onNodeWithContentDescription("界面设置").performClick()
+        if (compose.onAllNodesWithTag("reader_use_source_css").fetchSemanticsNodes().isNotEmpty())
+            compose.onNodeWithTag("reader_use_source_css").performScrollTo()
     }
     private fun closePreferences() = compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(width / 2f, height * .1f)) }
     private fun visibleTextContains(fragment: String): Boolean {
