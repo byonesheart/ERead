@@ -1,5 +1,15 @@
 # 构建与验证记录
 
+## 1.11.14 正式版发布（2026-10-27）
+
+正式下载改为 **Release 构建／versionCode 58**，软件版本名仍为 **1.11.14**。`assembleRelease`、`lintRelease` 成功；APK 中 `BuildConfig.DEBUG=false`、`BUILD_TYPE=release`，清单不含可调试属性，阅读资源与此前构建逐字节相同。lint 错误／致命错误为 0，其他等级统计为 `{"Warning": 64, "Hint": 4}`。没有新增功能代码；沿用前述功能回归结果，未追加真机安装或运行测试。
+
+签名仍沿用项目最初的 Android Debug 证书，SHA-256 `8f7811588790d1be580102e0dee4089be519104936f1f6d57815df173254ca07`，已通过签名校验，可覆盖安装历史包；并未生成或切换发布证书。
+
+APK **41,334,476 字节**，SHA-256 `26dd33e17d59505ce6f848c103c39b10c22663936e53fe220dd6c94aa9ad006c`。源码提交 `f36466d3971fb7763a806097fd392de7f7cc4fb7`；源码包 **23,232,894 字节**，SHA-256 `fdb73b3254916d008915533e59070d28e49b21598c9017568249faac27088b0a`。源码包不含个人文件、凭据、构建目录、Windows 交接文档和 Windows 未完成代码。
+
+正式版标签为 [v1.11.14-release](https://github.com/byonesheart/ERead/releases/tag/v1.11.14-release)，保留旧 `v1.11.14` 标签及其原附件。GitHub 安装包／源码包的大小与服务器 SHA-256 均已核验。正式包同时上传至百度和夸克，实际下载链接见 [仓库首页](../../README.md#下载方式)。Release 公开后，根目录及共用更新清单同步为 58，版本记录见 [update-1.11.14-release.json](releases/update-1.11.14-release.json)。本地 Windows 开发文件保持不变。
+
 ## 1.11.14 发布（2026-10-27）
 
 按作者要求发布 **1.11.14／versionCode 57**。已公开 [GitHub Release](https://github.com/byonesheart/ERead/releases/tag/v1.11.14)，安装包和源码包在 GitHub 返回的大小、SHA-256 均与本地一致，沿用原 Debug 签名。复用下节已完成的构建、设置导航回归、lint 和前述排版功能基线，没有追加真机安装或运行测试。
