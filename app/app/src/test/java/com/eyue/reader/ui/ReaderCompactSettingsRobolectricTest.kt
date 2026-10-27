@@ -40,6 +40,37 @@ import kotlin.math.roundToInt
 class ReaderCompactSettingsRobolectricTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun savedConfigurationCanBeRenamedWithoutLosingSelectionOrAppearance() {
+        var settings by mutableStateOf(ReaderSettings(fontSize = 25f).saveAppearanceProfile())
+        val id = settings.activeAppearanceProfileId!!
+        compose.setContent { MaterialTheme { ReaderCompactSettings(settings, false, { settings = it }, {}, {}) } }
+        compose.onNodeWithText("配置1").performTouchInput { longClick() }
+        compose.onNodeWithTag("reader_rename_theme_$id").performClick()
+        compose.onNodeWithTag("reader_theme_name").performTextReplacement("夜读")
+        compose.onNodeWithTag("reader_theme_rename_save").performClick()
+        compose.onNodeWithText("夜读", substring = false).assertIsDisplayed()
+        compose.runOnIdle {
+            assertEquals(id, settings.activeAppearanceProfileId)
+            assertEquals(25f, settings.fontSize)
+            assertEquals("夜读", settings.appearanceProfiles.single().name)
+        }
+    }
+
+    @Test fun clickLayoutAndPdfCropControlsCommitAndResetTheActualReaderSettings() {
+        var settings by mutableStateOf(ReaderSettings())
+        compose.setContent { MaterialTheme { Surface(Modifier.fillMaxWidth().height(400.dp)) {
+            ReaderCompactSettings(settings, true, { settings = it }, {}, {}, pdf = true)
+        } } }
+        compose.onNodeWithTag("reader_tap_horizontal").performScrollTo().performClick().assertIsSelected()
+        compose.runOnIdle { assertEquals(com.eyue.reader.data.TapPagingMode.HORIZONTAL, settings.tapPaging) }
+        compose.onNode(isToggleable() and hasAnyAncestor(hasTestTag("reader_pdf_crop_enabled"))).performScrollTo().performClick().assertIsOn()
+        compose.onNodeWithContentDescription("PDF 左侧裁边 增大").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(.01f, settings.pdfCrop.left, .0001f) }
+        compose.onNodeWithTag("reader_pdf_crop_reset").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(com.eyue.reader.data.PdfCrop(), settings.pdfCrop) }
+        compose.onNode(isToggleable() and hasAnyAncestor(hasTestTag("reader_pdf_crop_enabled"))).assertIsOff()
+    }
+
     @Test fun ebookTypographyAndScrollSubSettingsStayWithTheirRelatedControls() {
         var settings by mutableStateOf(ReaderSettings())
         compose.setContent { MaterialTheme { Surface(Modifier.fillMaxWidth().height(600.dp)) {
@@ -107,7 +138,7 @@ class ReaderCompactSettingsRobolectricTest {
         compose.runOnIdle { dark = true }
         capture("reader-interface-dark")
         compose.runOnIdle { preferences = true }
-        compose.onNodeWithText("音量键翻页").assertIsDisplayed()
+        compose.onNodeWithText("音量键与实体键翻页").assertIsDisplayed()
         capture("reader-settings-dark")
     }
 
@@ -241,7 +272,7 @@ class ReaderCompactSettingsRobolectricTest {
         compose.onNodeWithTag("reader_settings_tab_preferences").assertDoesNotExist()
         compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
         compose.onNodeWithText("时间", substring = false).assertIsDisplayed()
-        compose.onNodeWithText("音量键翻页").assertIsDisplayed()
+        compose.onNodeWithText("音量键与实体键翻页").assertIsDisplayed()
         compose.onNodeWithTag("reader_reset_defaults").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(0, resets) }
         compose.onNodeWithTag("reader_reset_defaults_confirm").performClick()

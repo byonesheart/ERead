@@ -73,7 +73,9 @@
         if (!item || sourceFrame && item.frame !== sourceFrame) return;
         if (value.type === 'ready') {
             item.ready = true; item.frame.style.opacity = '1';
-            if (pending?.chapter === index) commandChild(index, pending);
+            const navigation = pending?.chapter === index ? pending : null;
+            commandChild(index, {type:'configure', config:Object.assign({}, options.config, {continuous:true})});
+            if (navigation) commandChild(index, navigation);
             else if (index === active && !ready) navigateLocal(index, 0, false);
             if (index === active) retain(index);
             schedule(); return;
@@ -93,6 +95,7 @@
         if (value.left !== undefined) {
             const rect = rows[index].getBoundingClientRect(); value.top += rect.top; value.bottom += rect.top;
         }
+        if (value.type === 'tap') value.y = (value.y * item.frame.clientHeight + rows[index].getBoundingClientRect().top) / innerHeight;
         bridge.event(JSON.stringify(Object.assign({}, value, {chapter:index})));
     }
     function provide(index, token, url) {

@@ -118,7 +118,7 @@ internal fun ReaderPreferenceSettings(settings: ReaderSettings, onSettings: (Rea
         ReaderToggle("时间", settings.showTime) { onSettings(settings.copy(showTime = it)) }
         ReaderToggle("电量", settings.showBattery) { onSettings(settings.copy(showBattery = it)) }
         ReaderToggle("章节名称", settings.showChapter) { onSettings(settings.copy(showChapter = it)) }
-        ReaderToggle("音量键翻页", settings.volumePaging) { onSettings(settings.copy(volumePaging = it)) }
+        ReaderToggle("音量键与实体键翻页", settings.volumePaging) { onSettings(settings.copy(volumePaging = it)) }
         ReaderToggle("阅读时保持亮屏", settings.keepScreenOn) { onSettings(settings.copy(keepScreenOn = it)) }
         HorizontalDivider()
         ReaderAdjustableSlider("语速", "系统朗读语速", settings.ttsSpeed, .5f..2f, .1f,

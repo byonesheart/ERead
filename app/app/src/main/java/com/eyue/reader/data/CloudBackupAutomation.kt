@@ -102,11 +102,12 @@ internal fun cloudBackupFingerprint(repository: LibraryRepository, state: Librar
     return CloudBookFingerprint(repository, state, book).fingerprint(book)
 }
 
-internal fun cloudBackupFingerprintTail(repository: LibraryRepository, state: LibraryState, book: Book): List<String> {
+internal fun cloudBackupFingerprintTail(repository: LibraryRepository, state: LibraryState, book: Book,
+                                          nightMode: Boolean? = null): List<String> {
     val parts = mutableListOf<String>()
     state.annotations.filter { it.bookId == book.id }.sortedBy { it.id }.forEach { parts += repository.writeAnnotation(it).toString() }
     val settings = if (book.mode == LibraryMode.COMIC) state.comicSettings else state.settings
-    parts += repository.writeSettings(settings).toString()
+    parts += repository.writeSettings(nightMode?.let { settings.copy(nightMode = it) } ?: settings).toString()
     state.groups.find { it.id == book.groupId }?.let { parts += "${it.id}\n${it.name}\n${it.mode}" }
     val files = listOfNotNull(book.sourcePath, book.coverPath, repository.epubIndexFile(book)?.absolutePath) + book.chapters.flatMap { chapter ->
         if (!book.hasTextEdits && chapter.lazySourcePath?.let { File(it + ".deferred.json").isFile } == true) emptyList()
@@ -124,7 +125,7 @@ internal fun cloudBackupFingerprintTail(repository: LibraryRepository, state: Li
 internal fun cloudDirtyBookIds(repository: LibraryRepository, state: LibraryState, account: String,
                               history: CloudBackupHistory, check: () -> Unit = {}): Set<String> = state.books.filter { book ->
     check()
-    book.cloudEnabled && !book.cloudOnly && cloudBackupFingerprint(repository, state, book) != history.uploadedDigest(account, book.id)
+    book.cloudEnabled && !book.cloudOnly && !CloudBookFingerprint(repository, state, book).matches(book, history.uploadedDigest(account, book.id))
 }.map { it.id }.toSet()
 
 internal object CloudBackupAutomation {
@@ -288,7 +289,7 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
             val initial = cloudBackupHistoryState(repository.load()) { history.backupAt(account, it) }
             val book = currentBook(initial) ?: return
             if (manualBookId == null && (history.automaticPaused(account, bookId) ||
-                history.digest(account, bookId) == cloudBackupFingerprint(repository, initial, book))) return
+                CloudBookFingerprint(repository, initial, book).matches(book, history.digest(account, bookId)))) return
             val keys = cloudUploadIdentityKeys(account, hydrateBookSourceIdentity(applicationContext, book))
             var completed = false
             cloudOperationMutex.withUploadIdentity(keys) {
@@ -310,8 +311,9 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
                     if (freshTarget != targetId) return@withBooks
                     completed = true
                     if (manualBookId == null && history.automaticPaused(account, bookId)) return@withBooks
-                    val fingerprint = cloudBackupFingerprint(repository, latest, current)
-                    if (manualBookId == null && history.digest(account, bookId) == fingerprint) return@withBooks
+                    val prepared = CloudBookFingerprint(repository, latest, current)
+                    val fingerprint = prepared.fingerprint(current)
+                    if (manualBookId == null && prepared.matches(current, history.digest(account, bookId))) return@withBooks
                     val conflicts = cloudUploadConflicts(latest, setOf(bookId), freshCatalog, matches).filterNot {
                         it.remote.id == history.cloudBookId(account, bookId) || it.remote.id in history.approvedCopies(account, bookId)
                     }

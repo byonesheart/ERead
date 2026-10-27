@@ -25,6 +25,8 @@ import com.eyue.reader.data.PageTurnStyle
 import com.eyue.reader.data.ReaderBackground
 import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.ReadingMode
+import com.eyue.reader.data.TapPagingMode
+import com.eyue.reader.data.PdfCrop
 import com.eyue.reader.data.autosaveAppearanceProfile
 import com.eyue.reader.data.saveAppearanceProfile
 import java.util.Locale
@@ -35,7 +37,7 @@ internal fun ReaderCompactSettings(
     settings: ReaderSettings, raster: Boolean, onSettings: (ReaderSettings) -> Unit,
     onImportFont: () -> Unit, onImportBackground: () -> Unit,
     onFonts: () -> Unit = onImportFont,
-    sourceCssAvailable: Boolean = false
+    sourceCssAvailable: Boolean = false, pdf: Boolean = false
 ) {
     var editingProfileId by remember { mutableStateOf<String?>(null) }
     val themedSettings = remember(settings) { settings.autosaveAppearanceProfile() }
@@ -52,7 +54,7 @@ internal fun ReaderCompactSettings(
                 editingProfileId = null
                 updateSettings(themedSettings.saveAppearanceProfile())
             })
-            ReaderInterfaceSettings(themedSettings, raster, updateSettings, onImportBackground, onFonts, sourceCssAvailable)
+            ReaderInterfaceSettings(themedSettings, raster, updateSettings, onImportBackground, onFonts, sourceCssAvailable, pdf)
         }
     }
 }
@@ -71,7 +73,7 @@ internal fun ReaderPreferencesPanel(settings: ReaderSettings, onSettings: (Reade
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, onSettings: (ReaderSettings) -> Unit,
-    onImportBackground: () -> Unit, onFonts: () -> Unit, sourceCssAvailable: Boolean) {
+    onImportBackground: () -> Unit, onFonts: () -> Unit, sourceCssAvailable: Boolean, pdf: Boolean) {
     val colors = MaterialTheme.colorScheme
     ReaderSettingSection("翻页方式") {
         ReaderSettingOptions("模式") {
@@ -95,6 +97,32 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
                 ReaderSettingChoice(label, settings.pageTurnStyle == style, { onSettings(settings.copy(pageTurnStyle = style)) },
                     Modifier.weight(1f).testTag("reader_turn_${style.name.lowercase()}"))
             }
+        }
+        ReaderSettingOptions("点击") {
+            listOf(TapPagingMode.OFF to "关闭", TapPagingMode.HORIZONTAL to "左右", TapPagingMode.VERTICAL to "上下").forEach { (mode, label) ->
+                ReaderSettingChoice(label, settings.tapPaging == mode, { onSettings(settings.copy(tapPaging = mode)) },
+                    Modifier.weight(1f).testTag("reader_tap_${mode.name.lowercase()}"))
+            }
+        }
+        if (settings.tapPaging != TapPagingMode.OFF) Text("两侧区域翻页，中央区域开关工具栏。",
+            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+    }
+    if (pdf) ReaderSettingSection("PDF 裁边", trailing = {
+        TextButton(onClick = { onSettings(settings.copy(pdfCrop = PdfCrop())) }, modifier = Modifier.testTag("reader_pdf_crop_reset")) { Text("重置") }
+    }) {
+        ReaderToggle("裁去页面边缘", settings.pdfCrop.enabled, Modifier.testTag("reader_pdf_crop_enabled")) {
+            onSettings(settings.copy(pdfCrop = settings.pdfCrop.copy(enabled = it)))
+        }
+        if (settings.pdfCrop.enabled) {
+            val crop = settings.pdfCrop
+            listOf("左" to crop.left, "右" to crop.right, "上" to crop.top, "下" to crop.bottom).forEach { (label, value) ->
+                ReaderAdjustableSlider("${label}边", "PDF ${label}侧裁边", value, 0f..0.4f, .01f, { amount ->
+                    val changed = when (label) { "左" -> crop.copy(left = amount); "右" -> crop.copy(right = amount)
+                        "上" -> crop.copy(top = amount); else -> crop.copy(bottom = amount) }
+                    onSettings(settings.copy(pdfCrop = changed))
+                }, { "${(it * 100).roundToInt()}%" })
+            }
+            Text("仅调整显示范围，保留原 PDF 文件。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
         }
     }
     if (!raster) ReaderSettingSection("文字与排版") {
@@ -130,7 +158,7 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
             ReaderToggle("使用原书 CSS", settings.useSourceCss, Modifier.testTag("reader_use_source_css")) {
                 onSettings(settings.copy(useSourceCss = it))
             }
-            Text("保留原书文字排版，字体使用当前所选字体。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+            Text("保留原书文字排版，字体与段距使用当前设置。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
         }
     }
     ReaderSettingSection("纸张与亮度", trailing = {

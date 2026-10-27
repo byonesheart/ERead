@@ -204,6 +204,7 @@ internal fun sourceBodyFragment(fragment: String, bodyTag: String?): String =
 /** One tokenization per document; derived views keep original UTF-16 offsets. Import-scoped only. */
 internal class SourceHtmlScan(val html: String, private val checkActive: () -> Unit = {}) {
     val tags = sourceHtmlTags(html, checkActive).toList()
+    val noteReferences by lazy { sourceNoteReferences(html, checkActive, this) }
     private val hidden = sourceHtmlHiddenRanges(html, checkActive, tags.asSequence())
     private val omitted by lazy {
         val merged = mutableListOf<IntRange>()
@@ -231,6 +232,16 @@ internal class SourceHtmlScan(val html: String, private val checkActive: () -> U
         omitted.forEach { range -> checkActive(); append(html, at, range.first); at = range.last + 1 }
         append(html, at, html.length)
     } }
+    val readingImages by lazy {
+        var index = 0
+        var removed = 0
+        visibleTags.filter { !it.closing && it.name in setOf("img", "image") }.map { tag ->
+            while (index < omitted.size && omitted[index].last < tag.start) {
+                removed += omitted[index].last - omitted[index].first + 1; index++
+            }
+            tag.copy(start = tag.start - removed, end = tag.end - removed)
+        }
+    }
     val notes by lazy {
         if (visibleTags.none { !it.closing && isFootnoteTarget(it.attributes) }) SourceHtmlNotes("", checkActive)
         else SourceHtmlNotes(visibleHtml, checkActive, visibleTags.asSequence())

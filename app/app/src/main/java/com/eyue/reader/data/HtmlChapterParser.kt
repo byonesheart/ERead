@@ -22,12 +22,17 @@ internal object HtmlChapterParser {
                            noteTargets: Map<String, String>, image: (String) -> String?): ParsedTextChapter =
         readContent(title, html, "", false, checkActive, noteTargets, image)
 
+    fun readScannedPlain(title: String, html: String, scan: SourceHtmlScan?, checkActive: () -> Unit,
+                         noteTargets: Map<String, String>, image: (String) -> String?): ParsedTextChapter =
+        readContent(title, html, "", false, checkActive, noteTargets, image, scan)
+
     private fun readContent(title: String, html: String, css: String, includeStyles: Boolean,
-                            checkActive: () -> Unit, noteTargets: Map<String, String>, image: (String) -> String?): ParsedTextChapter {
+                            checkActive: () -> Unit, noteTargets: Map<String, String>, image: (String) -> String?,
+                            scanned: SourceHtmlScan? = null): ParsedTextChapter {
         val prefix = "\uE000${UUID.randomUUID()}_"
         val paths = mutableListOf<String>()
-        val scan = SourceHtmlScan(html, checkActive)
-        val references = sourceNoteReferences(html, checkActive, scan)
+        val scan = scanned ?: SourceHtmlScan(html, checkActive)
+        val references = scan.noteReferences
         val targets = sourceLocalNoteTargets(html, references.filter { it.target !in noteTargets }, checkActive, scan) + noteTargets
         val bodies = mutableMapOf<String, String>()
         val notes = references.mapNotNull { reference ->
@@ -50,9 +55,11 @@ internal object HtmlChapterParser {
         }
         val source = if (includeStyles) SourceStyleParser.markWithSourceCss(notedHtml, css, "${prefix}S", checkActive)
             else MarkedSourceHtml(if (notes.isEmpty()) scan.readingHtml else hideHtmlContent(removeHtmlComments(notedHtml), false, checkActive), emptyList())
-        val marked = buildString(source.html.length) {
+        val imageTags = if (!includeStyles && notes.isEmpty()) scan.readingImages else
+            sourceHtmlTags(source.html, checkActive).filter { !it.closing && it.name in setOf("img", "image") }.toList()
+        val marked = if (imageTags.isEmpty()) source.html else buildString(source.html.length) {
             var cursor = 0
-            sourceHtmlTags(source.html, checkActive).filter { !it.closing && it.name in setOf("img", "image") }.forEach { tag ->
+            imageTags.forEach { tag ->
                 append(source.html, cursor, tag.start)
                 image(tag.attributes)?.let { path ->
                     paths += path

@@ -6,6 +6,7 @@ enum class LibraryMode { NOVEL, COMIC }
 enum class BookFormat { EPUB, TXT, MOBI, PDF, IMAGES }
 enum class ReadingMode { SCROLL, PAGED, VERTICAL_PAGED }
 enum class PageTurnStyle { COVER, SLIDE, CURL }
+enum class TapPagingMode { OFF, HORIZONTAL, VERTICAL }
 enum class ChineseConversion { ORIGINAL, SIMPLIFIED, TRADITIONAL }
 enum class ReaderBackground { PAPER, WHITE, GREEN, DARK, IMAGE }
 enum class AnnotationKind { BOOKMARK, NOTE, HIGHLIGHT, UNDERLINE }
@@ -84,6 +85,14 @@ data class Annotation(
 data class ImportedFont(val name: String, val path: String)
 data class ChapterRulePreset(val id: String = UUID.randomUUID().toString(), val name: String, val pattern: String)
 
+data class PdfCrop(val enabled: Boolean = false, val left: Float = 0f, val right: Float = 0f,
+                   val top: Float = 0f, val bottom: Float = 0f) {
+    fun normalized(): PdfCrop {
+        fun margin(value: Float) = if (value.isFinite()) value.coerceIn(0f, .4f) else 0f
+        return copy(left = margin(left), right = margin(right), top = margin(top), bottom = margin(bottom))
+    }
+}
+
 data class ReaderSettings(
     val fontSize: Float = 19f,
     val lineHeight: Float = 1.85f,
@@ -119,7 +128,9 @@ data class ReaderSettings(
     val marginTop: Float = 18f,
     val marginBottom: Float = 18f,
     val continuousEbookScroll: Boolean = true,
-    val verticalText: Boolean = false
+    val verticalText: Boolean = false,
+    val tapPaging: TapPagingMode = TapPagingMode.OFF,
+    val pdfCrop: PdfCrop = PdfCrop()
 )
 
 internal const val LEGACY_DEFAULT_CHAPTER_RULE = "^\\s*(第[零〇一二三四五六七八九十百千万两0-9]+[章节卷回部篇].*|[Cc][Hh][Aa][Pp][Tt][Ee][Rr]\\s+\\d+.*|序章.*|序言.*|前言.*|楔子.*|尾声.*|后记.*)\\s*$"

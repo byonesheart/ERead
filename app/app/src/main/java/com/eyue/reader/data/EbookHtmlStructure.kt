@@ -4,7 +4,7 @@ private val ebookParagraphBreaks = setOf("address", "article", "aside", "blockqu
 private val ebookDocumentTags = setOf("html", "head", "body")
 
 /** [start] and [end] refer to the original document's UTF-16 offsets, before any rewriting. */
-internal fun ebookHtmlFragment(raw: String, start: Int, end: Int): String {
+internal fun ebookHtmlFragment(raw: String, start: Int, end: Int, scannedTags: List<SourceHtmlTag>? = null): String {
     require(start in 0..raw.length && end in start..raw.length) { "Invalid ebook HTML section: $start..$end / ${raw.length}" }
     if (start == 0 && end == raw.length) return raw
 
@@ -13,7 +13,7 @@ internal fun ebookHtmlFragment(raw: String, start: Int, end: Int): String {
     var headEnd: SourceHtmlTag? = null
     var body: SourceHtmlTag? = null
     val prefixStack = mutableListOf<SourceHtmlTag>()
-    for (tag in sourceHtmlTags(raw)) {
+    for (tag in scannedTags?.asSequence() ?: sourceHtmlTags(raw)) {
         if (!tag.closing && tag.name == "body") { body = tag; break }
         if (!tag.closing && tag.name == "html" && html == null) html = tag
         if (!tag.closing && tag.name == "head" && head == null) head = tag
@@ -38,7 +38,7 @@ internal fun ebookHtmlFragment(raw: String, start: Int, end: Int): String {
     var from = start.coerceAtLeast(bodyStart)
     var until = end.coerceAtLeast(bodyStart)
     // TOC anchors normally lie on tag boundaries. Recover safely if a malformed index doesn't.
-    for (tag in sourceHtmlTags(raw)) {
+    for (tag in scannedTags?.asSequence() ?: sourceHtmlTags(raw)) {
         if (tag.start >= until) break
         if (from > tag.start && from < tag.end) from = tag.start.coerceAtLeast(bodyStart)
         if (until > tag.start && until < tag.end) until = tag.end
@@ -47,7 +47,7 @@ internal fun ebookHtmlFragment(raw: String, start: Int, end: Int): String {
     val result = StringBuilder(prefix)
     var cursor = from
     var started = false
-    for (tag in sourceHtmlTags(raw)) {
+    for (tag in scannedTags?.asSequence() ?: sourceHtmlTags(raw)) {
         if (tag.end <= bodyStart) continue
         if (tag.start >= until) break
         if (tag.closing && tag.name in setOf("body", "html")) {

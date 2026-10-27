@@ -17,6 +17,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -32,8 +34,10 @@ import kotlinx.coroutines.launch
 @Composable internal fun ShelfBookActions(book: Book, transfer: CloudTransferProgress?, cloudConfigured: Boolean,
     cloudBusy: Boolean, cloudDirty: Boolean, onDismiss: () -> Unit, onDetails: () -> Unit, onMove: () -> Unit,
     onRename: (() -> Unit)?, onGenerateSpeech: (() -> Unit)?, onVoiceRoles: (() -> Unit)?,
-    onCloud: (() -> Unit)?, onDeleteCloud: (() -> Unit)?, onClearSpeech: (() -> Unit)?, onDelete: () -> Unit) {
+    onCloud: (() -> Unit)?, onDeleteCloud: (() -> Unit)?, onClearSpeech: (() -> Unit)?, onDelete: () -> Unit,
+    onLocation: (() -> Unit)? = null) {
     val colors = MaterialTheme.colorScheme
+    val sheetMaxHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() } * .82f
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     var closing by remember(book.id) { mutableStateOf(false) }
@@ -44,27 +48,26 @@ import kotlinx.coroutines.launch
         }
     }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = colors.surface,
-        shape = appShape(24.dp), sheetState = sheetState,
+        shape = appShape(24.dp), sheetState = sheetState, sheetGesturesEnabled = false, dragHandle = null,
         modifier = Modifier.testTag("book_action_sheet")) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 18.dp)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.Top) {
-                BookCover(book, Modifier.width(52.dp).height(72.dp))
-                Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                    Text(book.title, fontSize = 17.sp, lineHeight = 23.sp, fontWeight = FontWeight.SemiBold,
+        Column(Modifier.fillMaxWidth().heightIn(max = sheetMaxHeight).verticalScroll(rememberScrollState()).padding(top = 12.dp, bottom = 12.dp)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.Top) {
+                BookCover(book, Modifier.width(44.dp).height(60.dp))
+                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                    Text(book.title, fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.SemiBold,
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(book.displayAuthor, fontSize = 12.sp, color = Muted, maxLines = 1,
                         overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
                     Text("${book.chapters.getOrNull(book.chapterIndex)?.title ?: "尚未开始"} · ${(book.progress * 100).toInt()}%",
                         fontSize = 11.sp, color = Olive, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 6.dp))
+                        modifier = Modifier.padding(top = 4.dp))
+                }
+                IconButton(onClick = { choose(onDismiss) }, modifier = Modifier.size(36.dp).testTag("book_action_close")) {
+                    Icon(Icons.Outlined.Close, "关闭更多选项", Modifier.size(20.dp))
                 }
             }
-            HorizontalDivider(Modifier.padding(top = 14.dp), color = Line)
-            androidx.compose.foundation.text.selection.SelectionContainer {
-                Text("位置：${bookStorageLocation(book)}", fontSize = 11.sp, color = Muted,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp).testTag("sheet_book_location"))
-            }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 12.dp)) {
+            HorizontalDivider(Modifier.padding(top = 10.dp), color = Line)
+            Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)) {
                 ShelfQuickAction(Icons.Outlined.Info, "书籍信息", Color(0xFF7FA9F0), Modifier.weight(1f)) { choose(onDetails) }
                 ShelfQuickAction(Icons.Outlined.FolderOpen, "移动分组", Color(0xFFFFC24B), Modifier.weight(1f)) { choose(onMove) }
                 onGenerateSpeech?.let {
@@ -77,6 +80,7 @@ import kotlinx.coroutines.launch
                 }
             }
             val actions = buildList {
+                onLocation?.let { add(ShelfAction(Icons.Outlined.FolderOpen, "书籍位置", "shelf_book_location_${book.id}", onClick = { choose(it) })) }
                 onRename?.let { add(ShelfAction(Icons.Outlined.Edit, "重命名书籍", "shelf_book_rename_${book.id}", onClick = { choose(it) })) }
                 onCloud?.let {
                     add(ShelfAction(if (book.cloudOnly) Icons.Outlined.CloudDownload else if (cloudDirty) Icons.Outlined.CloudSync
@@ -93,7 +97,7 @@ import kotlinx.coroutines.launch
             if (actions.isNotEmpty()) {
                 HorizontalDivider(color = Line)
                 Text("书籍管理", fontSize = 11.sp, color = Muted,
-                    modifier = Modifier.padding(start = 20.dp, top = 14.dp, bottom = 8.dp))
+                    modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 6.dp))
                 Column(Modifier.padding(horizontal = 16.dp).clip(appShape(14.dp)).background(colors.surfaceContainerLow)) {
                     actions.forEachIndexed { index, action ->
                         if (index > 0) HorizontalDivider(Modifier.padding(start = 52.dp, end = 14.dp), color = Line)
@@ -101,9 +105,9 @@ import kotlinx.coroutines.launch
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp)
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp)
                 .clip(appShape(14.dp)).background(colors.errorContainer).clickable { choose(onDelete) }
-                .padding(horizontal = 14.dp, vertical = 15.dp).testTag("sheet_remove_book"),
+                .padding(horizontal = 14.dp, vertical = 11.dp).testTag("sheet_remove_book"),
                 verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(20.dp), tint = colors.onErrorContainer)
                 Text("移出书架", color = colors.onErrorContainer, fontSize = 14.sp, fontWeight = FontWeight.Medium,
@@ -124,13 +128,13 @@ internal fun bookStorageLocation(book: Book): String = when {
     onClick: () -> Unit) {
     val colorful = LocalAppThemeStyle.current == AppThemeStyle.XINGCAI && !LocalAppEinkMode.current
     val colors = MaterialTheme.colorScheme
-    Column(modifier.clip(appShape(12.dp)).clickable(onClick = onClick).padding(vertical = 4.dp),
+    Column(modifier.clip(appShape(12.dp)).clickable(onClick = onClick).padding(vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.size(44.dp).background(if (colorful) color else colors.primaryContainer, appShape(14.dp)),
+        Box(Modifier.size(38.dp).background(if (colorful) color else colors.primaryContainer, appShape(12.dp)),
             contentAlignment = Alignment.Center) {
             Icon(icon, null, Modifier.size(22.dp), tint = if (colorful) colors.surface else colors.onPrimaryContainer)
         }
-        Text(label, fontSize = 11.sp, maxLines = 1, modifier = Modifier.padding(top = 6.dp))
+        Text(label, fontSize = 11.sp, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
     }
 }
 
@@ -140,7 +144,7 @@ private data class ShelfAction(val icon: ImageVector, val title: String, val tag
 @Composable private fun ShelfActionRow(action: ShelfAction) {
     val tint = Muted.copy(alpha = if (action.enabled) 1f else .5f)
     Row(Modifier.fillMaxWidth().clickable(enabled = action.enabled, onClick = action.onClick)
-        .padding(horizontal = 14.dp, vertical = 15.dp).testTag(action.tag), verticalAlignment = Alignment.CenterVertically) {
+        .padding(horizontal = 14.dp, vertical = 10.dp).testTag(action.tag), verticalAlignment = Alignment.CenterVertically) {
         Icon(action.icon, null, Modifier.size(20.dp), tint = tint)
         Text(action.title, Modifier.weight(1f).padding(start = 12.dp), fontSize = 13.sp,
             color = Ink.copy(alpha = if (action.enabled) 1f else .5f), maxLines = 1, overflow = TextOverflow.Ellipsis)

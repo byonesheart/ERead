@@ -66,15 +66,37 @@ class BookshelfThemeActionsRobolectricTest {
         val percent = compose.onNodeWithTag("shelf_book_percent_book1").assertTextEquals("25%").fetchSemanticsNode().boundsInRoot
         assertTrue(percent.top >= chapter.bottom)
         assertEquals(chapter.left, percent.left, .1f)
+        val titleLayouts = (1..2).map { index ->
+            val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            compose.onNodeWithTag("shelf_book_title_book$index", useUnmergedTree = true)
+                .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { assertTrue(it(layouts)) }
+            layouts.single()
+        }
+        assertEquals("Short and long titles reserve the same two-line height", titleLayouts[0].size.height, titleLayouts[1].size.height)
+        assertEquals(2, titleLayouts[1].lineCount)
         capture("shelf-${style.name.lowercase()}")
         compose.onNodeWithTag("shelf_book_cover_book1", useUnmergedTree = true).performTouchInput { click() }
         compose.runOnIdle { assertEquals(1, opened) }
         compose.onNodeWithTag("shelf_book_cover_book1", useUnmergedTree = true).performTouchInput { longClick() }
         compose.onNodeWithTag("book_action_sheet").assertIsDisplayed()
-        compose.onNodeWithTag("sheet_book_location").assertTextEquals("位置：/storage/emulated/0/Books/book1.txt")
+        compose.onNodeWithTag("sheet_book_location").assertDoesNotExist()
         compose.runOnIdle { assertEquals(1, opened) }
         capture("shelf-actions-${style.name.lowercase()}", dialog = true)
-        compose.onNodeWithTag("shelf_book_rename_book1").performClick()
+        val sheetTop = compose.onNodeWithTag("book_action_sheet").fetchSemanticsNode().boundsInRoot.top
+        compose.onNode(isDialog()).performTouchInput { swipeUp(startY = height * .95f, endY = height * .7f) }
+        assertEquals("Scrolling more actions must not move the sheet", sheetTop,
+            compose.onNodeWithTag("book_action_sheet").assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top, 1f)
+        compose.onNode(isDialog()).performTouchInput { swipeDown(startY = height * .7f, endY = height * .95f) }
+        assertEquals("Dragging down must not move or dismiss more actions", sheetTop,
+            compose.onNodeWithTag("book_action_sheet").assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top, 1f)
+        compose.onNodeWithTag("shelf_book_location_book1").performScrollTo().performClick()
+        compose.onNodeWithTag("book_location_dialog").assertIsDisplayed()
+        compose.onNodeWithText("/storage/emulated/0/Books/book1.txt").assertIsDisplayed()
+        compose.onNodeWithTag("book_location_copy").performClick()
+        compose.onNodeWithText("已复制").assertIsDisplayed()
+        compose.onNodeWithText("关闭").performClick()
+        compose.onNodeWithTag("shelf_book_cover_book1", useUnmergedTree = true).performTouchInput { longClick() }
+        compose.onNodeWithTag("shelf_book_rename_book1").performScrollTo().performClick()
         compose.onNodeWithTag("book_action_sheet").assertDoesNotExist()
         compose.onNodeWithTag("shelf_rename_title").performTextReplacement("新的书名")
         capture("shelf-rename-${style.name.lowercase()}", dialog = true)
@@ -129,18 +151,36 @@ class BookshelfThemeActionsRobolectricTest {
         compose.onNodeWithTag("backup_select_local").assertIsOn()
     }
 
+    @Test @Config(qualifiers = "w392dp-h520dp-mdpi")
+    fun compactMenuStillScrollsInternallyOnAShortScreen() {
+        var chosen = false
+        compose.setContent { EReadTheme(false, false, AppThemeStyle.CLASSIC) {
+            ShelfBookActions(book = book("compact"), transfer = null, cloudConfigured = true, cloudBusy = false, cloudDirty = false,
+                onDismiss = {}, onDetails = {}, onMove = {}, onRename = {}, onGenerateSpeech = {}, onVoiceRoles = {},
+                onCloud = {}, onDeleteCloud = {}, onClearSpeech = { chosen = true }, onDelete = {}, onLocation = {})
+        } }
+        compose.onNodeWithTag("book_action_sheet").assertIsDisplayed()
+        capture("shelf-actions-short-screen", dialog = true)
+        val scroll = compose.onNode(hasScrollAction()).fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.VerticalScrollAxisRange]
+        assertTrue("The short-screen fixture must actually need internal scrolling", scroll.maxValue() > 0)
+        compose.onNodeWithTag("shelf_book_clear_ai_speech_compact").performScrollTo().assertIsDisplayed().performClick()
+        compose.runOnIdle { assertTrue("Internal menu scrolling must preserve access to the last action", chosen) }
+    }
+
     private fun book(id: String) = Book(id = id, title = "测试书籍 $id", author = "佚名", format = BookFormat.EPUB,
-        mode = LibraryMode.NOVEL, progress = .25f, chapters = listOf(Chapter(title = "第一章")))
+        mode = LibraryMode.NOVEL, progress = .25f, addedAt = 100L, chapters = listOf(Chapter(title = "第一章")))
 
     private fun capture(name: String, dialog: Boolean = false) {
-        val output = System.getenv("EREAD_TEST_ARTIFACTS")?.let(::File) ?: return
+        val output = System.getenv("EREAD_TEST_ARTIFACTS")?.let(::File)
         compose.waitForIdle()
         val bitmap = compose.runOnIdle {
             val view = if (dialog) checkNotNull(ShadowDialog.getLatestDialog()?.window?.decorView) else host.get()
             Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888).also { view.draw(Canvas(it)) }
         }
-        output.mkdirs()
-        File(output, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        // A clipped menu row may paint its own color; a floating panel leaves only the translucent scrim here.
+        if (dialog && name.startsWith("shelf-actions-")) assertEquals("The painted panel must reach the bottom of the full dialog",
+            255, android.graphics.Color.alpha(bitmap.getPixel(bitmap.width / 2, bitmap.height - 1)))
+        output?.let { it.mkdirs(); File(it, "$name.png").outputStream().use { stream -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream) } }
         bitmap.recycle()
     }
 }

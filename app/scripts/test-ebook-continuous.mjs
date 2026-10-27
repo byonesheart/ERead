@@ -163,6 +163,13 @@ try{
    const state=await page.evaluate(()=>events.filter(e=>e.type==='viewport').at(-1));
    assert.ok(state.offset<=offset+2&&state.endOffset>offset);return {sameFrames:true,state};
  });
+ await test('child-taps-report-the-outer-viewport-position',async()=>{
+   await jump(3,chapters[3].canonical.indexOf(chapters[3].paragraphs[5]));
+   await page.mouse.click(10,300);
+   const tap=await page.evaluate(()=>events.findLast(event=>event.type==='tap'));
+   assert.ok(tap);assert.equal(tap.chapter,3);
+   assert.ok(Math.abs(tap.x-10/392)<.001);assert.ok(Math.abs(tap.y-300/760)<.001);return tap;
+ });
  await test('vertical-writing-keeps-continuous-chapter-navigation-and-a-bounded-dom',async()=>{
    await page.evaluate(config=>ERead.command({type:'configure',config}),{...config,authorCss:false,vertical:true});
    const offset=chapters[5].canonical.indexOf(chapters[5].paragraphs[8]);await jump(5,offset);

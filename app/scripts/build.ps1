@@ -15,6 +15,12 @@ foreach ($name in @('JAVA_HOME', 'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'GRADLE_USE
     $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 $localPropertiesPath = Join-Path $buildProjectRoot 'local.properties'
+$changelogSource = Join-Path $buildRepositoryRoot 'release\CHANGELOG.md'
+$changelogAsset = Join-Path $buildProjectRoot 'app\src\main\assets\legal\changelog.md'
+if (-not (Test-Path -LiteralPath $changelogAsset) -or
+    (Get-FileHash -LiteralPath $changelogSource).Hash -ne (Get-FileHash -LiteralPath $changelogAsset).Hash) {
+    Copy-Item -LiteralPath $changelogSource -Destination $changelogAsset -Force
+}
 $originalLocalProperties = if (Test-Path -LiteralPath $localPropertiesPath) {
     [IO.File]::ReadAllBytes($localPropertiesPath)
 } else { $null }

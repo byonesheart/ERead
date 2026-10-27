@@ -28,11 +28,16 @@ import java.util.zip.ZipFile
 class DocumentImporter(private val context: Context) {
     private val currentProgress = MutableStateFlow<ImportProgress?>(null)
     private var progressActive = false
+    private var diagnostics: ImportDiagnostics? = null
+    private var lastReportAt = 0L
     val progress = currentProgress.asStateFlow()
 
     private fun report(stage: String, item: String = "", done: Int = 0, total: Int = 0,
                        fraction: Float? = if (total > 0) done.toFloat() / total else null) {
         if (!progressActive) return
+        val now = System.nanoTime()
+        if (currentProgress.value != null && now - lastReportAt < 100_000_000L && fraction != 1f) return
+        lastReportAt = now
         currentProgress.value = ImportProgress(stage, item, done, total, fraction?.coerceIn(0f, 1f))
     }
 
@@ -90,13 +95,16 @@ class DocumentImporter(private val context: Context) {
                     val format = kind(item) ?: throw IllegalArgumentException("不支持的文件格式")
                     val id = UUID.randomUUID().toString()
                     val directory = File(context.filesDir, "books/$id").apply { mkdirs() }
+                    val timing = ImportDiagnostics()
+                    diagnostics = timing
+                    var status = "failed"
                     try {
                         report("读取源文件", item.name)
                         // Keep the complete EPUB, including fonts and resources,
                         // after a transient provider grant or an external file is removed.
                         val reference = if (format in setOf(BookFormat.EPUB, BookFormat.MOBI)) {
                             val original = File(directory, "source.${format.name.lowercase()}")
-                            copy(item.uri, original)
+                            timing.measure("copy") { copy(item.uri, original) { work.ensureActive() } }
                             SourceReference(original.absolutePath, false)
                         } else reference(item, directory, "source.${format.name.lowercase()}", retainFallback = format == BookFormat.PDF)
                         val imported = withLocalDocument(context, reference.path) { source ->
@@ -109,12 +117,16 @@ class DocumentImporter(private val context: Context) {
                             }
                             parsed.copy(sourceFileName = item.name, sourceFileBytes = source.length())
                         }
+                        status = "complete"
+                        timing.count("chapters", imported.chapters.size.toLong())
+                        timing.count("sourceBytes", imported.sourceFileBytes ?: 0)
                         imported.copy(sourcePath = documentFile(reference.path)?.absolutePath,
                             sourceUri = item.permissionUri.toString(), sourceLinked = reference.linked)
                     } catch (error: Throwable) {
+                        status = if (error is CancellationException) "canceled" else "failed"
                         directory.deleteRecursively()
                         throw error
-                    }
+                    } finally { timing.save(context.cacheDir, format.name, status); diagnostics = null }
                 }.onFailure { rethrowCancellation(it); failures += "${item.name}：${it.message ?: "导入失败"}" }.getOrNull()
                 if (imported != null) {
                     onBookImported(imported)
@@ -464,10 +476,7 @@ class DocumentImporter(private val context: Context) {
         val original = File(directory, "source.epub")
         if (original.canonicalFile != source.canonicalFile) source.copyTo(original, overwrite = false)
         val source = original
-        var directoryReady = false
-        val parsed = EpubArchive.read(source, fallbackTitle, onDirectoryReady = { directoryReady = true }) {
-            checkActive(); report(if (directoryReady) "读取 EPUB 正文与注释" else "读取 EPUB 目录", fallbackTitle, fraction = it)
-        }
+        val (parsed, content) = epubLazyChapters(source, directory, fallbackTitle, checkActive)
         var coverPath: String? = null
         val cover = parsed.coverPath ?: parsed.imagePaths.firstOrNull()
         if (cover != null) {
@@ -475,7 +484,6 @@ class DocumentImporter(private val context: Context) {
             EpubArchive.copyEntry(source, cover, coverFile)
             if (isValidImage(coverFile)) coverPath = BitmapLoader.createThumbnail(coverFile, directory)
         }
-        val content = epubLazyChapters(source, parsed, directory, checkActive)
         val novel = content.any { it.characterCount > 0 }
         val chapters = if (novel) content else content.filter { it.inlineImages.isNotEmpty() }.map {
             it.copy(textPath = null, pages = it.inlineImages.map { image -> PageSource(image.path) },
@@ -526,9 +534,20 @@ class DocumentImporter(private val context: Context) {
         val original = File(directory, "source.mobi")
         if (original.canonicalFile != source.canonicalFile) source.copyTo(original, overwrite = false)
         val source = original
-        val parsed = MobiArchive.read(source, fallbackTitle, checkActive = checkActive) {
+        var raw = ""
+        val check = { ImportWorkPriority.checkpoint(checkActive) }
+        var stage = "mobi.catalog"
+        var stageAt = System.nanoTime()
+        val parsed = measured("mobi.prepare") { MobiArchive.readSlices(source, fallbackTitle, check, { raw = it }) {
+            val next = when { it < .08f -> "mobi.catalog"; it < .84f -> "mobi.decompress"; it < .96f -> "mobi.resources"; else -> "mobi.notes" }
+            if (next != stage) { diagnostics?.elapsed(stage, stageAt); stage = next; stageAt = System.nanoTime() }
             report(mobiImportStage(it), fallbackTitle, fraction = it)
-        }
+        } }
+        diagnostics?.elapsed(stage, stageAt)
+        diagnostics?.count("expandedCharacters", raw.length.toLong())
+        diagnostics?.count("retainedSectionHtmlCharacters", parsed.sections.sumOf { it.html.length.toLong() })
+        val body = sourceBodyTag(raw)
+        fun expanded(section: MobiSection) = section.copy(html = sourceBodyFragment(raw.substring(section.sourceStart, section.sourceEnd), body))
         val coverPath = parsed.cover?.let { cover ->
             File(directory, "cover.${cover.extension}").apply {
                 writeBytes(cover.bytes)
@@ -536,8 +555,8 @@ class DocumentImporter(private val context: Context) {
             }.let { BitmapLoader.createThumbnail(it, directory) }
         }
         val sections = if (!parsed.hasEmbeddedToc && (rule != DEFAULT_CHAPTER_RULE || parsed.sections.size == 1))
-            writeTextChapters(mobiTextChapters(source, parsed, directory, rule, checkActive), directory)
-        else mobiLazyChapters(source, parsed, directory, checkActive)
+            writeTextChapters(mobiTextChapters(source, parsed.copy(sections = parsed.sections.map(::expanded)), directory, rule, check), directory)
+        else mobiLazyChapters(source, parsed, directory, check, ::expanded)
         val novel = sections.any { it.characterCount > 0 }
         val chapters = if (novel) sections else sections.filter { it.inlineImages.isNotEmpty() }.map {
             it.copy(textPath = null, pages = it.inlineImages.map { image -> PageSource(image.path) },
@@ -550,66 +569,90 @@ class DocumentImporter(private val context: Context) {
             sourcePath = source.absolutePath)
     }
 
-    private fun epubLazyChapters(source: File, parsed: ParsedEpub, directory: File, checkActive: () -> Unit): List<Chapter> {
-        val cache = mutableMapOf<String, String>()
-        val available = parsed.imagePaths.toSet()
-        val cssFiles = mutableMapOf<String, File>()
-        val rawDocuments = mutableMapOf<String, String>()
+    private fun epubLazyChapters(source: File, directory: File, title: String, checkActive: () -> Unit): Pair<ParsedEpub, List<Chapter>> {
+        val images = mutableMapOf<String, String>()
         return ZipFile(source).use { zip ->
             val entries = zip.entries().asSequence().associateBy { EpubArchive.safePath(it.name) }
-            val sectionCounts = parsed.sections.groupingBy { it.path }.eachCount()
-            val workers = java.util.concurrent.Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors().coerceIn(1, 4))
-            val taskCheck = { checkActive(); if (Thread.currentThread().isInterrupted) throw CancellationException("导入已取消") }
-            try { parsed.sections.withIndex().chunked(32).flatMap { batch ->
-                val pending = batch.map { (index, section) -> workers.submit<Chapter> {
-                    taskCheck()
-                    val images = mutableMapOf<String, String>()
-                    val plain = HtmlChapterParser.readPlainWithNotes(section.title, section.html, checkActive = taskCheck, noteTargets = section.sourceNoteTargets) { attributes ->
-                        val reference = HtmlChapterParser.attribute(attributes, "src") ?: HtmlChapterParser.attribute(attributes, "xlink:href")
-                            ?: HtmlChapterParser.attribute(attributes, "href")
-                        val path = reference?.let { runCatching { EpubArchive.resolve(section.path, it) }.getOrNull() }
-                        if (path == null || path !in available) null else synchronized(cache) { cache.getOrPut(path) {
-                            val key = MessageDigest.getInstance("SHA-256").digest(path.toByteArray()).take(10).joinToString("") { "%02x".format(it) }
-                            val image = File(directory, "epub-inline-$key.${imageExtension(path)}")
-                            val entry = requireNotNull(entries[path]) { "EPUB 图片缺失：$path" }
-                            zip.getInputStream(entry).use { input -> image.outputStream().use { input.copyTo(it) } }
-                            image.absolutePath
-                        } }.also { images[attributes] = it }
-                    }
-                    val raw = if (sectionCounts[section.path] == 1) section.html else synchronized(rawDocuments) {
-                        val document = rawDocuments.getOrPut(section.path) {
-                            zip.getInputStream(requireNotNull(entries[section.path])).use { decodeEpubMarkup(it.readBytes()) }
-                        }
-                        while (rawDocuments.size > 4) rawDocuments.remove(rawDocuments.keys.first())
-                        document
-                    }
-                    val html = ebookHtmlFragment(raw, section.sourceStart, section.sourceEnd)
-                    taskCheck()
-                    saveLazyChapter(directory, index, plain, html, section.css, images, section.sourceNoteTargets, section.path, cssFiles)
-                        .copy(tocParentTitle = section.tocParentTitle)
-                } }
-                try { pending.map { future ->
-                    checkActive()
-                    try { future.get() } catch (error: java.util.concurrent.ExecutionException) { throw error.cause ?: error }
-                }.also {
-                    val done = batch.last().index + 1
-                    report("缓存 EPUB 章节", batch.last().value.title, done, parsed.sections.size)
-                } } finally { pending.forEach { it.cancel(true) } }
-            } } finally {
+            val cssFiles = mutableMapOf<String, File>()
+            val completed = mutableListOf<Chapter>()
+            val pending = java.util.ArrayDeque<java.util.concurrent.Future<Chapter>>()
+            val parallelism = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
+            val workers = java.util.concurrent.Executors.newFixedThreadPool(parallelism) { task -> Thread(task, "eread-import").apply {
+                priority = Thread.MIN_PRIORITY
+            } }
+            val check = { ImportWorkPriority.checkpoint(checkActive)
+                if (Thread.currentThread().isInterrupted) throw CancellationException("导入已取消") }
+            var directoryReady = false
+            var index = 0
+            fun collect() {
+                check()
+                try { completed += pending.removeFirst().get() }
+                catch (error: java.util.concurrent.ExecutionException) { throw error.cause ?: error }
+            }
+            try {
+                val parsed = EpubArchive.visit(source, title, { directoryReady = true }, {
+                    check()
+                    report(if (directoryReady) "读取 EPUB 正文与注释" else "读取 EPUB 目录", title, fraction = it)
+                }, diagnostics) { section, scan, displayHtml, availableImages ->
+                    check()
+                    // Backpressure bounds queued HTML/scans as well as executing tasks.
+                    while (pending.size >= if (ImportWorkPriority.reading) 1 else parallelism) collect()
+                    val chapterIndex = index++
+                    pending.addLast(workers.submit<Chapter> {
+                        check()
+                        val usedImages = mutableMapOf<String, String>()
+                        val plain = measured("text") { HtmlChapterParser.readScannedPlain(section.title, section.html, scan, check, section.sourceNoteTargets) { attributes ->
+                            val reference = HtmlChapterParser.attribute(attributes, "src") ?: HtmlChapterParser.attribute(attributes, "xlink:href")
+                                ?: HtmlChapterParser.attribute(attributes, "href")
+                            val path = reference?.let { runCatching { EpubArchive.resolve(section.path, it) }.getOrNull() }
+                            if (path == null || path !in availableImages) null else synchronized(images) { images[path] ?: measured("images") {
+                                val key = MessageDigest.getInstance("SHA-256").digest(path.toByteArray()).take(10).joinToString("") { "%02x".format(it) }
+                                val image = File(directory, "epub-inline-$key.${imageExtension(path)}")
+                                entries[path]?.takeIf { !it.isDirectory }?.let { entry ->
+                                    zip.getInputStream(entry).use { input -> image.outputStream().use { output ->
+                                        val buffer = ByteArray(32 * 1024)
+                                        while (true) {
+                                            check()
+                                            val count = input.read(buffer)
+                                            if (count < 0) break
+                                            output.write(buffer, 0, count)
+                                        }
+                                    } }
+                                    image.absolutePath.also { images[path] = it }
+                                }
+                            } }?.also { usedImages[attributes] = it }
+                        } }
+                        check()
+                        measured("cache") { saveLazyChapter(directory, chapterIndex, plain, displayHtml, section.css,
+                            usedImages, section.sourceNoteTargets, section.path, cssFiles).copy(tocParentTitle = section.tocParentTitle) }
+                    })
+                    diagnostics?.maximum("pendingChapters", pending.size.toLong())
+                    diagnostics?.count("reusedScans", if (scan != null) 1 else 0)
+                    report("缓存 EPUB 章节", section.title, chapterIndex + 1)
+                }
+                while (pending.isNotEmpty()) collect()
+                report("缓存 EPUB 章节", title, completed.size, completed.size, 1f)
+                parsed to completed
+            } finally {
+                pending.forEach { it.cancel(true) }
                 workers.shutdownNow()
-                workers.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
+                while (!workers.awaitTermination(50, java.util.concurrent.TimeUnit.MILLISECONDS)) { /* Never leave a writer in a deleted import directory. */ }
             }
         }
     }
 
-    private fun mobiLazyChapters(source: File, parsed: ParsedMobi, directory: File, checkActive: () -> Unit): List<Chapter> {
+    private fun <T> measured(stage: String, block: () -> T): T = diagnostics?.measure(stage, block) ?: block()
+
+    private fun mobiLazyChapters(source: File, parsed: ParsedMobi, directory: File, checkActive: () -> Unit, expand: (MobiSection) -> MobiSection): List<Chapter> {
         val resources = parsed.images.associateBy { it.recIndex }
         val cache = mutableMapOf<Int, String>()
-        return parsed.sections.mapIndexed { index, section ->
+        val cssFiles = mutableMapOf<String, File>()
+        return parsed.sections.mapIndexed { index, storedSection ->
+            val section = expand(storedSection)
             checkActive()
             report("缓存 MOBI 章节", section.title, index, parsed.sections.size)
             val images = mutableMapOf<String, String>()
-            val plain = HtmlChapterParser.readPlainWithNotes(section.title, section.html, checkActive, section.sourceNoteTargets) { attributes ->
+            val plain = measured("text") { HtmlChapterParser.readPlainWithNotes(section.title, section.html, checkActive, section.sourceNoteTargets) { attributes ->
                 val reference = HtmlChapterParser.attribute(attributes, "recindex")?.toIntOrNull()
                     ?: (HtmlChapterParser.attribute(attributes, "src") ?: HtmlChapterParser.attribute(attributes, "xlink:href")
                         ?: HtmlChapterParser.attribute(attributes, "href"))?.let { src ->
@@ -618,11 +661,12 @@ class DocumentImporter(private val context: Context) {
                 val resource = reference?.let(resources::get)
                 if (resource == null) null else cache.getOrPut(resource.recIndex) {
                     val image = File(directory, "mobi-inline-${resource.recIndex}.${resource.extension}")
-                    MobiArchive.copyImage(source, resource, image)
+                    measured("images") { MobiArchive.copyImage(source, resource, image, checkActive) }
                     image.absolutePath
                 }.also { images[attributes] = it }
-            }
-            saveLazyChapter(directory, index, plain, section.html, parsed.css, images, section.sourceNoteTargets).copy(tocParentTitle = section.tocParentTitle)
+            } }
+            measured("cache") { saveLazyChapter(directory, index, plain, section.html, parsed.css, images, section.sourceNoteTargets, cssFiles = cssFiles)
+                .copy(tocParentTitle = section.tocParentTitle) }
         }.let { chapters -> if (parsed.hasEmbeddedToc) chapters else chapters.filter { it.characterCount > 0 || it.inlineImages.isNotEmpty() } }
     }
 
@@ -792,7 +836,7 @@ class DocumentImporter(private val context: Context) {
         if (page.pdfPage >= 0) pdfCover(page.path, directory)
         else withLocalDocument(context, page.path) { BitmapLoader.createThumbnail(it, directory) }
 
-    private fun copy(uri: Uri, destination: File) {
+    private fun copy(uri: Uri, destination: File, check: () -> Unit = {}) {
         destination.parentFile?.mkdirs()
         val item = currentProgress.value?.currentItem.orEmpty()
         val total = documentFile(uri.toString())?.length() ?: runCatching {
@@ -805,6 +849,7 @@ class DocumentImporter(private val context: Context) {
             val buffer = ByteArray(64 * 1024)
             var copied = 0L
             while (true) {
+                ImportWorkPriority.checkpoint(check)
                 val count = source.read(buffer)
                 if (count < 0) break
                 output.write(buffer, 0, count)

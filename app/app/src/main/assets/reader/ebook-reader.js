@@ -59,6 +59,7 @@
         });
         candidates.forEach(node => {
             const style = getComputedStyle(node), text = node.textContent.trim(), size = parseFloat(style.fontSize);
+            if (!/^(?:center|right|end|-webkit-center|-webkit-right)$/.test(style.textAlign)) node.dataset.ereadParagraph = '1';
             const special = /^(?:center|right|end|-webkit-center|-webkit-right)$/.test(style.textAlign) ||
                 style.fontStyle !== 'normal' || Number(style.fontWeight) >= 600 ||
                 (text.length <= 80 && (size > bodySize * 1.15 || size < bodySize * .85));
@@ -409,6 +410,12 @@
             #eread-overlays > i { position:absolute!important; margin:0!important; padding:0!important; pointer-events:none!important; }
             ::selection { background:rgba(104,120,68,.35); }
         `;
+        // Apply after publisher inline declarations too; otherwise inline !important
+        // margins and author-CSS mode silently defeat the paragraph-gap control.
+        document.querySelectorAll('[data-eread-paragraph]').forEach(node => {
+            node.style.setProperty('margin-block-start', '0px', 'important');
+            node.style.setProperty('margin-block-end', Math.max(0, Number(config.paragraphGap) || 0) + 'px', 'important');
+        });
         fitPageBoundary();
         measureChapter();
         if (anchor && (!continuousHost || continuousHost.isActive(frameChapter)))
@@ -717,7 +724,7 @@
         }
         const hits = decorationRects().filter(({rect}) => event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom);
         if (hits.length) send('annotation', Object.assign({ids:Array.from(new Set(hits.map(hit => hit.item.id)))}, bounds(hits[0].rect)));
-        else send('tap');
+        else send('tap', {x:event.clientX / innerWidth, y:event.clientY / innerHeight});
     });
     window.ERead = {init:init, command:command};
     if (continuousHost) new ResizeObserver(measureChapter).observe(document.body);

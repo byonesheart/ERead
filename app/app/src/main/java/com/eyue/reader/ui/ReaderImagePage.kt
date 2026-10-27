@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.content.Context
 import android.graphics.Matrix
 import android.graphics.pdf.PdfRenderer
+import com.eyue.reader.data.PdfCrop
 import androidx.exifinterface.media.ExifInterface
 import android.util.LruCache
 import androidx.compose.foundation.Image
@@ -39,6 +40,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -75,10 +77,12 @@ internal fun ReaderImagePage(
     markColor: Color? = null,
     modifier: Modifier = Modifier,
     description: String = "漫画或 PDF 页面",
-    speechOffset: Int? = null, speechText: String = "", einkMode: Boolean = false
+    speechOffset: Int? = null, speechText: String = "", einkMode: Boolean = false,
+    pdfCrop: PdfCrop = PdfCrop(), onPageTap: ((Float, Float) -> Unit)? = null
 ) {
     val context = LocalContext.current
-    val cacheKey = "${source.path}:${source.pdfPage}:${targetWidth.coerceAtMost(1600)}"
+    val crop = if (source.pdfPage >= 0 && pdfCrop.enabled) pdfCrop.normalized() else PdfCrop()
+    val cacheKey = "${source.path}:${source.pdfPage}:${targetWidth.coerceAtMost(1600)}:$crop"
     var bitmap by remember(cacheKey) { mutableStateOf<Bitmap?>(null) }
     var failure by remember(cacheKey) { mutableStateOf<String?>(null) }
     var zoom by remember(cacheKey) { mutableStateOf(1f) }
@@ -86,6 +90,7 @@ internal fun ReaderImagePage(
     var surfaceSize by remember(cacheKey) { mutableStateOf(IntSize.Zero) }
     var speechGeometry by remember(cacheKey) { mutableStateOf<PdfSpeechGeometry?>(null) }
     val latestTap by rememberUpdatedState(onTap)
+    val latestPageTap by rememberUpdatedState(onPageTap)
     val latestLongPress by rememberUpdatedState(onLongPress)
     LaunchedEffect(cacheKey, speechText, speechOffset != null) {
         if (source.pdfPage >= 0 && speechOffset != null && speechText.isNotBlank() && speechGeometry == null) {
@@ -99,8 +104,8 @@ internal fun ReaderImagePage(
         if (bitmap == null) {
             val decoded = withContext(Dispatchers.IO) {
                 readerDecodePermits.withPermit { runCatching {
-                    val identity = "${documentSourceIdentity(context, source.path)}:${source.pdfPage}:${targetWidth.coerceAtMost(1600)}"
-                    readerBitmapCache.get(identity) ?: decodeReaderPage(context, source, targetWidth.coerceIn(400, 1600)).also { readerBitmapCache.put(identity, it) }
+                    val identity = "${documentSourceIdentity(context, source.path)}:${source.pdfPage}:${targetWidth.coerceAtMost(1600)}:$crop"
+                    readerBitmapCache.get(identity) ?: decodeReaderPage(context, source, targetWidth.coerceIn(400, 1600), crop).also { readerBitmapCache.put(identity, it) }
                 } }
             }
             decoded.fold(
@@ -130,7 +135,9 @@ internal fun ReaderImagePage(
             .transformable(state = transform, canPan = { zoom > 1f })
             .pointerInput(cacheKey) {
                 detectTapGestures(
-                    onTap = { latestTap() },
+                    onTap = { point ->
+                        latestPageTap?.takeIf { zoom == 1f }?.invoke(point.x / size.width.coerceAtLeast(1), point.y / size.height.coerceAtLeast(1)) ?: latestTap()
+                    },
                     onLongPress = { latestLongPress() },
                     onDoubleTap = {
                         zoom = if (zoom > 1f) 1f else 2f
@@ -163,8 +170,10 @@ internal fun ReaderImagePage(
                 val height = image.height * fit
                 val left = (size.width - width) / 2f
                 val top = (size.height - height) / 2f
-                highlights.forEach { rect -> drawRect(Color(0xFFFFA66B).copy(alpha = .35f),
-                    Offset(left + rect.left * width, top + rect.top * height), Size(rect.width * width, rect.height * height)) }
+                clipRect(left, top, left + width, top + height) { highlights.mapNotNull { cropPdfSpeechRect(it, crop) }.forEach { rect ->
+                    drawRect(Color(0xFFFFA66B).copy(alpha = .35f), Offset(left + rect.left * width, top + rect.top * height),
+                        Size(rect.width * width, rect.height * height))
+                } }
             }
         }
         if (markColor != null) Box(Modifier.align(Alignment.TopStart).padding(8.dp).size(16.dp)
@@ -173,18 +182,25 @@ internal fun ReaderImagePage(
     }
 }
 
-private fun decodeReaderPage(context: Context, source: PageSource, targetWidth: Int): Bitmap {
+internal fun decodeReaderPage(context: Context, source: PageSource, targetWidth: Int, pdfCrop: PdfCrop = PdfCrop()): Bitmap {
     if (source.pdfPage >= 0) {
         return withDocumentDescriptor(context, source.path) { descriptor ->
             PdfRenderer(descriptor).use { renderer ->
                 renderer.openPage(source.pdfPage).use { page ->
-                    val scale = minOf(targetWidth.toFloat() / page.width, 3200f / page.height,
-                        sqrt(2_560_000f / (page.width.toFloat() * page.height)))
-                    val width = (page.width * scale).toInt().coerceAtLeast(1)
-                    val height = (page.height * scale).toInt().coerceAtLeast(1)
+                    val crop = if (pdfCrop.enabled) pdfCrop.normalized() else PdfCrop()
+                    val visibleWidth = page.width * (1f - crop.left - crop.right)
+                    val visibleHeight = page.height * (1f - crop.top - crop.bottom)
+                    val scale = minOf(targetWidth.toFloat() / visibleWidth, 3200f / visibleHeight,
+                        sqrt(2_560_000f / (visibleWidth * visibleHeight)))
+                    val width = (visibleWidth * scale).toInt().coerceAtLeast(1)
+                    val height = (visibleHeight * scale).toInt().coerceAtLeast(1)
                     Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
                         it.eraseColor(android.graphics.Color.WHITE)
-                        page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        val matrix = Matrix().apply {
+                            setScale(scale, scale)
+                            postTranslate(-page.width * crop.left * scale, -page.height * crop.top * scale)
+                        }
+                        page.render(it, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                     }
                 }
             }

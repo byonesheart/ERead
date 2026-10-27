@@ -156,14 +156,15 @@ internal fun EbookReaderSurface(
     continuousChapters: List<Chapter> = emptyList(),
     readContinuousText: (suspend (Int) -> String)? = null,
     preload: Boolean = false,
-    retentionCenter: Int = chapterIndex
+    retentionCenter: Int = chapterIndex,
+    onPageTap: ((Float, Float) -> Unit)? = null
 ) {
     if (settings.continuousEbookScroll && settings.readingMode == com.eyue.reader.data.ReadingMode.SCROLL &&
         continuousChapters.isNotEmpty() && readContinuousText != null) {
         EbookContinuousSurface(store, continuousChapters, readContinuousText, chapterIndex, initialOffset, initialImagePath,
             settings, annotations, controller, modifier, foreground, einkMode, selectionReset, selectionMenuEnabled,
             searchQuery, spokenRange, chineseConverter, onViewport, onTap, onManualStart, onManualEnd, onSelectionActive,
-            onAction, onEdit, onRole, onAnnotationTap, onFootnote, session)
+            onAction, onEdit, onRole, onAnnotationTap, onFootnote, session, onPageTap)
         return
     }
     val context = LocalContext.current
@@ -190,6 +191,7 @@ internal fun EbookReaderSurface(
     val latestSettings by rememberUpdatedState(settings)
     val latestViewport by rememberUpdatedState(onViewport)
     val latestTap by rememberUpdatedState(onTap)
+    val latestPageTap by rememberUpdatedState(onPageTap)
     val latestManualStart by rememberUpdatedState(onManualStart)
     val latestManualEnd by rememberUpdatedState(onManualEnd)
     val latestChapterStep by rememberUpdatedState(onChapterStep)
@@ -330,7 +332,7 @@ internal fun EbookReaderSurface(
                                 }
                             })
                         }
-                        "tap" -> latestTap()
+                        "tap" -> latestPageTap?.invoke(event.optDouble("x", .5).toFloat(), event.optDouble("y", .5).toFloat()) ?: latestTap()
                         "turn" -> browser.turnPage(event.optInt("page"), event.optInt("direction"),
                             runCatching { PageTurnStyle.valueOf(event.optString("style")) }.getOrDefault(PageTurnStyle.SLIDE))
                         "manualStart" -> { selected = null; latestManualStart() }

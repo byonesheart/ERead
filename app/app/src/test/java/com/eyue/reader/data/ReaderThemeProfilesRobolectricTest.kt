@@ -14,6 +14,19 @@ import java.util.UUID
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
 class ReaderThemeProfilesRobolectricTest {
+    @Test fun renameKeepsTheSelectedProfileAndItsAppearanceAndSurvivesSaving() {
+        val repository = LibraryRepository(RuntimeEnvironment.getApplication())
+        val first = ReaderSettings(fontSize = 26f).saveAppearanceProfile().saveAppearanceProfile()
+        val id = first.activeAppearanceProfileId!!
+        val renamed = first.renameAppearanceProfile(id, "  晚间阅读  ")
+        assertEquals(id, renamed.activeAppearanceProfileId)
+        assertEquals(first.appearanceSnapshot(), renamed.appearanceSnapshot())
+        assertEquals("晚间阅读", renamed.appearanceProfiles.last().name)
+        assertEquals(first.appearanceProfiles.first(), renamed.appearanceProfiles.first())
+        assertEquals(renamed, repository.readSettings(repository.writeSettings(renamed)))
+        assertEquals(first, first.renameAppearanceProfile(id, "   "))
+    }
+
     @Test fun novelAndComicThemesPersistIndependentlyWithTheirActiveSelectionAndConversion() {
         val base = RuntimeEnvironment.getApplication()
         val root = File(base.cacheDir, "reader-themes-${UUID.randomUUID()}").apply { mkdirs() }

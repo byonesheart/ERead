@@ -163,6 +163,10 @@ internal fun ReaderScreen(
     ebookSession: EbookReaderSession? = null
 ) {
     val context = LocalContext.current
+    DisposableEffect(book.id) {
+        val session = com.eyue.reader.data.ImportWorkPriority.readerSession()
+        onDispose { session.close() }
+    }
     val requestedSettings = settings
     var activeReadingMode by remember(book.id) { mutableStateOf(settings.readingMode) }
     val settings = requestedSettings.copy(readingMode = activeReadingMode)
@@ -568,6 +572,7 @@ internal fun ReaderScreen(
         }
     }
     fun move(direction: Int) {
+        com.eyue.reader.data.ImportWorkPriority.interaction()
         if (book.chapters.isEmpty() || document == null || layoutState.preparing || layoutState.restoring) return
         highlightQuery = ""
         pauseSpeechForNavigation()
@@ -609,6 +614,10 @@ internal fun ReaderScreen(
     fun tapPage() {
         if (panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS) { panel = null; chromeVisible = false }
         else chromeVisible = !chromeVisible
+    }
+    fun tapPageAt(x: Float, y: Float) {
+        val direction = readerTapPageDirection(settings.tapPaging, x, y)
+        if (panel != null || chromeVisible || direction == 0) tapPage() else move(direction)
     }
     fun toggleBookmark() {
         if (currentBookmarks.isNotEmpty()) {
@@ -663,7 +672,8 @@ internal fun ReaderScreen(
         val sourceText = document?.text?.getOrNull(sourceChapter).orEmpty()
         if (showNotes(readerTextAnnotations(sourceText, annotations, book.id, sourceChapter, offset), anchor)) noteTapHandled = true
     }
-    fun tapImage(sourceChapter: Int, sourcePage: Int, sourceOffset: Int = 0, imagePath: String? = null) {
+    fun tapImage(sourceChapter: Int, sourcePage: Int, sourceOffset: Int = 0, imagePath: String? = null,
+                 x: Float = .5f, y: Float = .5f) {
         val footnote = imagePath?.let { readerSourceFootnoteAt(document?.chapters?.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty(), sourceOffset, it) }
         if (footnote != null) {
             selectedPassage = null; tappedNoteIds = emptyList(); selectionReset++
@@ -675,7 +685,7 @@ internal fun ReaderScreen(
             item.kind != AnnotationKind.BOOKMARK && (item.kind != AnnotationKind.NOTE || item.note.isNotBlank()) &&
             if (imagePath == null) item.imagePath == null && item.pageIndex == sourcePage
             else item.imagePath == imagePath && item.characterOffset == sourceOffset }
-        if (showNotes(notes, pointerAnchor)) noteTapHandled = true else tapPage()
+        if (showNotes(notes, pointerAnchor)) noteTapHandled = true else tapPageAt(x, y)
     }
     fun imageSelection(sourceChapter: Int, sourcePage: Int) {
         val text = document?.pageText?.getOrNull(sourceChapter)?.getOrNull(sourcePage).orEmpty()
@@ -935,6 +945,13 @@ internal fun ReaderScreen(
         }
     }
     LaunchedEffect(scrolling) { if (scrolling) dismissAnnotationBubble() }
+    LaunchedEffect(scrolling, progressDraft, chapterIndex, pageIndex) {
+        com.eyue.reader.data.ImportWorkPriority.interaction()
+        while (scrolling || progressDraft != null) {
+            delay(80)
+            com.eyue.reader.data.ImportWorkPriority.interaction()
+        }
+    }
     LaunchedEffect(chapterIndex, pageIndex) { dismissAnnotationBubble() }
     BackHandler(enabled = selectedPassage != null || tappedNoteIds.isNotEmpty() || tappedSourceFootnote != null) { dismissAnnotationBubble() }
     BackHandler(enabled = (panel == null || panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS) && selectedPassage == null && txtSelection == null &&
@@ -1260,12 +1277,20 @@ internal fun ReaderScreen(
     val renderChapters = book.chapters
     val renderStore = chapterStore
     val renderGeneration = layoutState.generation
-    Box(Modifier.fillMaxSize().background(background).safeDrawingPadding()) {
+    Box(Modifier.fillMaxSize().background(background).safeDrawingPadding().pointerInput(book.id) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.changes.any { it.pressed }) com.eyue.reader.data.ImportWorkPriority.interaction()
+            }
+        }
+    }) {
         backgroundImage?.let { bitmap ->
             Image(bitmap, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             Box(Modifier.fillMaxSize().background(if (settings.nightMode) Color.Black.copy(alpha = .72f) else Color.White.copy(alpha = .72f)))
         }
         // Permanent gutters keep typography and page counts unchanged when controls appear.
+        val latestBodyTap by rememberUpdatedState { x: Float, y: Float -> tapPageAt(x, y) }
         val tapObserver = Modifier.pointerInput(book.id, raster) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -1283,7 +1308,8 @@ internal fun ReaderScreen(
                     upTime = change.uptimeMillis
                     released = !change.pressed
                 } while (!released)
-                if (!raster && released && !moved && !noteTapHandled && upTime - down.uptimeMillis < pointerConfiguration.longPressTimeoutMillis) tapPage()
+                if (!raster && released && !moved && !noteTapHandled && upTime - down.uptimeMillis < pointerConfiguration.longPressTimeoutMillis)
+                    latestBodyTap(down.position.x / size.width.coerceAtLeast(1), down.position.y / size.height.coerceAtLeast(1))
             }
         }
         val imageTapObserver = Modifier.pointerInput(book.id) {
@@ -1350,7 +1376,7 @@ internal fun ReaderScreen(
                                     layoutState.restored(layoutState.generation, layoutState.restoreRequest)
                                 }
                             }
-                        }, onTap = ::tapPage,
+                        }, onTap = ::tapPage, onPageTap = { x, y -> tapPageAt(x, y) },
                         onManualStart = { highlightQuery = ""; manualDrag = true; pauseSpeechForNavigation() },
                         onManualEnd = { manualDrag = false },
                         onChapterStep = { direction ->
@@ -1386,6 +1412,7 @@ internal fun ReaderScreen(
                             val color = annotations.lastOrNull { it.bookId == book.id && it.chapterIndex == sourceChapter && it.pageIndex == index && it.kind != AnnotationKind.BOOKMARK && it.color != null }?.color?.let(::Color)
                             ReaderImagePage(source, textWidth, false, foreground,
                                 onTap = { tapImage(sourceChapter, index) }, onLongPress = { imageSelection(sourceChapter, index) }, markColor = color,
+                                onPageTap = { x, y -> tapImage(sourceChapter, index, x = x, y = y) }, pdfCrop = settings.pdfCrop,
                                 modifier = Modifier.testTag("reader_image_${sourceChapter}_$index"),
                                 speechOffset = pdfSpeechOffset(sourceChapter, index), speechText = renderDocument.pageText.getOrNull(sourceChapter)?.getOrNull(index).orEmpty(),
                                 einkMode = einkMode)
@@ -1410,6 +1437,7 @@ internal fun ReaderScreen(
                                 val color = annotations.lastOrNull { it.bookId == book.id && it.chapterIndex == sourceChapter && it.imagePath == image.path && it.characterOffset == page.start && it.kind != AnnotationKind.BOOKMARK }?.color?.let(::Color)
                                 ReaderImagePage(PageSource(image.path), textWidth, false, foreground,
                                     onTap = { tapImage(sourceChapter, index, page.start, image.path) }, onLongPress = { inlineImageSelection(sourceChapter, index, page) }, markColor = color,
+                                    onPageTap = { x, y -> tapImage(sourceChapter, index, page.start, image.path, x, y) },
                                     modifier = Modifier.then(imageTapObserver).testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode)
                             } else ReaderSelectableText(rememberReaderAnnotatedPage(renderDocument.text.getOrNull(sourceChapter).orEmpty(), page, book.id, sourceChapter, annotations, highlightQuery,
                                 colors.primaryContainer, settings.nightMode, renderDocument.sourceStyles.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
@@ -1450,6 +1478,7 @@ internal fun ReaderScreen(
                             val color = annotations.lastOrNull { it.bookId == book.id && it.chapterIndex == sourceChapter && it.pageIndex == sourcePage && it.kind != AnnotationKind.BOOKMARK && it.color != null }?.color?.let(::Color)
                             ReaderImagePage(source, textWidth, true, foreground,
                                 onTap = { if (interactive) tapImage(sourceChapter, sourcePage) },
+                                onPageTap = { x, y -> if (interactive) tapImage(sourceChapter, sourcePage, x = x, y = y) }, pdfCrop = settings.pdfCrop,
                                 onLongPress = { if (interactive) imageSelection(sourceChapter, sourcePage) }, markColor = color,
                                 modifier = Modifier.padding(readerContentPadding(settings)).testTag("reader_image_${sourceChapter}_$sourcePage"),
                                 speechOffset = pdfSpeechOffset(sourceChapter, sourcePage), speechText = renderDocument.pageText.getOrNull(sourceChapter)?.getOrNull(sourcePage).orEmpty(),
@@ -1460,6 +1489,7 @@ internal fun ReaderScreen(
                                 val color = annotations.lastOrNull { it.bookId == book.id && it.chapterIndex == sourceChapter && it.imagePath == image.path && it.characterOffset == page.start && it.kind != AnnotationKind.BOOKMARK }?.color?.let(::Color)
                                 ReaderImagePage(PageSource(image.path), textWidth, true, foreground,
                                     onTap = { if (interactive) tapImage(sourceChapter, sourcePage, page.start, image.path) },
+                                    onPageTap = { x, y -> if (interactive) tapImage(sourceChapter, sourcePage, page.start, image.path, x, y) },
                                     onLongPress = { if (interactive) inlineImageSelection(sourceChapter, sourcePage, page) }, markColor = color,
                                     modifier = Modifier.padding(readerContentPadding(settings)).then(imageTapObserver)
                                         .testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode)
@@ -1650,7 +1680,7 @@ internal fun ReaderScreen(
                 modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = halfScreen).testTag("reader_settings_sheet")) {
                 if (panel != ReaderPanel.SETTINGS) ReaderCompactSettings(requestedSettings, raster, onSettings,
                     onImportFont, onImportBackground, onFonts = { panel = ReaderPanel.FONTS },
-                    sourceCssAvailable = !raster && book.format in setOf(BookFormat.EPUB, BookFormat.MOBI))
+                    sourceCssAvailable = !raster && book.format in setOf(BookFormat.EPUB, BookFormat.MOBI), pdf = book.format == BookFormat.PDF)
                 else ReaderPreferencesPanel(requestedSettings, onSettings, onResetDefaults)
             }
         }

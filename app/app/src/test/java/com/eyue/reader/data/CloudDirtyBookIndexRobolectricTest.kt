@@ -13,6 +13,37 @@ import java.util.UUID
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
 class CloudDirtyBookIndexRobolectricTest {
+    @Test fun dayNightSwitchesAcceptPreviouslyUploadedLightAndDarkDigestsButStillDetectRealChanges() {
+        val context = RuntimeEnvironment.getApplication()
+        val repository = LibraryRepository(context)
+        val history = CloudBackupHistory(context)
+        for (dark in listOf(false, true)) {
+            val account = "night-mode-${UUID.randomUUID()}"
+            val book = book("night-$dark")
+            var state = LibraryState(books = listOf(book), settings = ReaderSettings(nightMode = dark))
+            history.record(account, book.id, legacyFingerprint(repository, state, book), 100)
+            var prepares = 0
+            val index = CloudDirtyBookIndex(repository) { source, snapshot, current ->
+                prepares++; CloudBookFingerprint(source, snapshot, current)
+            }
+            assertTrue(index.dirtyBookIds(state, account, history).isEmpty())
+            val canonical = cloudBackupFingerprint(repository, state, book)
+            repeat(4) {
+                state = state.copy(settings = state.settings.copy(nightMode = !state.settings.nightMode))
+                assertTrue(index.dirtyBookIds(state, account, history).isEmpty())
+                assertTrue(cloudDirtyBookIds(repository, state, account, history).isEmpty())
+                assertTrue(CloudBookFingerprint(repository, state, book).matches(book, history.digest(account, book.id)))
+                assertEquals(canonical, cloudBackupFingerprint(repository, state, book))
+            }
+            assertEquals("Night mode must not serialize the chapter index again", 1, prepares)
+            val moved = book.copy(characterOffset = 25, progress = .1f)
+            assertEquals(setOf(book.id), index.dirtyBookIds(state.copy(books = listOf(moved)), account, history))
+            assertEquals(setOf(book.id), index.dirtyBookIds(state.copy(annotations = listOf(
+                Annotation(bookId = book.id, chapterIndex = 0, pageIndex = 0, note = "新笔记"))), account, history))
+            assertEquals(setOf(book.id), index.dirtyBookIds(state.copy(settings = state.settings.copy(fontSize = 26f)), account, history))
+        }
+    }
+
     @Test fun cachedPositionTokensProduceTheExistingRecordsV2FingerprintExactly() {
         val repository = LibraryRepository(RuntimeEnvironment.getApplication())
         for (image in listOf(null, "插图/\"书页\"\\1.png")) {

@@ -10,7 +10,11 @@ internal class CloudBookFingerprint(repository: LibraryRepository, state: Librar
     private val prefixDigest: MessageDigest
     private val keys: List<String>
     private val segments: List<ByteArray>
-    private val tail = cloudBackupFingerprintTail(repository, state, book).map { it.toByteArray() }
+    private val tail = cloudBackupFingerprintTail(repository, state, book, nightMode = false).map { it.toByteArray() }
+    private val settingsIndex = state.annotations.count { it.bookId == book.id }
+    private val legacyNightSettings = repository.writeSettings(
+        (if (book.mode == LibraryMode.COMIC) state.comicSettings else state.settings).copy(nightMode = true)
+    ).toString().toByteArray()
 
     init {
         val json = repository.writeBook(book.copy(cloudBackupAt = 0, cloudEnabled = true, cloudOnly = false, lastReadAt = 0)).toString()
@@ -37,7 +41,7 @@ internal class CloudBookFingerprint(repository: LibraryRepository, state: Librar
         }
     }
 
-    fun fingerprint(book: Book): String {
+    fun fingerprint(book: Book, legacyNightMode: Boolean = false): String {
         val digest = if (prefix == null) prefixDigest.clone() as MessageDigest
             else MessageDigest.getInstance("SHA-256").apply { update(prefix) }
         keys.forEachIndexed { index, key ->
@@ -52,9 +56,15 @@ internal class CloudBookFingerprint(repository: LibraryRepository, state: Librar
             digest.update(segments[index])
         }
         digest.update(0)
-        tail.forEach { digest.update(it); digest.update(0) }
+        tail.forEachIndexed { index, value ->
+            digest.update(if (legacyNightMode && index == settingsIndex) legacyNightSettings else value)
+            digest.update(0)
+        }
         return "records-v2:" + digest.digest().joinToString("") { "%02x".format(it) }
     }
+
+    fun matches(book: Book, uploaded: String?): Boolean = uploaded != null &&
+        (uploaded == fingerprint(book) || uploaded == fingerprint(book, legacyNightMode = true))
 }
 
 internal class CloudDirtyBookIndex(private val repository: LibraryRepository,
@@ -78,7 +88,7 @@ internal class CloudDirtyBookIndex(private val repository: LibraryRepository,
             check()
             val inputs = Inputs(book.withoutReadingPosition().copy(cloudBackupAt = 0, cloudEnabled = true, cloudOnly = false,
                 positionImagePath = book.positionImagePath?.let { "" }), annotations[book.id].orEmpty(),
-                if (book.mode == LibraryMode.COMIC) state.comicSettings else state.settings,
+                (if (book.mode == LibraryMode.COMIC) state.comicSettings else state.settings).copy(nightMode = false),
                 state.groups.find { it.id == book.groupId })
             val previous = entries[book.id]
             val template = previous?.takeIf { !refreshFiles && it.inputs == inputs }?.template
@@ -88,7 +98,8 @@ internal class CloudDirtyBookIndex(private val repository: LibraryRepository,
             val digest = if (previous != null && template === previous.template && position == previous.position) previous.digest
                 else template.fingerprint(book)
             entries[book.id] = Entry(inputs, template, position, digest)
-            digest != history.uploadedDigest(account, book.id)
+            val uploaded = history.uploadedDigest(account, book.id)
+            digest != uploaded && (uploaded == null || template.fingerprint(book, legacyNightMode = true) != uploaded)
         }.map { it.id }.toSet()
     }
 }

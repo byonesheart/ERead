@@ -26,8 +26,10 @@ internal fun sourceNoteFragment(href: String): String? = href.substringAfter('#'
 /** Candidate references only; normal navigation links never become notes merely because they have a target. */
 internal fun sourceNoteReferences(html: String, checkActive: () -> Unit = {}, scan: SourceHtmlScan? = null): List<SourceNoteReference> {
     val document = scan ?: SourceHtmlScan(html, checkActive)
+    val links = document.elements(setOf("a"))
+    if (links.isEmpty()) return emptyList()
     val scanned = document.visibleHtml
-    val references = document.elements(setOf("a")).mapNotNull { link ->
+    val references = links.mapNotNull { link ->
         val attributes = link.tag.attributes
         val href = sourceHtmlAttribute(attributes, "href")?.replace("&amp;", "&")
         val position = sourceHtmlAttribute(attributes, "filepos")?.toIntOrNull()?.takeIf { it >= 0 }

@@ -9,6 +9,41 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 class EpubArchiveTest {
+    @Test fun streamingKeepsOnlyIndexesAndPreservesCrossDocumentNotesAndSplitMarkup() {
+        val body = "<html><head><style>p{color:red}</style></head><body><div class='wrapper'><h1 id='a'>甲</h1><p>甲🙂<a href='notes.xhtml#fn1'>[1]</a></p><h2 id='b'>乙</h2><p>乙<a href='#fn2'>[2]</a></p><aside id='fn2'>本章注释</aside></div></body></html>"
+        val files = linkedMapOf(
+            "META-INF/container.xml" to "<container><rootfile full-path='book.opf'/></container>",
+            "book.opf" to "<package><manifest><item id='body' href='body.xhtml'/><item id='nav' href='nav.xhtml' properties='nav'/></manifest><spine><itemref idref='body'/></spine></package>",
+            "nav.xhtml" to "<html><nav><a href='body.xhtml#a'>第一章</a><a href='body.xhtml#b'>第二章</a></nav></html>",
+            "body.xhtml" to body, "notes.xhtml" to "<html><body><aside id='fn1'>跨章注释🙂</aside></body></html>")
+        val file = archive(files)
+        try {
+            val expected = EpubArchive.read(file)
+            val visited = mutableListOf<EpubSection>()
+            val display = mutableListOf<String>()
+            val index = EpubArchive.visit(file, "样本", {}, {}) { section, _, html, _ -> visited += section; display += html }
+            assertEquals(expected.sections, visited)
+            assertEquals(expected.sections.map { ebookHtmlFragment(body, it.sourceStart, it.sourceEnd) }, display)
+            assertTrue(index.sections.all { it.html.isEmpty() && it.css.isEmpty() && it.sourceNoteTargets.isEmpty() })
+            assertTrue(visited.first().sourceNoteTargets.values.single().contains("跨章注释🙂"))
+            assertTrue(visited.last().sourceNoteTargets.values.single().contains("本章注释"))
+        } finally { file.delete() }
+    }
+
+    @Test fun streamingConsumerCanStopBeforeReadingTheRestOfTheBook() {
+        val file = archive(mapOf(
+            "META-INF/container.xml" to "<container><rootfile full-path='book.opf'/></container>",
+            "book.opf" to "<package><manifest><item id='a' href='a.xhtml'/><item id='b' href='missing.xhtml'/></manifest><spine><itemref idref='a'/><itemref idref='b'/></spine></package>",
+            "a.xhtml" to "<html><body><p>可读的第一章</p></body></html>"))
+        var calls = 0
+        try {
+            org.junit.Assert.assertThrows(kotlinx.coroutines.CancellationException::class.java) {
+                EpubArchive.visit(file, "样本", {}, {}) { _, _, _, _ -> calls++; throw kotlinx.coroutines.CancellationException() }
+            }
+            assertEquals(1, calls)
+        } finally { file.delete() }
+    }
+
     @Test fun epub3NavTakesPriorityOverTheLegacyNcxWithoutAddingDuplicateSections() {
         val file = archive(mapOf(
             "META-INF/container.xml" to "<container><rootfile full-path='book.opf'/></container>",

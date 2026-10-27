@@ -2,6 +2,7 @@ package com.eyue.reader.data
 
 import android.content.Context
 import android.util.AtomicFile
+import android.util.JsonWriter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -91,8 +92,24 @@ internal fun saveLazyChapter(directory: File, index: Int, parsed: ParsedTextChap
     }
     val cssFile = if (cssFiles == null) stylesheet() else synchronized(cssFiles) { cssFiles.getOrPut(css, ::stylesheet) }
     writeImportChapter(text, parsed.text)
-    writeImportChapter(manifest, JSONObject().put("version", 3).put("html", html).put("cssPath", cssFile.absolutePath)
-        .put("images", JSONObject(images)).put("noteTargets", JSONObject(noteTargets)).put("archivePath", archivePath).toString())
+    fun writeManifest(writer: java.io.Writer) {
+        JsonWriter(writer).apply {
+            beginObject().name("version").value(3).name("html").value(html).name("cssPath").value(cssFile.absolutePath)
+            name("images").beginObject(); images.forEach { (key, value) -> name(key).value(value) }; endObject()
+            if (noteTargets.isNotEmpty()) {
+                name("noteTargets").beginObject(); noteTargets.forEach { (key, value) -> name(key).value(value) }; endObject()
+            }
+            if (archivePath != null) name("archivePath").value(archivePath)
+            endObject(); flush()
+        }
+    }
+    if (!manifest.exists()) manifest.bufferedWriter(Charsets.UTF_8, 32 * 1024).use(::writeManifest)
+    else {
+        val atomic = AtomicFile(manifest)
+        val output = atomic.startWrite()
+        try { val writer = output.writer(Charsets.UTF_8).buffered(32 * 1024); writeManifest(writer); atomic.finishWrite(output) }
+        catch (error: Throwable) { atomic.failWrite(output); throw error }
+    }
     return Chapter(title = parsed.title, textPath = text.absolutePath, inlineImages = parsed.inlineImages,
         characterCount = parsed.text.length, lazySourcePath = manifest.absolutePath, tocParentTitle = parsed.tocParentTitle,
         sourceFootnotes = parsed.sourceFootnotes, sourceCssStyles = parsed.sourceCssStyles)
@@ -101,7 +118,7 @@ internal fun saveLazyChapter(directory: File, index: Int, parsed: ParsedTextChap
 /** New import files are private until the book's atomic library commit; do not fsync every chapter. */
 private fun writeImportChapter(file: File, text: String) {
     if (file.exists()) writeChapterAtomic(AtomicFile(file), text)
-    else file.writeText(text, Charsets.UTF_8)
+    else file.bufferedWriter(Charsets.UTF_8, 32 * 1024).use { it.write(text) }
 }
 
 private fun chapterTextHash(file: File, checkActive: () -> Unit): String {

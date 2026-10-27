@@ -45,7 +45,8 @@ private enum class SettingsPage(val title: String) {
     APP_THEME("主题"),
     SPEECH("朗读引擎"), CLOUD("WebDAV 备份与还原"), CACHE("清理缓存"),
     FEEDBACK("问题反馈"), SUPPORT("支持作者"), ABOUT("关于"), AUTHOR("作者"),
-    PRIVACY("隐私政策"), TERMS("用户协议"), OPEN_SOURCE("开源相关"), CHANGELOG("更新日志"), CONTRIBUTORS("贡献者")
+    PRIVACY("隐私政策"), TERMS("用户协议"), OPEN_SOURCE("开源相关"), CHANGELOG("更新日志"),
+    CHANGELOG_HISTORY("历史更新日志"), CONTRIBUTORS("贡献者")
 }
 
 @Suppress("UNUSED_PARAMETER")
@@ -187,7 +188,8 @@ private enum class SettingsPage(val title: String) {
                 SettingsPage.PRIVACY -> LegalDocumentContent("privacy")
                 SettingsPage.TERMS -> LegalDocumentContent("terms")
                 SettingsPage.OPEN_SOURCE -> OpenSourceContent()
-                SettingsPage.CHANGELOG -> CurrentChangelogContent()
+                SettingsPage.CHANGELOG -> CurrentChangelogContent { open(SettingsPage.CHANGELOG_HISTORY) }
+                SettingsPage.CHANGELOG_HISTORY -> LegalDocumentContent("changelog")
             }
         }
     }

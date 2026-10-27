@@ -12,6 +12,23 @@ import java.nio.ByteOrder
 import java.nio.charset.Charset
 
 class MobiArchiveTest {
+    @Test fun importSlicesReconstructExactlyTheExistingSectionsWithoutRetainingTheirHtml() {
+        for (html in listOf("<body><p>整章🙂</p></body>",
+            "<html><head><style>p{color:red}</style></head><body><h1>第一章</h1><p>甲🙂</p><h1>第二章</h1><p>乙</p></body></html>",
+            "<body><p>前言</p><mbp:pagebreak/><p>甲🙂</p><mbp:pagebreak/><p>乙</p></body>")) {
+            fixture(html) { file ->
+                val expected = MobiArchive.read(file)
+                var raw = ""
+                val slices = MobiArchive.readSlices(file, "测试", {}, { raw = it }, {})
+                assertTrue(slices.sections.all { it.html.isEmpty() })
+                val body = sourceBodyTag(raw)
+                assertEquals(expected.sections, slices.sections.map { section -> section.copy(
+                    html = sourceBodyFragment(raw.substring(section.sourceStart, section.sourceEnd), body)) })
+                assertEquals(expected.hasEmbeddedToc, slices.hasEmbeddedToc)
+            }
+        }
+    }
+
     @Test fun tenMegabytesOfUnclosedNamedAnchorsKeepTheRealTocAndFinishDirectoryProgress() {
         val html = buildString {
             append("<body><a href='#one'>Chapter I</a><a href='#two'>Chapter II</a>")

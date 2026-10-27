@@ -305,7 +305,7 @@ try {
         tableBorder: getComputedStyle(document.querySelector('#data-table td')).borderLeftWidth };
     });
     const original = await measure(); assert.equal(original.bodySize, '28px'); assert.equal(original.headingSize, '32px');
-    assert.equal(original.bodyGap, '140px');
+    assert.equal(original.bodyGap, `${baseConfig.paragraphGap}px`, 'The paragraph-gap control also applies with author CSS');
     await command({ type: 'configure', config: { ...baseConfig, authorCss: false } });
     const software = await measure();
     assert.equal(software.bodySize, '19px'); assert.equal(software.bodyLine, '35.15px'); assert.equal(software.bodyGap, '15.2px');
@@ -321,6 +321,40 @@ try {
     await command({ type: 'configure', config: baseConfig });
     assert.deepEqual(await measure(), original, 'Returning to source CSS restores exact source typography');
     return { original, software };
+  });
+
+  await test('paragraph-gap-overrides-inline-important-margins-in-both-css-and-writing-modes', async () => {
+    const paragraphs = ['第一段正文。', '第二段正文。', '第三段正文。'];
+    const source = { baseUrl:'https://eread.local/book/archive/chapter.html', canonicalText:paragraphs.join('\n\n'),
+      html:`<html><head></head><body>${paragraphs.map((text,index) => `<p id="gap-${index}" style="margin:0!important;font-weight:700">${text}</p>`).join('')}</body></html>`,
+      images:[], noteTargets:{} };
+    const evidence = [];
+    for (const authorCss of [false, true]) for (const vertical of [false, true]) {
+      await open({mode:'SCROLL', authorCss, vertical}, {source});
+      for (const gap of [0, 9, 18, 36]) {
+        await command({type:'configure', config:{...baseConfig, mode:'SCROLL', authorCss, vertical, paragraphGap:gap}});
+        const measured = await page.evaluate(vertical => {
+          const first = document.getElementById('gap-0'), second = document.getElementById('gap-1');
+          const a = first.getBoundingClientRect(), b = second.getBoundingClientRect();
+          return {actual:vertical ? a.left-b.right : b.top-a.bottom,
+            css:parseFloat(getComputedStyle(first).marginBlockEnd), text:document.body.textContent};
+        }, vertical);
+        assert.ok(Math.abs(measured.actual-gap)<.1, `Actual paragraph separation ${measured.actual} must equal ${gap}`);
+        assert.equal(measured.css, gap); assert.ok(measured.text.includes(paragraphs[1]));
+        evidence.push({authorCss,vertical,gap,actual:measured.actual});
+      }
+    }
+    return evidence;
+  });
+
+  await test('ordinary-taps-report-normalized-viewport-coordinates-without-navigating', async () => {
+    await open();
+    await page.evaluate(() => { window.events = []; });
+    await page.mouse.click(12, 200);
+    const tap = await page.evaluate(() => window.events.findLast(event => event.type === 'tap'));
+    assert.ok(tap); assert.ok(Math.abs(tap.x-12/392)<.001); assert.ok(Math.abs(tap.y-200/760)<.001);
+    assert.equal(await page.evaluate(() => scrollY), 0);
+    return tap;
   });
 
   await test('footnote-and-selection-offsets', async () => {

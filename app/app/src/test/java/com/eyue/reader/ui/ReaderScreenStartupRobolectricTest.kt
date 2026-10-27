@@ -24,6 +24,11 @@ import com.eyue.reader.data.LibraryMode
 import com.eyue.reader.data.PageSource
 import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.ReadingMode
+import com.eyue.reader.data.TapPagingMode
+import com.eyue.reader.readerPageKeyDirection
+import android.view.KeyEvent
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import org.junit.After
@@ -76,6 +81,49 @@ class ReaderScreenStartupRobolectricTest {
         showReader(textBook(BookFormat.TXT, marker), ReadingMode.SCROLL)
         awaitText(marker)
         compose.onNodeWithTag("reader_speech_bar").assertDoesNotExist()
+    }
+
+    @Test fun leftRightClicksAndCommonEreaderKeyPairsTurnTheActualPage() {
+        val keys = MutableSharedFlow<Int>(extraBufferCapacity = 8)
+        val text = "CLICK_AND_KEYS_BODY\n" + "An ordinary paragraph fills part of a real reader page.\n".repeat(160)
+        showReader(textBook(BookFormat.TXT, text), ReadingMode.PAGED, { SilentSpeech() },
+            initialSettings = ReaderSettings(volumePaging = true), keyEvents = keys)
+        awaitText("CLICK_AND_KEYS_BODY")
+        compose.waitUntil(15_000) { position.get() != null }
+        revealToolbar()
+        compose.onNodeWithContentDescription("界面设置").performClick()
+        compose.onNodeWithTag("reader_tap_horizontal").performScrollTo().performClick()
+        compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(width * .5f, height * .2f)) }
+        compose.onNodeWithTag("reader_settings_sheet").assertDoesNotExist()
+        compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(width * .9f, height * .5f)) }
+        compose.waitUntil(15_000) { (position.get()?.offset ?: 0) > 0 }
+        compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(width * .1f, height * .5f)) }
+        compose.waitUntil(15_000) { position.get()?.offset == 0 }
+        for ((next, previous) in listOf(KeyEvent.KEYCODE_PAGE_DOWN to KeyEvent.KEYCODE_PAGE_UP,
+            KeyEvent.KEYCODE_DPAD_RIGHT to KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_VOLUME_DOWN to KeyEvent.KEYCODE_VOLUME_UP,
+            KeyEvent.KEYCODE_BUTTON_2 to KeyEvent.KEYCODE_BUTTON_1)) {
+            compose.runOnIdle { assertTrue(keys.tryEmit(requireNotNull(readerPageKeyDirection(next)))) }
+            compose.waitUntil(15_000) { (position.get()?.offset ?: 0) > 0 }
+            compose.runOnIdle { assertTrue(keys.tryEmit(requireNotNull(readerPageKeyDirection(previous)))) }
+            compose.waitUntil(15_000) { position.get()?.offset == 0 }
+        }
+        compose.onNodeWithTag("reader_body").performTouchInput { click() }
+        compose.onNodeWithContentDescription("目录").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(0, position.get()?.offset) }
+    }
+
+    @Test fun topBottomClickLayoutPagesVerticallyAndKeepsTheMiddleForControls() {
+        val text = "VERTICAL_CLICK_BODY\n" + "Another paragraph fills a real reader page.\n".repeat(100)
+        showReader(textBook(BookFormat.TXT, text), ReadingMode.VERTICAL_PAGED, { SilentSpeech() },
+            initialSettings = ReaderSettings(tapPaging = TapPagingMode.VERTICAL))
+        awaitText("VERTICAL_CLICK_BODY")
+        compose.waitUntil(15_000) { position.get() != null }
+        compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(width * .5f, height * .9f)) }
+        compose.waitUntil(15_000) { (position.get()?.offset ?: 0) > 0 }
+        compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(width * .5f, height * .1f)) }
+        compose.waitUntil(15_000) { position.get()?.offset == 0 }
+        compose.onNodeWithTag("reader_body").performTouchInput { click() }
+        compose.onNodeWithContentDescription("目录").assertIsDisplayed()
     }
 
     @Test fun pagedNovelOpensWithSpeechFactoryIsolated() {
@@ -175,7 +223,7 @@ class ReaderScreenStartupRobolectricTest {
         revealToolbar()
         compose.onNodeWithContentDescription("界面设置").assertIsDisplayed()
         compose.onNodeWithContentDescription("阅读设置").performClick()
-        compose.onNodeWithText("音量键翻页").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("音量键与实体键翻页").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
         compose.onNodeWithTag("reader_settings_tab_interface").assertDoesNotExist()
         compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(center.x, height * .1f)) }
@@ -264,15 +312,16 @@ class ReaderScreenStartupRobolectricTest {
         })
 
     private fun showReader(book: Book, mode: ReadingMode, factory: ((Context) -> ReaderSpeechController)? = null,
-        saveProgress: com.eyue.reader.data.BookSaveProgress? = null) {
+        saveProgress: com.eyue.reader.data.BookSaveProgress? = null,
+        initialSettings: ReaderSettings = ReaderSettings(), keyEvents: Flow<Int> = emptyFlow()) {
         compose.setContent {
             MaterialTheme {
                 windowHeight = LocalWindowInfo.current.containerSize.height
-                var settings by remember { mutableStateOf(ReaderSettings(readingMode = mode, showTime = false, showBattery = false)) }
+                var settings by remember { mutableStateOf(initialSettings.copy(readingMode = mode, showTime = false, showBattery = false)) }
                 val reader: @Composable () -> Unit = {
                     ReaderScreen(book, settings,
                         emptyList(), {}, { chapter, _, offset, progress, _ -> position.set(Position(chapter, offset, progress)) },
-                        { settings = it }, {}, {}, {}, emptyFlow(), saveProgress = saveProgress)
+                        { settings = it }, {}, {}, {}, keyEvents, saveProgress = saveProgress)
                 }
                 if (factory == null) reader()
                 else CompositionLocalProvider(LocalReaderSpeechFactory provides factory) { reader() }

@@ -24,7 +24,20 @@ object EpubArchive {
 
     fun read(file: File, fallbackTitle: String = file.nameWithoutExtension, catalogOnly: Boolean = false,
              onlyPaths: Set<String>? = null, mergeLegacyToc: Boolean = false, onDirectoryReady: () -> Unit = {},
-             onProgress: (Float) -> Unit = {}): ParsedEpub = ZipFile(file).use { zip ->
+             onProgress: (Float) -> Unit = {}): ParsedEpub = readArchive(file, fallbackTitle, catalogOnly, onlyPaths,
+        mergeLegacyToc, onDirectoryReady, onProgress)
+
+    /** The consumer finishes/stages a chapter before the next document is read. Only its index is retained. */
+    internal fun visit(file: File, fallbackTitle: String, onDirectoryReady: () -> Unit, onProgress: (Float) -> Unit,
+                       diagnostics: ImportDiagnostics? = null,
+                       consume: (EpubSection, SourceHtmlScan?, String, Set<String>) -> Unit): ParsedEpub =
+        readArchive(file, fallbackTitle, false, null, false, onDirectoryReady, onProgress, consume, diagnostics)
+
+    private fun readArchive(file: File, fallbackTitle: String, catalogOnly: Boolean, onlyPaths: Set<String>?,
+                            mergeLegacyToc: Boolean, onDirectoryReady: () -> Unit, onProgress: (Float) -> Unit,
+                            consume: ((EpubSection, SourceHtmlScan?, String, Set<String>) -> Unit)? = null,
+                            diagnostics: ImportDiagnostics? = null): ParsedEpub = ZipFile(file).use { zip ->
+        val catalogStarted = System.nanoTime()
         onProgress(0f)
         val entries = zip.entries().asSequence().associateBy { safePath(it.name) }
         fun xml(path: String): Element = parseXml(zip.getInputStream(entries[path]
@@ -41,6 +54,9 @@ object EpubArchive {
             ?.filter { it.isNotEmpty() }?.joinToString("、").orEmpty()
         val manifest = opf.descendants("manifest").firstOrNull()?.descendants("item").orEmpty()
         val byId = manifest.associateBy { it.getAttribute("id") }
+        val images = manifest.filter { it.getAttribute("media-type").startsWith("image/") }
+            .map { resolve(packagePath, it.getAttribute("href")) }.filter { entries.containsKey(it) }
+        val imagePaths = images.toSet()
         val labels = mutableMapOf<String, TocLabel>()
         val anchors = mutableMapOf<String, MutableList<TocLabel>>()
         fun addLabel(base: String, href: String, title: String, parentTitle: String? = null) {
@@ -107,13 +123,28 @@ object EpubArchive {
             }
         }
         val references = spine.descendants("itemref").filter { it.getAttribute("linear") != "no" }
+        diagnostics?.elapsed("epub.catalog", catalogStarted)
         onDirectoryReady()
         val sourceDocuments = mutableMapOf<String, String>()
         val documentReferences = mutableMapOf<String, List<SourceNoteReference>>()
-        fun document(path: String): String = sourceDocuments.getOrPut(path) {
-            val entry = entries[path] ?: throw IllegalArgumentException("EPUB 章节文件缺失：$path")
-            zip.getInputStream(entry).use { decodeMarkup(it.readBytes()) }
+        fun document(path: String): String {
+            val value = sourceDocuments.getOrPut(path) {
+                val entry = entries[path] ?: throw IllegalArgumentException("EPUB 章节文件缺失：$path")
+                diagnostics?.measure("epub.read") { zip.getInputStream(entry).use { decodeMarkup(it.readBytes()) } }
+                    ?: zip.getInputStream(entry).use { decodeMarkup(it.readBytes()) }
+            }
+            if (consume != null) while (sourceDocuments.size > 2) sourceDocuments.remove(sourceDocuments.keys.first())
+            diagnostics?.maximum("cachedSourceDocuments", sourceDocuments.size.toLong())
+            return value
         }
+        fun noteReferencesFor(section: EpubSection, refs: List<SourceNoteReference>) = refs
+            .filter { it.tag.start in section.sourceStart until section.sourceEnd }.mapNotNull { reference ->
+                val href = reference.href ?: return@mapNotNull null
+                val fragment = sourceNoteFragment(href) ?: return@mapNotNull null
+                val path = runCatching { if (href.substringBefore('#').isBlank()) section.path else resolve(section.path, href) }.getOrNull()
+                    ?.takeIf { it in entries } ?: return@mapNotNull null
+                Triple(reference.target, path, fragment)
+            }
         val sections = references
             .flatMapIndexed { index, ref ->
                 onProgress(index.toFloat() / references.size.coerceAtLeast(1))
@@ -132,7 +163,10 @@ object EpubArchive {
                     }
                 }
                 val html = document(path)
-                val scan = SourceHtmlScan(html)
+                val scanStarted = System.nanoTime()
+                val scan = SourceHtmlScan(html) { onProgress(index.toFloat() / references.size.coerceAtLeast(1)) }
+                diagnostics?.elapsed("epub.scan", scanStarted)
+                diagnostics?.count("sourceDocuments")
                 val linkedPaths = scan.tags.filter { it.name == "link" && !it.closing }.mapNotNull { link ->
                     val attributes = link.attributes
                     if (!attribute(attributes, "rel").orEmpty().split(Regex("\\s+")).any { it.equals("stylesheet", true) }) null
@@ -152,14 +186,17 @@ object EpubArchive {
                 val candidates = anchors[path].orEmpty().map { label ->
                     label to locations[label.fragment.lowercase()]
                 }.filter { (_, offset) -> offset == null || !scan.notes.contains(offset) }
-                documentReferences.getOrPut(path) { sourceNoteReferences(html, scan = scan) }
+                val notesAt = System.nanoTime()
+                val refs = scan.noteReferences
+                diagnostics?.elapsed("epub.notes", notesAt)
+                if (consume == null) documentReferences[path] = refs
                 val located = candidates.mapNotNull { (label, offset) -> offset?.let { it to label } }
                     .distinctBy { it.first }.sortedBy { it.first }
-                if (located.size > 1) {
+                val parts = if (located.size > 1) {
                     located.mapIndexed { anchorIndex, (_, label) ->
                         val start = if (anchorIndex == 0) 0 else located[anchorIndex].first
                         val end = located.getOrNull(anchorIndex + 1)?.first ?: html.length
-                        EpubSection(label.title, scan.bodyFragment(start, end), path, css, start, end, label.parentTitle,
+                        EpubSection(label.title, if (consume == null) scan.bodyFragment(start, end) else "", path, css, start, end, label.parentTitle,
                             sourceAnchor = label.fragment)
                     }
                 } else {
@@ -167,16 +204,28 @@ object EpubArchive {
                     listOf(EpubSection(label?.title.orEmpty().ifBlank { "第 ${index + 1} 章" }, html, path, css,
                         tocParentTitle = label?.parentTitle, sourceAnchor = label?.fragment?.takeIf(String::isNotBlank)))
                 }
+                if (consume == null) parts else {
+                    val refsByPart = parts.map { noteReferencesFor(it, refs) }
+                    val targetsAt = System.nanoTime()
+                    val targets = refsByPart.flatten().groupBy { it.second }.mapValues { (targetPath, refs) ->
+                        sourceNoteTargets(document(targetPath), refs.associate { "#${it.third}" to it.third },
+                            checkActive = { onProgress(index.toFloat() / references.size.coerceAtLeast(1)) },
+                            tags = if (targetPath == path) scan.tags.asSequence() else null)
+                    }
+                    diagnostics?.elapsed("epub.notes", targetsAt)
+                    parts.mapIndexed { partIndex, part ->
+                        val notes = refsByPart[partIndex].mapNotNull { (key, targetPath, fragment) ->
+                            targets[targetPath]?.get("#$fragment")?.let { key to it }
+                        }.toMap()
+                        val input = if (parts.size == 1) part else part.copy(html = scan.bodyFragment(part.sourceStart, part.sourceEnd))
+                        consume(input.copy(sourceNoteTargets = notes), if (input.html === html) scan else null,
+                            ebookHtmlFragment(html, part.sourceStart, part.sourceEnd, scan.tags), imagePaths)
+                        part.copy(html = "", css = "", sourceNoteTargets = emptyMap())
+                    }
+                }
             }
         require(sections.isNotEmpty()) { "EPUB 没有可阅读章节" }
-        val sectionReferences = sections.map { section -> documentReferences[section.path].orEmpty()
-            .filter { it.tag.start in section.sourceStart until section.sourceEnd }.mapNotNull { reference ->
-            val href = reference.href ?: return@mapNotNull null
-            val fragment = sourceNoteFragment(href) ?: return@mapNotNull null
-            val path = runCatching { if (href.substringBefore('#').isBlank()) section.path else resolve(section.path, href) }.getOrNull()
-                ?.takeIf { it in entries } ?: return@mapNotNull null
-            Triple(reference.target, path, fragment)
-        } }
+        val sectionReferences = sections.map { section -> noteReferencesFor(section, documentReferences[section.path].orEmpty()) }
         val noteTargets = sectionReferences.flatten().groupBy { it.second }.mapValues { (path, targets) ->
             sourceNoteTargets(document(path), targets.associate { "#${it.third}" to it.third })
         }
@@ -187,8 +236,6 @@ object EpubArchive {
             ?.getAttribute("content")
         val cover = manifest.firstOrNull { it.getAttribute("properties").split(' ').contains("cover-image") }
             ?: byId[coverId]
-        val images = manifest.filter { it.getAttribute("media-type").startsWith("image/") }
-            .map { resolve(packagePath, it.getAttribute("href")) }.filter { entries.containsKey(it) }
         onProgress(1f)
         ParsedEpub(title, author, notedSections,
             cover?.let { resolve(packagePath, it.getAttribute("href")) }?.takeIf { entries.containsKey(it) }, images)

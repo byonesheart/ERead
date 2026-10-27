@@ -1,6 +1,7 @@
 package com.eyue.reader
 
 import android.content.Intent
+import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.compose.setContent
@@ -64,19 +65,19 @@ class MainActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        if (readerReady && reader.activeBookId != null && reader.readerSettings.volumePaging &&
-            keyCode in listOf(KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN)) {
-            volumeEvents.tryEmit(if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) 1 else -1)
-            return true
+    // Public Activity callback; AndroidX Core's internal base-class annotation also
+    // reaches this inherited method. Unhandled keys still follow normal dispatch.
+    @SuppressLint("RestrictedApi")
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val direction = readerPageKeyDirection(event.keyCode)
+        if (direction != null && readerReady && reader.activeBookId != null && reader.readerSettings.volumePaging) {
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                if (!event.isCanceled && event.repeatCount == 0) volumeEvents.tryEmit(direction)
+                return true
+            }
+            if (event.action == KeyEvent.ACTION_UP) return true
         }
-        return super.onKeyDown(keyCode, event)
-    }
-
-    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
-        if (readerReady && reader.activeBookId != null && reader.readerSettings.volumePaging &&
-            keyCode in listOf(KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN)) return true
-        return super.onKeyUp(keyCode, event)
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onStart() {

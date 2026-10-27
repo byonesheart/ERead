@@ -316,6 +316,10 @@ class LibraryRepository(private val context: Context) {
             useSourceCss = json.optBoolean("useSourceCss", defaults.useSourceCss),
             continuousEbookScroll = json.optBoolean("continuousEbookScroll", defaults.continuousEbookScroll),
             verticalText = json.optBoolean("verticalText", defaults.verticalText),
+            tapPaging = enumValue(json.optString("tapPaging"), defaults.tapPaging),
+            pdfCrop = json.optJSONObject("pdfCrop")?.let { crop -> PdfCrop(crop.optBoolean("enabled"),
+                crop.optDouble("left", 0.0).toFloat(), crop.optDouble("right", 0.0).toFloat(),
+                crop.optDouble("top", 0.0).toFloat(), crop.optDouble("bottom", 0.0).toFloat()).normalized() } ?: defaults.pdfCrop,
             marginLeft = margin("marginLeft", defaults.marginLeft), marginRight = margin("marginRight", defaults.marginRight),
             marginTop = margin("marginTop", defaults.marginTop), marginBottom = margin("marginBottom", defaults.marginBottom)
         )
@@ -354,6 +358,13 @@ class LibraryRepository(private val context: Context) {
             JSONObject().put("id", it.id).put("name", it.name).put("pattern", it.pattern)
         })).put("activeChapterRuleId", selected.id)
         .put("fonts", JSONArray(settings.fonts.map { JSONObject().put("name", it.name).put("path", it.path) }))
+        .apply {
+            if (settings.tapPaging != TapPagingMode.OFF) put("tapPaging", settings.tapPaging.name)
+            if (settings.pdfCrop != PdfCrop()) with(settings.pdfCrop.normalized()) {
+                put("pdfCrop", JSONObject().put("enabled", enabled).put("left", left.toDouble())
+                    .put("right", right.toDouble()).put("top", top.toDouble()).put("bottom", bottom.toDouble()))
+            }
+        }
     }
 
     private fun JSONObject.array(key: String): JSONArray = optJSONArray(key) ?: JSONArray()

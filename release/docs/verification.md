@@ -1,5 +1,41 @@
 # 构建与验证记录
 
+## 1.11.17 底部菜单与紧凑布局（2026-10-27，本地验证）
+
+版本更新为 **1.11.17／versionCode 61**，包含此前尚未发布的 1.11.15、1.11.16 改动。按作者最后更正，书籍更多选项固定贴底、禁用弹层拖动，内部菜单保留滚动。高度限制从 ModalBottomSheet 本身移到内部内容，避免压缩弹层定位坐标；关闭按钮并入书籍信息行，缩小封面、快捷图标与选项间距，减少顶部留白。
+
+三种主题的浅色／深色菜单截图均已检查；首次实际栅格截图确认面板绘制到窗口底边。手势回归从完整对话框坐标发出，检查向上／向下滑动不关闭弹层；另用 392×520 的短屏幕和完整菜单，确认内容确实溢出且内部滚动能访问最后一个选项。Robolectric 的节点语义坐标不包含该动画平移，重复直接绘制也有缓存限制，因此没有把这些坐标或空白截图当作真实手机定位证据。
+
+最终定向执行 **28 项菜单／版本／更新页面测试，全部通过**；其中菜单回归 6 项。与上一轮按测试类合并最新结果为 **293 项，0 失败／错误／跳过**，不是本轮重新执行了全项目所有测试。`assembleDebug`、`assembleDebugAndroidTest`、`assembleRelease`、`lintDebug`、`lintRelease` 成功，Debug／Release lint 均为 **0 错误／致命错误、64 警告、4 提示**。日志为 `app/.tools/release-1117/build-final-compact.log`。阅读脚本未修改，沿用已通过的 65 项普通阅读及 12 项连贯滚动浏览器回归。按要求未追加真机安装或交互测试。
+
+安装包：[ERead-1.11.17-release.apk](../android/ERead-1.11.17-release.apk)，**41,383,699 字节**，SHA-256 `567d5ac337e639f31e5a68a2cf76fce67de0984d073042b9b66147ef098afbc0`。不可调试 Release 构建，zipalign 和签名校验通过，证书与原版相同，可覆盖安装。打包核验报告为 `app/.tools/release-1117/package-report.json`。旧版本安装包保持不变，99 份 Windows 工作文件及 6 份本地交接文档经摘要核对未修改；发布结果另行记录。
+
+## 1.11.16 导入优化（2026-10-27，本地构建）
+
+本次升级为 **1.11.16／versionCode 60**。保留完整导入缓存、原始文件和现有阅读引擎，优化扫描复用、EPUB 有界流水处理、MOBI 章节 HTML 持有、缓存写入及阅读优先调度，新增匿名阶段诊断与 trace；实现和边界见 [导入性能说明](import-performance-1.11.16.md)。不增加阅读期间的全文初始化，不强制重建旧书缓存，不改变书库／云端版本及文字偏移。
+
+功能回归最初执行 278 项，新增测试曾因 Windows 的 `file://` 模拟路径读取失败；改为模拟文档来源后重测通过，没有修改生产文件来源逻辑。补齐可选样本参数，实际执行 9 个公开 EPUB 样本以及用户提供的 EPUB／MOBI 注释、153 章 MOBI 的完整内容对照和隔离副本编辑写回。最终构建额外执行 27 项导入／版本／更新页面测试；按测试类合并各次最新结果为 **287 项、0 失败／错误／跳过**，不是最后一次执行了全项目所有测试。取消测试确认真实缓存文件写入已开始，导入返回后工作线程不再继续写入。阅读测试覆盖实际 Compose 启动、翻页、章节缓存、朗读交互和新调度器的取消／释放。
+
+《诡秘之主》1415 章均生成完整缓存，正文、注释、图片范围及 CSS 与原解析路径逐章一致；新管线最多保留两份源文档缓存和四个在途章节，阅读期间缩为一个。最终该电脑运行的管线耗时为 **2552ms**，较早不同预热状态的测量约为 1.1～2.6 秒，原基线一次为 2709ms；不将其换算为手机提速比例。153 章《龙族》完整导入及缓存为 **2118ms**，之后另外对照所有章节；章节 HTML 区间索引没有持有整套分章 HTML。测试文件及报告只保存在本地忽略目录，未打包私人书籍。
+
+`testDebugUnitTest` 的最终定向回归、`assembleDebug`、`assembleDebugAndroidTest`、`assembleRelease`、`lintDebug`、`lintRelease` 在最终构建中成功，日志为 `app/.tools/import-116/final-build.log`。Debug／Release lint 均为 **0 错误／致命错误、64 警告、4 提示**。浏览器 65 项及连贯滚动 12 项沿用上一版已通过结果，两份脚本未修改，安装包资产摘要与当前源码一致；本轮没有重复执行浏览器全量测试。设备测试包仅编译，按要求未进行真机安装、帧率／PSS／耗电或导入期间的触控性能测量。
+
+本地安装包：[ERead-1.11.16-release.apk](../android/ERead-1.11.16-release.apk)，**41,383,699 字节**，SHA-256 `9fac66fbe37d9078be851cfda7856a3147da2a63d58d3d0b5b40eab28d1d5d4b`。不可调试 Release 构建，签名及 zipalign 校验通过，证书与原版相同，可覆盖安装。核验报告为 `app/.tools/import-116/release-package-report.json`。未上传 GitHub／网盘或修改线上更新清单；1.11.14 已发布包、1.11.15 本地包及 99 份 Windows 工作文件／6 份本地交接文档经摘要核对保持不变。
+
+## 1.11.15 阅读设置与书架修正（2026-10-27，本地构建）
+
+本次为新版 **1.11.15／versionCode 59**，生成不可调试的 Release 安装包，尚未上传 GitHub／网盘或改动线上更新清单。新增离线历史更新日志、配置重命名、左右／上下点击翻页、常见电纸书翻页键和 PDF 四边裁边；修复原书 CSS 下的段距、连贯滚动预载章节设置、日夜切换误触发云端待更新、三列书架两行书名和更多选项上滑跳动。书籍位置改为点击后查看，可复制，公开存储的文档可转到系统文件管理器；应用私有目录受 Android 限制，仅提供路径与复制。
+
+阅读设置新增的默认值不额外写入旧记录；原始书籍、UTF-16 文字偏移、书签／批注及 AI 缓存格式保留。日夜状态从云端变化摘要中排除，同时接受旧版深色状态摘要，避免旧备份在更新后立即显示待更新。PDF 裁边只影响显示及朗读高亮坐标，不改写 PDF 原文件。
+
+功能阶段完成 **100 项桌面回归，0 失败／错误／跳过**，覆盖实际阅读界面的点击导航、配置重命名／保存、裁边设置、云端旧摘要兼容、位置对话框和三种主题的书架。最终版本构建另执行 **22 项版本／更新页面回归，全部通过**。按测试类合并各次最新结果为 **109 项，全部通过**；不是最后一次执行了全项目全部测试。浏览器真实排版回归 **65 项**、连贯滚动 **12 项**通过，无脚本异常；段距用实际元素间隔验证了原书 CSS、行内 important、横排与竖排。已检查书架与设置截图。
+
+`assembleDebug`、`assembleDebugAndroidTest`、`assembleRelease`、`lintDebug`、`lintRelease` 均成功。Debug 与 Release lint 各为 **0 错误／致命错误、64 警告、4 提示**。硬件键在公开的 Activity `dispatchKeyEvent` 回调中拦截，未处理按键交回正常分发；AndroidX 内部基类的限制标注导致 lint 误报，只在该方法局部抑制 `RestrictedApi`，没有全局关闭检查。依据 [Android Activity 按键分发说明](https://developer.android.com/reference/android/app/Activity#dispatchKeyEvent(android.view.KeyEvent)) 和 [AndroidX Core 基类源码](https://android.googlesource.com/platform/frameworks/support/+/f2e05c341382db64d127118a13451dcaa554b702/core/core/src/main/java/androidx/core/app/ComponentActivity.java)。
+
+真实 PDF 像素裁边测试已加入设备测试包并编译，**尚未在设备运行**；桌面已验证裁边参数持久化／归一化和高亮几何映射。未进行真机安装、电纸书硬件键或系统文件管理器的设备验收。按用户要求继续跳过实机测试。
+
+安装包：[ERead-1.11.15-release.apk](../android/ERead-1.11.15-release.apk)，**41,367,315 字节**，SHA-256 `5287e7ad0fd0720a4ff24121b59b054cb7eeb88cc8596a13e98df1c60e336c73`。签名及 zipalign 校验通过，沿用项目原 Android Debug 证书，SHA-256 `8f7811588790d1be580102e0dee4089be519104936f1f6d57815df173254ca07`，可覆盖原签名安装包；Release 构建没有切换证书。核验记录为 `app/.tools/reader-115/release-package-report.json`。已发布的 1.11.14 包与下载清单保持不变，99 份 Windows 工作文件和 6 份本地交接文档经摘要核对未被修改。
+
 ## 1.11.14 正式版发布（2026-10-27）
 
 正式下载改为 **Release 构建／versionCode 58**，软件版本名仍为 **1.11.14**。`assembleRelease`、`lintRelease` 成功；APK 中 `BuildConfig.DEBUG=false`、`BUILD_TYPE=release`，清单不含可调试属性，阅读资源与此前构建逐字节相同。lint 错误／致命错误为 0，其他等级统计为 `{"Warning": 64, "Hint": 4}`。没有新增功能代码；沿用前述功能回归结果，未追加真机安装或运行测试。

@@ -18,6 +18,19 @@ import java.io.File
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
 class PdfSpeechGeometryRobolectricTest {
+    @Test fun croppedHighlightsClipToVisiblePdfContentAndMapIntoTheNewPageCoordinates() {
+        val crop = com.eyue.reader.data.PdfCrop(true, .1f, .2f, .2f, .3f)
+        val content = cropPdfSpeechRect(Rect(.1f, .2f, .8f, .7f), crop)!!
+        assertEquals(0f, content.left, .0001f); assertEquals(0f, content.top, .0001f)
+        assertEquals(1f, content.right, .0001f); assertEquals(1f, content.bottom, .0001f)
+        assertNull(cropPdfSpeechRect(Rect(0f, 0f, .05f, .1f), crop))
+        val partial = cropPdfSpeechRect(Rect(0f, .1f, .45f, .45f), crop)!!
+        assertEquals(0f, partial.left, .0001f); assertEquals(0f, partial.top, .0001f)
+        assertEquals(.5f, partial.right, .0001f); assertEquals(.5f, partial.bottom, .0001f)
+        val original = Rect(.1f, .2f, .4f, .6f)
+        assertEquals(original, cropPdfSpeechRect(original, crop.copy(enabled = false)))
+    }
+
     @Test fun realPdfTextCoordinatesKeepParagraphsSeparateAndHandlePageRotation() {
         val context = RuntimeEnvironment.getApplication()
         PDFBoxResourceLoader.init(context)

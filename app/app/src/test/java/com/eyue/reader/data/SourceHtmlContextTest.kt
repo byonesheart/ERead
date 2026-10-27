@@ -6,6 +6,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SourceHtmlContextTest {
+    @Test fun readingImageOffsetsAccountForCommentsAndHiddenHeadWithoutRescanning() {
+        val scan = SourceHtmlScan("<html><head><title>隐藏🙂</title><img src='hidden.png'/></head><body><!--注释🙂--><p>正文🙂<img src='one.png'/></p><script>ignore()</script><img src='two.png'/></body></html>")
+        assertEquals(listOf("<img src='one.png'/>", "<img src='two.png'/>"), scan.readingImages.map { scan.readingHtml.substring(it.start, it.end) })
+    }
+
     @Test fun sharedScanPreservesVisibleOffsetsAndTheExactCommentStrippedReadingText() {
         val html = "<html><head><style>p:before{content:'<h1>假标题</h1>'}</style></head>" +
             "<body class='book'>甲<!-- 注释 -->🙂乙<a href='#fn1'>[1]</a><aside id='fn1'>释文</aside></body></html>"

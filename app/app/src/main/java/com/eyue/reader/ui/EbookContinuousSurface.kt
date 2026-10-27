@@ -37,7 +37,7 @@ internal fun EbookContinuousSurface(
     onManualStart: () -> Unit, onManualEnd: () -> Unit, onSelectionActive: (Boolean) -> Unit,
     onAction: (ReaderSelectedPassage, AnnotationKind) -> Unit, onEdit: ((ReaderSelectedPassage) -> Unit)?,
     onRole: ((ReaderSelectedPassage) -> Unit)?, onAnnotation: (List<String>, Rect) -> Unit,
-    onFootnote: (SourceFootnote, Rect) -> Unit, session: EbookReaderSession?
+    onFootnote: (SourceFootnote, Rect) -> Unit, session: EbookReaderSession?, onPageTap: ((Float, Float) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -55,6 +55,7 @@ internal fun EbookContinuousSurface(
     val latestSpoken by rememberUpdatedState(spoken)
     val latestViewport by rememberUpdatedState(onViewport)
     val latestTap by rememberUpdatedState(onTap)
+    val latestPageTap by rememberUpdatedState(onPageTap)
     val latestManualStart by rememberUpdatedState(onManualStart)
     val latestManualEnd by rememberUpdatedState(onManualEnd)
     val latestSelection by rememberUpdatedState(onSelectionActive)
@@ -175,7 +176,7 @@ internal fun EbookContinuousSurface(
                         override fun onComplete(requestId: Long) { if (browser === view && view.documentGeneration == generation) view.alpha = 1f }
                     })
                 }
-                "tap" -> latestTap()
+                "tap" -> latestPageTap?.invoke(event.optDouble("x", .5).toFloat(), event.optDouble("y", .5).toFloat()) ?: latestTap()
                 "manualStart" -> { selected = null; latestManualStart() }
                 "manualEnd" -> latestManualEnd()
                 "selection" -> documents[index]?.first?.canonicalText?.let { text ->

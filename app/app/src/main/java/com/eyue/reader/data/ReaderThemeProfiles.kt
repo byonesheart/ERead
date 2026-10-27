@@ -124,3 +124,9 @@ fun ReaderSettings.removeAppearanceProfile(profileId: String): ReaderSettings {
     return if (activeAppearanceProfileId == profileId && remaining.isNotEmpty()) result.applyAppearanceProfile(remaining.first())
         else result.ensureActiveAppearanceProfile()
 }
+
+fun ReaderSettings.renameAppearanceProfile(profileId: String, name: String): ReaderSettings {
+    val title = name.trim()
+    if (title.isEmpty()) return this
+    return copy(appearanceProfiles = appearanceProfiles.map { if (it.id == profileId) it.copy(name = title) else it })
+}

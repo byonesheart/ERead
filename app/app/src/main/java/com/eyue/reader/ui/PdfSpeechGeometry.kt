@@ -3,6 +3,7 @@ package com.eyue.reader.ui
 import android.content.Context
 import androidx.compose.ui.geometry.Rect
 import com.eyue.reader.data.PageSource
+import com.eyue.reader.data.PdfCrop
 import com.eyue.reader.data.withLocalDocument
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
@@ -24,6 +25,16 @@ internal fun rotatePdfSpeechRect(rect: Rect, rotation: Int): Rect = when (((rota
     180 -> Rect(1f - rect.right, 1f - rect.bottom, 1f - rect.left, 1f - rect.top)
     270 -> Rect(rect.top, 1f - rect.right, rect.bottom, 1f - rect.left)
     else -> rect
+}
+
+internal fun cropPdfSpeechRect(rect: Rect, settings: PdfCrop): Rect? {
+    if (!settings.enabled) return rect
+    val crop = settings.normalized()
+    val visible = Rect(crop.left, crop.top, 1f - crop.right, 1f - crop.bottom)
+    val clipped = rect.intersect(visible)
+    if (clipped.isEmpty) return null
+    return Rect((clipped.left - visible.left) / visible.width, (clipped.top - visible.top) / visible.height,
+        (clipped.right - visible.left) / visible.width, (clipped.bottom - visible.top) / visible.height)
 }
 
 /** Only the currently spoken PDF page is indexed; image-only pages never invoke this loader. */

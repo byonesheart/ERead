@@ -78,8 +78,10 @@ class ConsentGateRobolectricTest {
             val field = MainActivity::class.java.getDeclaredField("reader\$delegate").apply { isAccessible = true }
             val lazyReader = field.get(activity) as Lazy<*>
             assertFalse(lazyReader.isInitialized())
-            activity.onKeyDown(KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_VOLUME_DOWN))
-            activity.onKeyUp(KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_VOLUME_DOWN))
+            for (code in listOf(KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_BUTTON_2)) {
+                activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+                activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+            }
             controller.pause().stop()
             assertFalse(lazyReader.isInitialized())
         } finally { controller.destroy() }

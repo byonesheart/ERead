@@ -170,11 +170,12 @@ internal fun openAuthorLink(context: Context, url: String) {
     }
 }
 
-@Composable internal fun CurrentChangelogContent() {
+@Composable internal fun CurrentChangelogContent(onHistory: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 新增 TXT／EPUB／MOBI 竖排文字模式。\n• 优化 EPUB／MOBI 字体、背景与简繁切换。\n• 统一三列书架对齐，支持查看书籍位置。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 优化 EPUB／MOBI 导入与全书缓存，阅读操作优先。\n• 新增 PDF 裁边、点击翻页，扩展实体翻页键支持。\n• 支持配置重命名与历史更新日志，修复书架菜单定位、段距及云端状态检测。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedButton(onClick = onHistory, modifier = Modifier.testTag("settings_history_changelog")) { Text("历史更新日志") }
     }
 }
 

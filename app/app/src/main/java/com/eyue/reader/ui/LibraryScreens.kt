@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -214,6 +215,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
     var deletingCloud by remember { mutableStateOf<Book?>(null) }
     var clearingAiSpeech by remember { mutableStateOf<Book?>(null) }
     var details by remember { mutableStateOf<Book?>(null) }
+    var locating by remember { mutableStateOf<Book?>(null) }
     var actionBookId by remember { mutableStateOf<String?>(null) }
     var groupFilter by rememberSaveable { mutableStateOf<String?>(null) }
     var managingGroups by remember { mutableStateOf(false) }
@@ -349,7 +351,8 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                         }
                         Text(book.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp,
                             minLines = 2, maxLines = 2,
-                            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 11.dp)
+                            style = LocalTextStyle.current.copy(platformStyle = PlatformTextStyle(includeFontPadding = false)),
+                            overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().padding(top = 11.dp)
                                 .height(with(androidx.compose.ui.platform.LocalDensity.current) { 40.sp.toDp() })
                                 .testTag("shelf_book_title_${book.id}").combinedClickable(
                                 onClick = { if (selectingBackup) selectBackup(book) else onOpen(book) },
@@ -391,6 +394,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
             cloudDirty = book.id in cloudDirtyBookIds,
             onDismiss = { actionBookId = null },
             onDetails = { actionBookId = null; details = book },
+            onLocation = { actionBookId = null; locating = book },
             onMove = { actionBookId = null; moving = book },
             onRename = onRenameBook?.let { { actionBookId = null; rename(book) } },
             onGenerateSpeech = if (book.hasSpeechText() && onGenerateSpeech != null) {
@@ -520,9 +524,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 } ?: "统计中…"), modifier = Modifier.testTag("book_ai_speech_cache_size"))
                 Text("分组：${groups.firstOrNull { it.id == book.groupId }?.name ?: "未分组"}")
                 if (!book.isDemo) Text(if (book.cloudOnly) "存储：云端，尚未下载" else if (book.sourceLinked) "存储：引用原文件" else "存储：应用内保存")
-                androidx.compose.foundation.text.selection.SelectionContainer {
-                    Text("位置：${bookStorageLocation(book)}", fontSize = 11.sp, modifier = Modifier.testTag("book_storage_location"))
-                }
+                TextButton(onClick = { details = null; locating = book }, modifier = Modifier.testTag("book_storage_location")) { Text("书籍位置") }
                 if (book.cloudBackupAt > 0) Text("云端备份：${SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.CHINA).format(Date(book.cloudBackupAt))}")
                 Text("进度：第 ${book.chapterIndex + 1} 章 · ${(book.progress * 100).toInt()}%")
                 Text("最新章节：${book.chapters.lastOrNull()?.title.orEmpty()}")
@@ -547,6 +549,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 deleting = null
             }, onDismiss = { deleting = null }, tag = "shelf_remove_book", confirmLabel = "移出", sizeError = bytes?.isFailure == true)
     }
+    locating?.let { book -> BookLocationDialog(book) { locating = null } }
     deletingCloud?.let { book ->
         AlertDialog(onDismissRequest = { deletingCloud = null }, modifier = Modifier.testTag("shelf_delete_cloud_dialog"),
             title = { Text("删除《${book.title}》的云端文件？") },
@@ -656,7 +659,9 @@ private const val UNGROUPED_FILTER = "@ungrouped"
         }
     }
     val description: @Composable () -> Unit = {
-        Text(pending.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(pending.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp,
+            minLines = if (grid) 2 else 1, maxLines = if (grid) 2 else 1, overflow = TextOverflow.Ellipsis,
+            style = LocalTextStyle.current.copy(platformStyle = PlatformTextStyle(includeFontPadding = false)))
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(stage, Modifier.weight(1f), fontSize = 11.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             fraction?.let { Text("${(it * 100).toInt()}%", fontSize = 11.sp, color = Olive, modifier = Modifier.padding(start = 6.dp)) }

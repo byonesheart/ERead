@@ -19,6 +19,7 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -48,6 +49,7 @@ import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.ReaderThemeProfile
 import com.eyue.reader.data.applyAppearanceProfile
 import com.eyue.reader.data.removeAppearanceProfile
+import com.eyue.reader.data.renameAppearanceProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -56,14 +58,20 @@ import java.io.File
 internal fun ReaderThemeProfiles(settings: ReaderSettings, onSettings: (ReaderSettings) -> Unit,
     editingProfileId: String?, onEditProfile: (String?) -> Unit, onNewProfile: () -> Unit) {
     var deleting by remember { mutableStateOf<ReaderThemeProfile?>(null) }
+    var renaming by remember { mutableStateOf<ReaderThemeProfile?>(null) }
+    var name by remember { mutableStateOf("") }
     val rowState = rememberLazyListState()
     LaunchedEffect(settings.appearanceProfiles, settings.activeAppearanceProfileId, editingProfileId) {
         val index = settings.appearanceProfiles.indexOfFirst { it.id == settings.activeAppearanceProfileId }
         if (index >= 0 && (rowState.firstVisibleItemIndex != index || rowState.firstVisibleItemScrollOffset != 0)) rowState.requestScrollToItem(index)
     }
     ReaderSettingSection("配置", trailing = {
-        Text(if (editingProfileId == null) "长按管理" else "点选配置结束管理", style = MaterialTheme.typography.bodySmall,
+        if (editingProfileId == null) Text("长按管理", style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
+        else settings.appearanceProfiles.firstOrNull { it.id == editingProfileId }?.let { profile ->
+            TextButton(onClick = { renaming = profile; name = profile.name },
+                modifier = Modifier.testTag("reader_rename_theme_${profile.id}")) { Text("重命名") }
+        }
     }) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             LazyRow(Modifier.weight(1f), state = rowState, horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -91,6 +99,13 @@ internal fun ReaderThemeProfiles(settings: ReaderSettings, onSettings: (ReaderSe
             deleting = null
         }, modifier = Modifier.testTag("reader_delete_theme_confirm")) { Text("删除") } },
         dismissButton = { TextButton(onClick = { deleting = null }) { Text("取消") } }) }
+    renaming?.let { profile -> AlertDialog(onDismissRequest = { renaming = null }, title = { Text("重命名配置") },
+        text = { OutlinedTextField(name, { name = it }, label = { Text("配置名称") }, singleLine = true,
+            modifier = Modifier.testTag("reader_theme_name")) },
+        confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = {
+            onSettings(settings.renameAppearanceProfile(profile.id, name)); renaming = null
+        }, modifier = Modifier.testTag("reader_theme_rename_save")) { Text("保存") } },
+        dismissButton = { TextButton(onClick = { renaming = null }) { Text("取消") } }) }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
