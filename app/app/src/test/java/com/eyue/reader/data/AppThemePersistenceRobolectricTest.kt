@@ -35,28 +35,43 @@ class AppThemePersistenceRobolectricTest {
             val loaded = repository.load()
             assertEquals(AppThemeStyle.CLASSIC, loaded.appTheme)
             assertEquals(ThemeMode.DARK, loaded.themeMode)
+            assertTrue(loaded.showRecentReading)
         }
     }
 
-    @Test fun pixelThemePersistsWithoutChangingReaderProfilesOrDarkModePreference() {
+    @Test fun recentReadingDefaultsToEnabledAndPersistsExplicitChoicesWithoutRemovingHistory() {
+        assertTrue(LibraryState().showRecentReading)
+        val book = Book(title = "有阅读历史的书", format = BookFormat.TXT, mode = LibraryMode.NOVEL,
+            chapters = listOf(Chapter(title = "第一章")), lastReadAt = 1234L, progress = .25f)
+        for (enabled in listOf(false, true)) {
+            repository.save(LibraryState(books = listOf(book), showRecentReading = enabled))
+            val loaded = repository.load()
+            assertEquals(enabled, loaded.showRecentReading)
+            assertEquals(listOf(book), loaded.books)
+        }
+    }
+
+    @Test fun appThemesPersistWithoutChangingReaderProfilesOrDarkModePreference() {
         val novel = ReaderSettings(fontSize = 23f, paragraphSpacing = .3f, background = ReaderBackground.GREEN)
         val comic = ReaderSettings(fontSize = 17f, brightness = .6f, background = ReaderBackground.IMAGE,
             backgroundImagePath = "comic-background.png", readingMode = ReadingMode.VERTICAL_PAGED)
-        repository.save(LibraryState(settings = novel, comicSettings = comic, themeMode = ThemeMode.SYSTEM,
-            appTheme = AppThemeStyle.PIXEL))
-        val json = JSONObject(File(directory, "library.json").readText())
-        assertEquals(13, json.getInt("version"))
-        assertEquals("PIXEL", json.getString("appTheme"))
-        val loaded = repository.load()
-        assertEquals(AppThemeStyle.PIXEL, loaded.appTheme)
-        assertEquals(ThemeMode.SYSTEM, loaded.themeMode)
-        assertEquals(novel, loaded.settings)
-        assertEquals(comic, loaded.comicSettings)
-        for (systemDark in listOf(false, true)) {
-            val resolved = loaded.withResolvedTheme(systemDark)
-            assertEquals(AppThemeStyle.PIXEL, resolved.appTheme)
-            assertEquals(novel.copy(nightMode = systemDark), resolved.settings)
-            assertEquals(comic.copy(nightMode = systemDark), resolved.comicSettings)
+        for (theme in listOf(AppThemeStyle.PIXEL, AppThemeStyle.XINGCAI)) {
+            repository.save(LibraryState(settings = novel, comicSettings = comic, themeMode = ThemeMode.SYSTEM,
+                appTheme = theme))
+            val json = JSONObject(File(directory, "library.json").readText())
+            assertEquals(13, json.getInt("version"))
+            assertEquals(theme.name, json.getString("appTheme"))
+            val loaded = repository.load()
+            assertEquals(theme, loaded.appTheme)
+            assertEquals(ThemeMode.SYSTEM, loaded.themeMode)
+            assertEquals(novel, loaded.settings)
+            assertEquals(comic, loaded.comicSettings)
+            for (systemDark in listOf(false, true)) {
+                val resolved = loaded.withResolvedTheme(systemDark)
+                assertEquals(theme, resolved.appTheme)
+                assertEquals(novel.copy(nightMode = systemDark), resolved.settings)
+                assertEquals(comic.copy(nightMode = systemDark), resolved.comicSettings)
+            }
         }
     }
 }

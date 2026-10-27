@@ -3,31 +3,27 @@ package com.eyue.reader.ui
 import com.eyue.reader.ui.AppIcon as Icon
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -39,16 +35,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.eyue.reader.data.BitmapLoader
 import com.eyue.reader.data.ReaderBackground
 import com.eyue.reader.data.ReaderSettings
@@ -63,20 +56,19 @@ import java.io.File
 internal fun ReaderThemeProfiles(settings: ReaderSettings, onSettings: (ReaderSettings) -> Unit,
     editingProfileId: String?, onEditProfile: (String?) -> Unit, onNewProfile: () -> Unit) {
     var deleting by remember { mutableStateOf<ReaderThemeProfile?>(null) }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("配置", Modifier.width(34.dp), fontSize = 12.sp)
-        LazyRow(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            item {
-                OutlinedButton(onClick = onNewProfile,
-                    modifier = Modifier.padding(end = 6.dp).width(62.dp).height(56.dp).testTag("reader_new_theme"),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp), shape = RoundedCornerShape(8.dp)) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
-                        Text("新建", fontSize = 12.sp)
-                    }
-                }
-            }
-            items(settings.appearanceProfiles, key = { it.id }) { profile ->
+    val rowState = rememberLazyListState()
+    LaunchedEffect(settings.appearanceProfiles, settings.activeAppearanceProfileId, editingProfileId) {
+        val index = settings.appearanceProfiles.indexOfFirst { it.id == settings.activeAppearanceProfileId }
+        if (index >= 0 && (rowState.firstVisibleItemIndex != index || rowState.firstVisibleItemScrollOffset != 0)) rowState.requestScrollToItem(index)
+    }
+    ReaderSettingSection("配置", trailing = {
+        Text(if (editingProfileId == null) "长按管理" else "点选配置结束管理", style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            LazyRow(Modifier.weight(1f), state = rowState, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                items(settings.appearanceProfiles, key = { it.id }) { profile ->
                 ReaderThemeThumbnail(profile, settings.activeAppearanceProfileId == profile.id, editingProfileId != null,
                     onClick = {
                         onEditProfile(null)
@@ -85,7 +77,10 @@ internal fun ReaderThemeProfiles(settings: ReaderSettings, onSettings: (ReaderSe
                         onSettings(settings.applyAppearanceProfile(profile))
                         onEditProfile(profile.id)
                     }, onDelete = { deleting = profile })
+                }
             }
+            ReaderSettingChoice("新建", false, onNewProfile, Modifier.testTag("reader_new_theme"),
+                role = androidx.compose.ui.semantics.Role.Button, leading = { Icon(Icons.Outlined.Add, null, Modifier.size(14.dp)) })
         }
     }
     deleting?.let { profile -> AlertDialog(onDismissRequest = { deleting = null },
@@ -115,22 +110,26 @@ private fun ReaderThemeThumbnail(profile: ReaderThemeProfile, selected: Boolean,
         ReaderBackground.DARK -> Color(0xFF141B15)
         else -> Color(0xFFF6F6EF)
     }
-    val shape = remember { RoundedCornerShape(8.dp) }
-    Box(Modifier.padding(end = 6.dp).width(62.dp).height(56.dp)) {
-        Box(Modifier.fillMaxSize().clip(shape).background(color)
-            .border(if (selected) 2.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, shape)
+    val shape = appShape(6.dp)
+    val colors = MaterialTheme.colorScheme
+    Surface(color = if (selected) colors.primaryContainer else colors.surface, shape = shape,
+        border = BorderStroke(if (selected) 1.5.dp else .5.dp, if (selected) colors.primary else colors.outlineVariant),
+        modifier = Modifier.clip(shape)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = "编辑${profile.name}")
             .semantics { this.selected = selected }
-            .testTag("reader_theme_${profile.id}"), contentAlignment = Alignment.Center) {
-            bitmap?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-            Text(profile.name, Modifier.padding(horizontal = 3.dp), fontSize = 12.sp, fontWeight = FontWeight.Medium,
-                color = if (bitmap != null || background == ReaderBackground.DARK) Color.White else Color.Black,
-                style = TextStyle(shadow = if (bitmap != null) Shadow(Color.Black, Offset(0f, 1f), 3f) else null))
-        }
-        if (editing) IconButton(onClick = onDelete,
-            modifier = Modifier.align(Alignment.TopEnd).size(28.dp).testTag("reader_delete_theme_${profile.id}")) {
-            Icon(Icons.Outlined.Close, "删除${profile.name}", Modifier.size(16.dp)
-                .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp)), tint = MaterialTheme.colorScheme.onSurface)
+            .testTag("reader_theme_${profile.id}")) {
+        Row(Modifier.heightIn(min = 34.dp).padding(start = 8.dp, end = if (editing) 2.dp else 8.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(Modifier.size(13.dp).clip(appShape(3.dp)).background(color).border(.5.dp, colors.outlineVariant, appShape(3.dp))) {
+                bitmap?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+            }
+            Text(profile.name, Modifier.widthIn(max = 84.dp), style = MaterialTheme.typography.labelMedium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (selected) colors.onPrimaryContainer else colors.onSurface)
+            if (editing) IconButton(onClick = onDelete, modifier = Modifier.size(26.dp).testTag("reader_delete_theme_${profile.id}")) {
+                Icon(Icons.Outlined.Close, "删除${profile.name}", Modifier.size(13.dp), tint = colors.onSurfaceVariant)
+            } else if (selected) Icon(Icons.Outlined.Check, "当前配置", Modifier.size(13.dp), tint = colors.primary)
         }
     }
 }

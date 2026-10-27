@@ -61,6 +61,15 @@ class AppThemeSettingsRobolectricTest {
             assertEquals(original.settings, state.settings)
             assertEquals(original.comicSettings, state.comicSettings)
         }
+        compose.onNodeWithTag("app_theme_xingcai").performClick().assertIsSelected()
+        compose.runOnIdle {
+            assertEquals(XingcaiLightAppColors.primary, colors!!.primary)
+            assertEquals(XingcaiLightAppColors.background, colors!!.background)
+            assertEquals(original.settings, state.settings)
+            assertEquals(original.comicSettings, state.comicSettings)
+        }
+        compose.onNodeWithTag("app_theme_classic").performClick().assertIsSelected()
+        compose.runOnIdle { assertEquals(LightAppColors, colors) }
     }
 
     @Test fun pixelHasLightAndDarkPalettesWhileEinkKeepsItsMonochromeContrast() {

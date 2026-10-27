@@ -26,6 +26,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import kotlin.math.roundToInt
 
 internal fun readerSliderValue(value: Float, range: ClosedFloatingPointRange<Float>, step: Float): Float =
@@ -41,11 +43,11 @@ internal fun ReaderAdjustableSlider(label: String, description: String, value: F
     val latestCommit by rememberUpdatedState(onCommit)
     val color = MaterialTheme.colorScheme.primary
     val track = MaterialTheme.colorScheme.outlineVariant
-    Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.width(34.dp), fontSize = 12.sp)
+    Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.width(40.dp), fontSize = 12.sp, maxLines = 1)
         IconButton(onClick = { onCommit(readerSliderValue(value - step, range, step)) },
-            modifier = Modifier.size(40.dp).semantics { contentDescription = "$description 减小" }) { Text("−", fontSize = 20.sp) }
-        Canvas(Modifier.weight(1f).height(44.dp)
+            modifier = Modifier.size(30.dp, 40.dp).semantics { contentDescription = "$description 减小" }) { Text("−", fontSize = 17.sp) }
+        Canvas(Modifier.weight(1f).height(40.dp)
             .progressSemantics(draft, range)
             .semantics {
                 contentDescription = description
@@ -70,11 +72,12 @@ internal fun ReaderAdjustableSlider(label: String, description: String, value: F
             val thumb = inset + (size.width - inset * 2).coerceAtLeast(0f) * fraction
             drawLine(track, Offset(inset, center.y), Offset(size.width - inset, center.y), 3.dp.toPx())
             drawLine(color, Offset(inset, center.y), Offset(thumb, center.y), 3.dp.toPx())
-            drawCircle(color, 6.dp.toPx(), Offset(thumb, center.y))
+            drawCircle(color, 7.dp.toPx(), Offset(thumb, center.y))
         }
         IconButton(onClick = { onCommit(readerSliderValue(value + step, range, step)) },
-            modifier = Modifier.size(40.dp).semantics { contentDescription = "$description 增大" }) { Text("+", fontSize = 19.sp) }
-        Text(display(draft), Modifier.width(if (trailing == null) 38.dp else 32.dp), fontSize = 11.sp, color = color)
+            modifier = Modifier.size(30.dp, 40.dp).semantics { contentDescription = "$description 增大" }) { Text("+", fontSize = 17.sp) }
+        Text(display(draft), Modifier.width(if (trailing == null) 38.dp else 32.dp), fontSize = 11.sp, color = color,
+            textAlign = TextAlign.End, fontWeight = FontWeight.SemiBold, maxLines = 1)
         trailing?.invoke()
     }
 }

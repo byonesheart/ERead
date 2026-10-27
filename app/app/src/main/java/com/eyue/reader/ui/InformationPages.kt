@@ -75,6 +75,18 @@ internal fun openAuthorLink(context: Context, url: String) {
     }
 }
 
+@Composable internal fun ContributorsContent() {
+    Column(Modifier.fillMaxWidth().testTag("contributors_content"), horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Image(painterResource(R.drawable.contributor_7mrlan), "7Mrlan 的头像", Modifier.size(88.dp).clip(appShape(12.dp)),
+            contentScale = ContentScale.Crop)
+        Text("7Mrlan", style = MaterialTheme.typography.titleLarge)
+        Text("提供星彩主题的界面设计与参考源码，参与软件测试，发现并反馈多项 Bug。",
+            style = MaterialTheme.typography.bodyMedium)
+        BrowserLink("GitHub · 7Mrlan", "https://github.com/7Mrlan", "contributor_7mrlan_github")
+    }
+}
+
 @Composable internal fun SupportContent() {
     var enlarged by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -161,7 +173,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent() {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 修正连续进度跳转的返回位置。\n• 翻页模式提前准备相邻章节。\n• 优化重复导入和 EPUB 首次打开。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 三种主题统一书架与分组设置布局。\n• 阅读界面采用紧凑配置条与分组排版控件。\n• 最近阅读支持开关，默认开启。\n• 优化书架进度与未下载书籍的点击提示。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

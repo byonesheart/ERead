@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import com.eyue.reader.data.*
 import com.eyue.reader.data.cloud.CloudOperationProgress
 import kotlinx.coroutines.Dispatchers
@@ -49,9 +50,10 @@ import java.util.Locale
     onCloud: ((Book) -> Unit)? = null, cloudBusy: Boolean = false, cloudBookId: String? = null,
     cloudTaskLabel: String = "", cloudFraction: Float? = null, onCancelCloud: ((Book) -> Unit)? = null,
     cloudCanCancel: Boolean = false, cloudTransfers: Map<String, CloudTransferProgress> = emptyMap(),
-    cloudDirtyBookIds: Set<String> = emptySet()) {
+    cloudDirtyBookIds: Set<String> = emptySet(), showRecentReading: Boolean = true) {
     fun transfer(book: Book) = cloudTransfers[book.id] ?: if (cloudBookId == book.id)
         CloudTransferProgress(cloudTaskLabel, cloudFraction, cloudCanCancel) else null
+    val xingcai = LocalAppThemeStyle.current == AppThemeStyle.XINGCAI
     val history = books.filter { it.lastReadAt > 0 }.sortedByDescending { it.lastReadAt }
     val featured = history.firstOrNull() ?: books.firstOrNull()
     LazyColumn(Modifier.fillMaxSize().testTag("reading_home"), contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 12.dp, bottom = 24.dp),
@@ -61,7 +63,9 @@ import java.util.Locale
             transfer(featured)?.stage.orEmpty(), transfer(featured)?.fraction,
             onCancelCloud?.let { { it(featured) } }, transfer(featured)?.cancellable == true, featured.id in cloudDirtyBookIds) else EmptyLibrary(onImport) }
         item {
-            Row(Modifier.fillMaxWidth().clip(appShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(vertical = 17.dp), verticalAlignment = Alignment.CenterVertically) {
+            val stats = if (xingcai) Modifier.fillMaxWidth().padding(vertical = 12.dp)
+                else Modifier.fillMaxWidth().clip(appShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(vertical = 17.dp)
+            Row(stats, verticalAlignment = Alignment.CenterVertically) {
                 StatCell("${readingSeconds / 60}", "累计分钟", Modifier.weight(1f))
                 Box(Modifier.width(1.dp).height(28.dp).background(Line))
                 StatCell("${books.size}", "书架藏书", Modifier.weight(1f))
@@ -69,8 +73,8 @@ import java.util.Locale
                 StatCell("${books.count { it.progress >= .999f }}", "已读完", Modifier.weight(1f))
             }
         }
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        if (showRecentReading) item {
+            Row(Modifier.fillMaxWidth().testTag("recent_reading"), verticalAlignment = Alignment.CenterVertically) {
                 Text("最近阅读", fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
                 Text("  ${history.size}", fontSize = 13.sp, color = Muted)
                 Spacer(Modifier.weight(1f))
@@ -79,14 +83,14 @@ import java.util.Locale
                 }
             }
         }
-        if (history.isEmpty()) item {
+        if (showRecentReading && history.isEmpty()) item {
             Column(Modifier.fillMaxWidth().clip(appShape(16.dp)).background(MaterialTheme.colorScheme.surface).padding(22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Icons.Outlined.History, null, tint = Muted, modifier = Modifier.size(30.dp))
                 Text("暂无阅读记录", fontSize = 14.sp, modifier = Modifier.padding(top = 11.dp))
             }
         }
-        items(history.take(6), key = { it.id }) { book -> HistoryRow(book, { onOpen(book) },
+        items(if (showRecentReading) history.take(6) else emptyList(), key = { it.id }) { book -> HistoryRow(book, { onOpen(book) },
             onCloud?.let { { it(book) } }, cloudBusy || transfer(book) != null, transfer(book) != null,
             transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
             onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds) }
@@ -96,8 +100,13 @@ import java.util.Locale
 @Composable private fun FeaturedBook(book: Book, resume: Boolean, onOpen: () -> Unit, onCloud: (() -> Unit)?,
     cloudBusy: Boolean, cloudInProgress: Boolean, cloudTaskLabel: String, cloudFraction: Float?,
     onCancelCloud: (() -> Unit)?, cloudCanCancel: Boolean, cloudDirty: Boolean) {
+    if (LocalAppThemeStyle.current == AppThemeStyle.XINGCAI) {
+        XingcaiFeaturedBook(book, resume, onOpen, onCloud, cloudBusy, cloudInProgress, cloudTaskLabel, cloudFraction,
+            onCancelCloud, cloudCanCancel, cloudDirty)
+        return
+    }
     Column(Modifier.fillMaxWidth().clip(appShape(22.dp)).background(MaterialTheme.colorScheme.primaryContainer).padding(20.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.clickable(onClick = onOpen), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f).padding(end = 16.dp)) {
                 Text(book.title, fontSize = 24.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.SemiBold,
                     maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -127,8 +136,9 @@ import java.util.Locale
 
 @Composable private fun StatCell(value: String, label: String, modifier: Modifier) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, fontSize = 22.sp, fontFamily = FontFamily.Serif, color = Olive)
-        Text(label, fontSize = 10.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
+        Text(value, fontSize = if (LocalAppThemeStyle.current == AppThemeStyle.XINGCAI) 19.sp else 22.sp,
+            fontFamily = if (LocalAppThemeStyle.current == AppThemeStyle.XINGCAI) FontFamily.Default else FontFamily.Serif, color = Olive)
+        Text(label, fontSize = if (LocalAppThemeStyle.current == AppThemeStyle.XINGCAI) 12.sp else 10.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
     }
 }
 
@@ -136,21 +146,34 @@ import java.util.Locale
 @Composable fun HistoryRow(book: Book, onOpen: () -> Unit, onCloud: (() -> Unit)? = null, cloudBusy: Boolean = false,
     cloudInProgress: Boolean = false, cloudTaskLabel: String = "", cloudFraction: Float? = null,
     onCancelCloud: (() -> Unit)? = null, cloudCanCancel: Boolean = false, cloudDirty: Boolean = false,
-    onRename: (() -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth().clickable(enabled = !book.cloudOnly, onClick = onOpen), verticalAlignment = Alignment.CenterVertically) {
-        BookCover(book, Modifier.width(53.dp).height(74.dp), onCloud, cloudBusy, cloudInProgress, cloudTaskLabel, cloudFraction,
+    onRename: (() -> Unit)? = null, shelfLayout: Boolean = false, onMore: (() -> Unit)? = null) {
+    val xingcai = shelfLayout || LocalAppThemeStyle.current == AppThemeStyle.XINGCAI
+    val longPress: (() -> Unit)? = if (shelfLayout) ({ onMore?.invoke() }) else onRename
+    Row(Modifier.fillMaxWidth().testTag(if (shelfLayout) "shelf_list_row_${book.id}" else "history_row_${book.id}")
+        .combinedClickable(onClick = onOpen,
+            onLongClick = longPress), verticalAlignment = Alignment.CenterVertically) {
+        BookCover(book, Modifier.width(if (xingcai) 56.dp else 53.dp).height(if (xingcai) 78.dp else 74.dp), onCloud, cloudBusy, cloudInProgress, cloudTaskLabel, cloudFraction,
             onCancelCloud, cloudCanCancel, cloudDirty)
-        Column(Modifier.weight(1f).padding(start = 15.dp)) {
-            Text(book.title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.testTag("shelf_book_title_${book.id}").then(if (onRename == null) Modifier else
-                    Modifier.combinedClickable(onClick = { if (!book.cloudOnly) onOpen() }, onLongClick = onRename)))
+        Column(Modifier.weight(1f).then(if (xingcai) Modifier.height(80.dp) else Modifier).padding(start = 15.dp)) {
+            Text(book.title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = if (xingcai) 2 else 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("shelf_book_title_${book.id}").then(if (onRename == null && !shelfLayout) Modifier else
+                    Modifier.combinedClickable(onClick = onOpen,
+                        onLongClick = longPress)))
             Text(listOf(book.displayAuthor, chapterLabel(book)).filter { it.isNotBlank() }.joinToString(" · "),
                 color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("${relativeTime(book.lastReadAt)} · 第 ${book.chapterIndex + 1}/${book.chapters.size} 章 · ${(book.progress * 100).toInt()}%",
+            if (xingcai) {
+                Spacer(Modifier.weight(1f))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                    XingcaiProgressTrack(book.progress, Modifier.weight(1f))
+                    Text("${(book.progress * 100).toInt()}%", fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                        color = Olive, modifier = Modifier.padding(start = 10.dp))
+                }
+            } else Text("${relativeTime(book.lastReadAt)} · 第 ${book.chapterIndex + 1}/${book.chapters.size} 章 · ${(book.progress * 100).toInt()}%",
                 color = Olive, fontSize = 10.sp, modifier = Modifier.padding(top = 8.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (book.cloudOnly) Text("待下载", color = Muted, fontSize = 10.sp)
-        else Icon(Icons.Outlined.ChevronRight, "继续阅读", tint = Muted, modifier = Modifier.size(20.dp))
+        if (shelfLayout) {
+            if (onMore != null) ShelfMoreButton(book, onClick = onMore)
+        } else Icon(Icons.Outlined.ChevronRight, "打开书籍", tint = Muted, modifier = Modifier.size(20.dp))
     }
 }
 
@@ -189,6 +212,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
     var deletingCloud by remember { mutableStateOf<Book?>(null) }
     var clearingAiSpeech by remember { mutableStateOf<Book?>(null) }
     var details by remember { mutableStateOf<Book?>(null) }
+    var actionBookId by remember { mutableStateOf<String?>(null) }
     var groupFilter by rememberSaveable { mutableStateOf<String?>(null) }
     var managingGroups by remember { mutableStateOf(false) }
     var groupEditor by remember { mutableStateOf(false) }
@@ -297,43 +321,42 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 }
             }
         } else if (grid) {
-            LazyVerticalGrid(GridCells.Fixed(2), contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 24.dp),
+            LazyVerticalGrid(GridCells.Fixed(3), contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
                 items(pendingImports, key = { "import-${it.id}" }) { PendingShelfBook(it, grid = true) }
                 items(displayed, key = { it.id }) { book ->
                     Column {
                         Box {
-                            BookCover(book, Modifier.fillMaxWidth().aspectRatio(.72f).clickable(enabled = selectingBackup || !book.cloudOnly) { if (selectingBackup) selectBackup(book) else onOpen(book) },
+                            BookCover(book, Modifier.fillMaxWidth().aspectRatio(.80f).testTag("shelf_book_cover_${book.id}")
+                                .combinedClickable(
+                                    onClick = { if (selectingBackup) selectBackup(book) else onOpen(book) },
+                                    onLongClick = { if (!selectingBackup) actionBookId = book.id }),
                                 onCloud?.let { { it(book) } }, cloudBusy || transfer(book) != null, transfer(book) != null,
                                 transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
-                                onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds,
-                                showDownloadLabel = true)
+                                onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds)
                             Surface(Modifier.align(Alignment.TopStart).padding(8.dp), shape = appShape(5.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .9f)) {
                                 if (selectingBackup) Checkbox(book.id in backupSelection, { selectBackup(book) },
                                     modifier = Modifier.testTag("backup_select_${book.id}"))
                                 else Text(if (book.isDemo) "示例" else book.format.name, fontSize = 9.sp, color = Olive, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
                             }
-                            ShelfBookMenu(book, Modifier.align(Alignment.TopEnd).padding(8.dp)
+                            if (!selectingBackup) ShelfMoreButton(book, Modifier.align(Alignment.TopEnd).padding(8.dp)
                                 .background(MaterialTheme.colorScheme.surface.copy(alpha = .9f), CircleShape),
-                                onDetails = { details = book }, onMove = { moving = book }, onDelete = { deleting = book },
-                                onDeleteCloud = onDeleteCloud?.let { { deletingCloud = book } }, cloudBusy = cloudBusy || transfer(book) != null,
-                                onClearAiSpeechCache = if (onClearAiSpeechCache != null || onClearSpeechWithCloud != null) { { clearingAiSpeech = book } } else null,
-                                onGenerateSpeech = onGenerateSpeech?.let { { it(book.id) } },
-                                onVoiceRoles = onVoiceRoles?.let { { it(book.id) } })
+                                onClick = { actionBookId = book.id })
                         }
-                        Text(book.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1,
+                        Text(book.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 11.dp).testTag("shelf_book_title_${book.id}").combinedClickable(
-                                enabled = selectingBackup || !book.cloudOnly || onRenameBook != null,
-                                onClick = { if (selectingBackup) selectBackup(book) else if (!book.cloudOnly) onOpen(book) },
-                                onLongClick = if (!selectingBackup && onRenameBook != null) { { rename(book) } } else null))
+                                onClick = { if (selectingBackup) selectBackup(book) else onOpen(book) },
+                                onLongClick = { if (!selectingBackup) actionBookId = book.id }))
                         Text(book.displayAuthor, fontSize = 10.sp, color = Muted,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp).testTag("shelf_book_author_${book.id}"))
-                        Text("第 ${book.chapterIndex + 1} / ${book.chapters.size} 章 · ${(book.progress * 100).toInt()}%", fontSize = 10.sp,
-                            color = Olive, modifier = Modifier.padding(top = 9.dp))
+                        Text("第 ${book.chapterIndex + 1} / ${book.chapters.size} 章", fontSize = 10.sp, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis, color = Olive,
+                            modifier = Modifier.padding(top = 9.dp).testTag("shelf_book_chapter_${book.id}"))
+                        Text("${(book.progress * 100).toInt()}%", fontSize = 10.sp, color = Olive,
+                            modifier = Modifier.padding(top = 3.dp).testTag("shelf_book_percent_${book.id}"))
                         LinearProgressIndicator(progress = { book.progress }, color = Olive, trackColor = Line,
                             modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(2.dp))
-                        Text("最新 · ${book.chapters.lastOrNull()?.title.orEmpty()}", fontSize = 9.sp, color = Muted,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 7.dp))
                     }
                 }
             }
@@ -350,23 +373,39 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                         HistoryRow(book, { if (selectingBackup) selectBackup(book) else onOpen(book) }, onCloud?.let { { it(book) } }, cloudBusy || transfer(book) != null,
                             transfer(book) != null, transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
                             onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds,
-                            onRename = if (!selectingBackup && onRenameBook != null) { { rename(book) } } else null)
-                        Row(Modifier.fillMaxWidth().padding(start = 68.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("最新 · ${book.chapters.lastOrNull()?.title.orEmpty()}", modifier = Modifier.weight(1f),
-                                color = Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            ShelfBookMenu(book, onDetails = { details = book }, onMove = { moving = book }, onDelete = { deleting = book },
-                                onDeleteCloud = onDeleteCloud?.let { { deletingCloud = book } }, cloudBusy = cloudBusy || transfer(book) != null,
-                                onClearAiSpeechCache = if (onClearAiSpeechCache != null || onClearSpeechWithCloud != null) { { clearingAiSpeech = book } } else null,
-                                onGenerateSpeech = onGenerateSpeech?.let { { it(book.id) } },
-                                onVoiceRoles = onVoiceRoles?.let { { it(book.id) } })
-                        }
+                            shelfLayout = true, onMore = if (!selectingBackup) { { actionBookId = book.id } } else null)
                     }
                 }
             }
         }
     }
+    books.firstOrNull { it.id == actionBookId }?.let { book ->
+        ShelfBookActions(book, transfer(book), cloudConfigured, cloudBusy || transfer(book) != null,
+            cloudDirty = book.id in cloudDirtyBookIds,
+            onDismiss = { actionBookId = null },
+            onDetails = { actionBookId = null; details = book },
+            onMove = { actionBookId = null; moving = book },
+            onRename = onRenameBook?.let { { actionBookId = null; rename(book) } },
+            onGenerateSpeech = if (book.hasSpeechText() && onGenerateSpeech != null) {
+                { actionBookId = null; onGenerateSpeech(book.id) }
+            } else null,
+            onVoiceRoles = if (book.mode == LibraryMode.NOVEL && onVoiceRoles != null) {
+                { actionBookId = null; onVoiceRoles(book.id) }
+            } else null,
+            onCloud = onCloud?.let { { actionBookId = null; it(book) } },
+            onDeleteCloud = if (book.cloudEnabled && onDeleteCloud != null) {
+                { actionBookId = null; deletingCloud = book }
+            } else null,
+            onClearSpeech = if (book.mode == LibraryMode.NOVEL && !book.cloudOnly &&
+                (onClearAiSpeechCache != null || onClearSpeechWithCloud != null)) {
+                { actionBookId = null; clearingAiSpeech = book }
+            } else null,
+            onDelete = { actionBookId = null; deleting = book })
+    }
     renaming?.let { book ->
-        AlertDialog(onDismissRequest = { renaming = null }, modifier = Modifier.testTag("shelf_rename_dialog"),
+        AlertDialog(onDismissRequest = { renaming = null },
+            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(.9f).testTag("shelf_rename_dialog"),
+            properties = DialogProperties(usePlatformDefaultWidth = false),
             title = { Text("重命名书籍") }, text = {
                 OutlinedTextField(renamedTitle, { renamedTitle = it }, label = { Text("书籍名称") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("shelf_rename_title"))
@@ -597,7 +636,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
     val fraction = pending.progress?.fraction?.coerceIn(0f, 1f)
     val stage = if (pending.queued) "等待导入" else pending.progress?.stage ?: "准备导入"
     val cover: @Composable () -> Unit = {
-        Box((if (grid) Modifier.fillMaxWidth().aspectRatio(.72f) else Modifier.width(53.dp).height(74.dp))
+        Box((if (grid) Modifier.fillMaxWidth().aspectRatio(.80f) else Modifier.width(56.dp).height(78.dp))
             .clip(appShape(7.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh)
             .testTag("pending_import_cover"), contentAlignment = Alignment.Center) {
             val indicator = Modifier.size(if (grid) 42.dp else 26.dp).testTag("pending_import_progress")
@@ -626,33 +665,9 @@ private const val UNGROUPED_FILTER = "@ungrouped"
     }
 }
 
-@Composable private fun ShelfBookMenu(book: Book, modifier: Modifier = Modifier, onDetails: () -> Unit,
-    onMove: () -> Unit, onDelete: () -> Unit, onDeleteCloud: (() -> Unit)? = null, cloudBusy: Boolean = false,
-    onClearAiSpeechCache: (() -> Unit)? = null, onGenerateSpeech: (() -> Unit)? = null,
-    onVoiceRoles: (() -> Unit)? = null) {
-    var expanded by remember(book.id) { mutableStateOf(false) }
-    Box(modifier) {
-        IconButton(onClick = { expanded = true }, modifier = Modifier.size(26.dp).testTag("shelf_book_more_${book.id}")) {
-            Icon(Icons.Outlined.MoreHoriz, "书籍信息", Modifier.size(18.dp), tint = Ink)
-        }
-        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(text = { Text("书籍信息") }, onClick = { expanded = false; onDetails() })
-            DropdownMenuItem(text = { Text("移动分组") }, onClick = { expanded = false; onMove() })
-            if (book.hasSpeechText() && onGenerateSpeech != null) DropdownMenuItem(
-                text = { Text("转化 AI 语音") }, onClick = { expanded = false; onGenerateSpeech() },
-                modifier = Modifier.testTag("shelf_book_generate_speech_${book.id}"))
-            if (book.mode == LibraryMode.NOVEL && onVoiceRoles != null) DropdownMenuItem(
-                text = { Text("角色音色") }, onClick = { expanded = false; onVoiceRoles() },
-                modifier = Modifier.testTag("shelf_book_voice_roles_${book.id}"))
-            if (book.cloudEnabled && onDeleteCloud != null) DropdownMenuItem(
-                text = { Text("删除云端文件", color = MaterialTheme.colorScheme.error) },
-                onClick = { expanded = false; onDeleteCloud() }, enabled = !cloudBusy,
-                modifier = Modifier.testTag("shelf_book_delete_cloud_${book.id}"))
-            if (book.mode == LibraryMode.NOVEL && !book.cloudOnly && onClearAiSpeechCache != null) DropdownMenuItem(
-                text = { Text("清理 AI 语音缓存") }, onClick = { expanded = false; onClearAiSpeechCache() },
-                modifier = Modifier.testTag("shelf_book_clear_ai_speech_${book.id}"))
-            DropdownMenuItem(text = { Text("移出书架", color = MaterialTheme.colorScheme.error) }, onClick = { expanded = false; onDelete() })
-        }
+@Composable private fun ShelfMoreButton(book: Book, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = modifier.size(26.dp).testTag("shelf_book_more_${book.id}")) {
+        Icon(Icons.Outlined.MoreHoriz, "更多选项：${book.title}", Modifier.size(18.dp), tint = Ink)
     }
 }
 
@@ -665,8 +680,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
 
 @Composable fun BookCover(book: Book, modifier: Modifier = Modifier, onCloud: (() -> Unit)? = null,
     cloudBusy: Boolean = false, cloudInProgress: Boolean = false, cloudTaskLabel: String = "", cloudFraction: Float? = null,
-    onCancelCloud: (() -> Unit)? = null, cloudCanCancel: Boolean = false, cloudDirty: Boolean = false,
-    showDownloadLabel: Boolean = false) {
+    onCancelCloud: (() -> Unit)? = null, cloudCanCancel: Boolean = false, cloudDirty: Boolean = false) {
     val bitmap by rememberBookCoverBitmap(book)
     val colors = listOf(Color(0xFF63705D), Color(0xFF7F8972), Color(0xFF6E8290), Color(0xFF9A816A))
     val base = colors[(book.title.hashCode() and Int.MAX_VALUE) % colors.size]
@@ -687,9 +701,6 @@ private const val UNGROUPED_FILTER = "@ungrouped"
         }
         if (book.cloudOnly) Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface.copy(alpha = .22f))
             .testTag("cloud_book_cover_${book.id}"))
-        if (showDownloadLabel && book.cloudOnly && !cloudInProgress) Text("待下载", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.align(Alignment.Center).background(MaterialTheme.colorScheme.surface, appShape(4.dp))
-                .padding(horizontal = 10.dp, vertical = 5.dp).testTag("cloud_book_pending_${book.id}"))
         if (cloudInProgress) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface.copy(alpha = .75f)), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {

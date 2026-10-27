@@ -238,7 +238,10 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             }
         } else {
             Scaffold(containerColor = Paper, snackbarHost = { SnackbarHost(snack) }, bottomBar = {
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
+                if (state.appTheme == AppThemeStyle.XINGCAI) XingcaiNavigationBar(tab, updateSession.hasUnreadUpdate) { i ->
+                    tab = i
+                    if (i == 2) updateSession.setSettingsVisible(true)
+                } else NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                     listOf("阅读" to Icons.AutoMirrored.Outlined.MenuBook, "书架" to Icons.Outlined.LibraryBooks,
                         "设置" to Icons.Outlined.Tune).forEachIndexed { i, entry ->
                         NavigationBarItem(selected = tab == i, onClick = {
@@ -272,7 +275,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                     onCloud = ::cloudBook, cloudBusy = vm.cloudBusy, cloudBookId = vm.cloudBookId,
                                     cloudTaskLabel = vm.cloudTaskLabel, cloudFraction = vm.cloudFraction,
                                     onCancelCloud = vm::cancelCloudUpload, cloudCanCancel = vm.cloudUploadCancellable,
-                                    cloudTransfers = vm.cloudTransfers, cloudDirtyBookIds = vm.cloudDirtyBookIds)
+                                    cloudTransfers = vm.cloudTransfers, cloudDirtyBookIds = vm.cloudDirtyBookIds,
+                                    showRecentReading = state.showRecentReading)
                                 1 -> key(vm.mode) {
                                     Bookshelf(books, query, { query = it }, vm::open, vm::deleteBook, { showImport = true },
                                         state.groups.filter { it.mode == vm.mode }, vm::createGroup, vm::renameGroup,
@@ -315,7 +319,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                     onEinkMode = vm::setEinkMode, onTabletDualPage = vm::setTabletDualPage,
                                     restoreProgress = vm.cloudRestoreProgress,
                                     onAppTheme = vm::setAppTheme, availableUpdate = updateSession.availableUpdate,
-                                    onCheckUpdate = updateSession::checkNow)
+                                    onCheckUpdate = updateSession::checkNow, onShowRecentReading = vm::setShowRecentReading)
                             }
                         }
                     }
@@ -380,6 +384,10 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
 
 @Composable internal fun ModeTabs(mode: LibraryMode, onMode: (LibraryMode) -> Unit, onNotes: () -> Unit,
     onImport: () -> Unit = {}, importEnabled: Boolean = true, nightMode: Boolean = false, onToggleNight: () -> Unit = {}) {
+    if (LocalAppThemeStyle.current == AppThemeStyle.XINGCAI) {
+        XingcaiModeTabs(mode, onMode, onNotes, onImport, importEnabled, nightMode, onToggleNight)
+        return
+    }
     Row(Modifier.padding(start = 24.dp, end = 16.dp, top = 8.dp).fillMaxWidth().height(48.dp).testTag("mode_tabs"),
         verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f).height(44.dp).clip(appShape(13.dp))

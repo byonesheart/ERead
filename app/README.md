@@ -24,7 +24,7 @@ Compose BOM 固定为 2026.06.01，Lifecycle runtime／viewmodel-compose 固定�
 .\app\scripts\build.ps1 -Tasks @('testDebugUnitTest', 'assembleDebug', 'assembleDebugAndroidTest', 'lintDebug')
 ```
 
-设备测试需要已授权的 Android 设备；执行设备任务前应确认测试变体与正式书库隔离。目录分组、EPUB 导入缓存及浏览器翻页交接见 [1.11.10 说明](../release/docs/legacy-engine-1.11.10.md)。导入扫描、进度条预览及覆盖／仿真翻页的本地优化见 [1.11.9 说明](../release/docs/legacy-engine-1.11.9.md)，内置目录优先与完整导入缓存见 [1.11.8 说明](../release/docs/legacy-engine-1.11.8.md)；[1.11.7 说明](../release/docs/legacy-engine-1.11.7.md)保留按需初始化试版记录。跳转、预加载及导入行为见 [1.11.6 说明](../release/docs/legacy-engine-1.11.6.md)，连贯滚动见 [1.11.5 说明](../release/docs/legacy-engine-1.11.5.md)，旧书库兼容边界见 [兼容引擎说明](../release/docs/legacy-engine-1.11.4.md)。[Readium 迁移说明](../release/docs/READIUM_MIGRATION.md)仅保留历史记录。
+设备测试需要已授权的 Android 设备；执行设备任务前应确认测试变体与正式书库隔离。星彩主题的界面来源、设置入口和功能边界见 [主题说明](../release/docs/xingcai-theme.md)。目录分组、EPUB 导入缓存及浏览器翻页交接见 [1.11.10 说明](../release/docs/legacy-engine-1.11.10.md)。导入扫描、进度条预览及覆盖／仿真翻页的本地优化见 [1.11.9 说明](../release/docs/legacy-engine-1.11.9.md)，内置目录优先与完整导入缓存见 [1.11.8 说明](../release/docs/legacy-engine-1.11.8.md)；[1.11.7 说明](../release/docs/legacy-engine-1.11.7.md)保留按需初始化试版记录。跳转、预加载及导入行为见 [1.11.6 说明](../release/docs/legacy-engine-1.11.6.md)，连贯滚动见 [1.11.5 说明](../release/docs/legacy-engine-1.11.5.md)，旧书库兼容边界见 [兼容引擎说明](../release/docs/legacy-engine-1.11.4.md)。[Readium 迁移说明](../release/docs/READIUM_MIGRATION.md)仅保留历史记录。
 
 Android 源码、开发脚本、测试及本地工具都留在本目录。常规 Gradle 构建结果位于模块的 `app/build/`；构建脚本将 APK 汇总到 [`../release/android/`](../release/android/)，发布源码压缩包也在发布步骤中生成至该目录。设备测试包保留在模块的构建目录。本地工具、缓存、`local.properties` 和 `build/` 不提交 Git。
 

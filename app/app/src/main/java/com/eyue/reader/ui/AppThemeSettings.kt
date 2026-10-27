@@ -55,10 +55,11 @@ internal fun AppThemeSettingsPage(selected: AppThemeStyle, onSelect: (AppThemeSt
                         block(5, 3, 2, 8)
                         block(2, 4, 2, 1); block(8, 4, 2, 1)
                         block(2, 6, 2, 1); block(8, 6, 2, 1)
-                    } else Icon(Icons.AutoMirrored.Outlined.MenuBook, null, tint = colors.primary, modifier = Modifier.size(52.dp))
+                    } else if (style == AppThemeStyle.XINGCAI) XingcaiNightModeGlyph(true, glyphSize = 52.dp)
+                    else Icon(Icons.AutoMirrored.Outlined.MenuBook, null, tint = colors.primary, modifier = Modifier.size(52.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(if (style == AppThemeStyle.PIXEL) "像素" else "经典", style = MaterialTheme.typography.titleMedium)
-                        Text(if (style == AppThemeStyle.PIXEL) "复古配色 · 像素边角" else "柔和配色 · 圆角界面",
+                        Text(style.displayName, style = MaterialTheme.typography.titleMedium)
+                        Text(style.description,
                             style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
                     }
                     if (chosen) Icon(Icons.Outlined.CheckCircle, "当前主题", tint = colors.primary)

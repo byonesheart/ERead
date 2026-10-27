@@ -3,6 +3,7 @@ package com.eyue.reader.ui
 import com.eyue.reader.ui.AppIcon as Icon
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
@@ -13,6 +14,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -43,7 +45,7 @@ private enum class SettingsPage(val title: String) {
     APP_THEME("主题"),
     SPEECH("朗读引擎"), CLOUD("WebDAV 备份与还原"), CACHE("清理缓存"),
     FEEDBACK("问题反馈"), SUPPORT("支持作者"), ABOUT("关于"), AUTHOR("作者"),
-    PRIVACY("隐私政策"), TERMS("用户协议"), OPEN_SOURCE("开源相关"), CHANGELOG("更新日志")
+    PRIVACY("隐私政策"), TERMS("用户协议"), OPEN_SOURCE("开源相关"), CHANGELOG("更新日志"), CONTRIBUTORS("贡献者")
 }
 
 @Suppress("UNUSED_PARAMETER")
@@ -67,7 +69,7 @@ private enum class SettingsPage(val title: String) {
     onEinkMode: (Boolean) -> Unit = {}, onTabletDualPage: (Boolean) -> Unit = {},
     onCheckUpdate: (suspend () -> AppUpdateResult)? = null,
     restoreProgress: CloudOperationProgress? = null, onAppTheme: (AppThemeStyle) -> Unit = {},
-    availableUpdate: AppUpdateResult? = null) {
+    availableUpdate: AppUpdateResult? = null, onShowRecentReading: (Boolean) -> Unit = {}) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
     val page = pages.lastOrNull()
@@ -94,32 +96,32 @@ private enum class SettingsPage(val title: String) {
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             when (page) {
                 null -> {
-                    SettingsCard {
-                        Column(Modifier.fillMaxWidth().padding(16.dp).testTag("settings_theme")) {
-                            Text("夜间模式", style = MaterialTheme.typography.titleSmall)
-                            Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf(ThemeMode.LIGHT to "浅色", ThemeMode.DARK to "深色", ThemeMode.SYSTEM to "系统").forEach { (value, label) ->
-                                    FilterChip(selected = state.themeMode == value, onClick = { onThemeMode(value) },
-                                        label = { Text(label, maxLines = 1) }, modifier = Modifier.weight(1f).testTag("settings_theme_${value.name.lowercase()}"))
-                                }
-                            }
-                        }
-                        SettingsSeparator()
-                        SettingsLink(Icons.Outlined.Palette, "主题", if (state.appTheme == AppThemeStyle.PIXEL) "像素" else "经典",
+                    SettingsCard(Modifier.testTag("settings_display_card")) {
+                        SettingsLink(Icons.Outlined.Palette, "主题", state.appTheme.displayName,
                             "settings_app_theme", { open(SettingsPage.APP_THEME) })
                         SettingsSeparator()
-                        SettingsToggle("墨水屏模式", "高对比度显示，关闭翻页动画", state.einkMode, onEinkMode, "settings_eink_mode")
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp).testTag("settings_theme"),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Text("夜间模式", Modifier.weight(1f), fontSize = 14.sp)
+                            SettingsNightModeSegment(state.themeMode, onThemeMode)
+                        }
+                    }
+                    SettingsCard(Modifier.testTag("settings_reading_card")) {
+                        SettingsToggle("最近阅读", "在阅读首页显示最近阅读的书籍", state.showRecentReading, onShowRecentReading,
+                            "settings_recent_reading", Icons.Outlined.History)
                         SettingsSeparator()
-                        SettingsToggle("平板横屏双页", "宽屏横向翻页时并排显示两页", state.tabletDualPage, onTabletDualPage, "settings_tablet_dual_page")
+                        SettingsToggle("墨水屏模式", "高对比度显示，关闭翻页动画", state.einkMode, onEinkMode, "settings_eink_mode", Icons.Outlined.Contrast)
+                        SettingsSeparator()
+                        SettingsToggle("平板横屏双页", "宽屏横向翻页时并排显示两页", state.tabletDualPage, onTabletDualPage, "settings_tablet_dual_page", Icons.AutoMirrored.Outlined.MenuBook)
                         SettingsSeparator()
                         SettingsLink(Icons.Outlined.Headphones, "朗读引擎", if (state.speechEngine == SpeechEngine.AI) "AI 语音" else "系统语音",
                             "settings_speech", { open(SettingsPage.SPEECH) })
-                        SettingsSeparator()
-                        SettingsLink(Icons.Outlined.Cloud, "WebDAV 备份与还原", "", "settings_cloud", { open(SettingsPage.CLOUD) })
+                    }
+                    SettingsCard(Modifier.testTag("settings_services_card")) {
+                        SettingsLink(Icons.Outlined.Cloud, "WebDAV 备份与还原", if (cloudConfigured) "已连接" else "未配置", "settings_cloud", { open(SettingsPage.CLOUD) })
                         SettingsSeparator()
                         SettingsLink(Icons.Outlined.CleaningServices, "清理缓存", "", "settings_cache", { open(SettingsPage.CACHE) })
-                    }
-                    SettingsCard {
+                        SettingsSeparator()
                         SettingsLink(Icons.Outlined.Feedback, "问题反馈", "", "settings_feedback", { open(SettingsPage.FEEDBACK) })
                         SettingsSeparator()
                         SettingsLink(Icons.Outlined.FavoriteBorder, "支持作者", "", "settings_support", { open(SettingsPage.SUPPORT) })
@@ -172,13 +174,14 @@ private enum class SettingsPage(val title: String) {
                         AboutIntro(onCheckUpdate, onOpenChangelog = { open(SettingsPage.CHANGELOG) }, availableUpdate = availableUpdate)
                     }
                     SettingsCard {
-                        listOf(SettingsPage.AUTHOR, SettingsPage.PRIVACY, SettingsPage.TERMS, SettingsPage.OPEN_SOURCE).forEachIndexed { index, destination ->
+                        listOf(SettingsPage.AUTHOR, SettingsPage.CONTRIBUTORS, SettingsPage.PRIVACY, SettingsPage.TERMS, SettingsPage.OPEN_SOURCE).forEachIndexed { index, destination ->
                             if (index > 0) SettingsSeparator()
                             SettingsLink(Icons.Outlined.ChevronRight, destination.title, "", "settings_about_${destination.name.lowercase()}", { open(destination) })
                         }
                     }
                 }
                 SettingsPage.AUTHOR -> AuthorContent()
+                SettingsPage.CONTRIBUTORS -> ContributorsContent()
                 SettingsPage.SUPPORT -> SupportContent()
                 SettingsPage.FEEDBACK -> FeedbackContent()
                 SettingsPage.PRIVACY -> LegalDocumentContent("privacy")
@@ -209,8 +212,10 @@ private enum class SettingsPage(val title: String) {
     }
 }
 
-@Composable private fun SettingsToggle(title: String, summary: String, checked: Boolean, onChecked: (Boolean) -> Unit, tag: String) {
+@Composable private fun SettingsToggle(title: String, summary: String, checked: Boolean, onChecked: (Boolean) -> Unit, tag: String, icon: ImageVector = Icons.Outlined.Info) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        SettingsEntryIcon(icon, tag)
+        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f).padding(end = 8.dp)) {
             Text(title, style = MaterialTheme.typography.bodyMedium)
             Text(summary, color = Muted, style = MaterialTheme.typography.bodySmall)
@@ -231,8 +236,10 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
     LibraryCleanupKind.ANNOTATIONS -> "annotations"; LibraryCleanupKind.ROLES -> "roles"
 }
 
-@Composable private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth().clip(appShape(16.dp)).background(MaterialTheme.colorScheme.surface), content = content)
+@Composable private fun SettingsCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    val shape = appShape(16.dp)
+    Column(modifier.fillMaxWidth().clip(shape).background(MaterialTheme.colorScheme.surface)
+        .border(1.dp, Line, shape), content = content)
 }
 
 @Composable private fun SettingsSeparator() = HorizontalDivider(color = Line, modifier = Modifier.padding(horizontal = 16.dp))
@@ -240,7 +247,7 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
 @Composable private fun SettingsLink(icon: ImageVector, title: String, value: String, tag: String, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).testTag(tag).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, Modifier.size(20.dp), tint = Olive)
+        SettingsEntryIcon(icon, tag)
         Text(title, Modifier.weight(1f).padding(start = 12.dp), fontSize = 14.sp)
         if (value.isNotBlank()) Text(value, Modifier.widthIn(max = 100.dp).padding(start = 8.dp), color = Muted, fontSize = 12.sp,
             maxLines = 1, overflow = TextOverflow.Ellipsis)

@@ -604,7 +604,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun open(book: Book) {
-        if (book.cloudOnly) { message = "请点击封面的云端图标，手动下载《${book.title}》后阅读"; return }
+        if (book.cloudOnly) { message = "《${book.title}》还未下载，请点击云端图标下载"; return }
         openJob?.cancel()
         openJob = null
         if (!book.sourceLinked) {
@@ -677,6 +677,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setTabletDualPage(enabled: Boolean) {
         if (storageReady) changed(state.copy(tabletDualPage = enabled))
+    }
+
+    fun setShowRecentReading(enabled: Boolean) {
+        if (storageReady) changed(state.copy(showRecentReading = enabled))
     }
 
     fun toggleNightMode() = setThemeMode(if (state.settings.nightMode) ThemeMode.LIGHT else ThemeMode.DARK)

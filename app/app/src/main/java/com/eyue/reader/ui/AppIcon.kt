@@ -39,7 +39,8 @@ private const val PixelIconGrid = 16
 internal fun AppIcon(imageVector: ImageVector, contentDescription: String?, modifier: Modifier = Modifier,
                      tint: Color = LocalContentColor.current) {
     if (LocalAppThemeStyle.current != AppThemeStyle.PIXEL) {
-        MaterialIcon(imageVector, contentDescription, modifier, tint)
+        MaterialIcon(if (LocalAppThemeStyle.current == AppThemeStyle.XINGCAI) xingcaiIcon(imageVector) else imageVector,
+            contentDescription, modifier, tint)
         return
     }
     val painter = rememberVectorPainter(imageVector)

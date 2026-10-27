@@ -1,0 +1,25 @@
+{
+  "versionCode": 56,
+  "versionName": "1.11.13",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.13",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.13/ERead-1.11.13-debug.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/13Z_JHeVrhQy7ANowwggmwA?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/d33c3c7721cd",
+      "extractionCode": "KUhd"
+    }
+  ],
+  "changelog": [
+    "新增星彩主题，可与经典、像素主题切换；三种主题统一书架与分组设置布局。",
+    "完善长按书籍管理、未下载书籍提示及三列书架的章节／百分比进度显示。",
+    "阅读界面采用紧凑配置条及分组排版控件，保留配置自动保存、字体／背景导入和翻页效果。",
+    "最近阅读支持开关，默认开启。",
+    "更多功能请自行体验。"
+  ]
+}

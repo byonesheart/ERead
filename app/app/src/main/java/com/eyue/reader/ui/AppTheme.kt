@@ -113,6 +113,7 @@ private val PixelAppTypography = ClassicAppTypography.copy(
 internal fun appColors(style: AppThemeStyle, dark: Boolean, eink: Boolean = false) = when {
     eink -> einkAppColors(dark)
     style == AppThemeStyle.PIXEL -> if (dark) PixelDarkAppColors else PixelLightAppColors
+    style == AppThemeStyle.XINGCAI -> if (dark) XingcaiDarkAppColors else XingcaiLightAppColors
     else -> if (dark) DarkAppColors else LightAppColors
 }
 
@@ -120,8 +121,8 @@ internal fun appColors(style: AppThemeStyle, dark: Boolean, eink: Boolean = fals
 internal fun EReadTheme(dark: Boolean, eink: Boolean, style: AppThemeStyle, content: @Composable () -> Unit) {
     CompositionLocalProvider(LocalAppThemeStyle provides style, LocalAppEinkMode provides eink) {
         MaterialTheme(colorScheme = appColors(style, dark, eink),
-            shapes = if (style == AppThemeStyle.PIXEL) PixelAppShapes else ClassicAppShapes,
-            typography = if (style == AppThemeStyle.PIXEL) PixelAppTypography else ClassicAppTypography,
+            shapes = when (style) { AppThemeStyle.PIXEL -> PixelAppShapes; AppThemeStyle.XINGCAI -> XingcaiAppShapes; else -> ClassicAppShapes },
+            typography = when (style) { AppThemeStyle.PIXEL -> PixelAppTypography; AppThemeStyle.XINGCAI -> XingcaiAppTypography; else -> ClassicAppTypography },
             content = content)
     }
 }
@@ -130,7 +131,8 @@ internal fun EReadTheme(dark: Boolean, eink: Boolean, style: AppThemeStyle, cont
 internal fun appShape(corner: Dp): Shape {
     val style = LocalAppThemeStyle.current
     return remember(style, corner) {
-        if (style == AppThemeStyle.PIXEL) PixelAppShape(corner.coerceAtMost(8.dp)) else RoundedCornerShape(corner)
+        if (style == AppThemeStyle.PIXEL) PixelAppShape(corner.coerceAtMost(8.dp))
+        else RoundedCornerShape(if (style == AppThemeStyle.XINGCAI) corner.coerceAtMost(20.dp) else corner)
     }
 }
 

@@ -25,3 +25,6 @@ artifacts/
 /release/windows/*
 !/release/windows/README.md
 /release/marketing/
+
+# Keep Windows development handoff notes local.
+/release/docs/windows-handoff*.md

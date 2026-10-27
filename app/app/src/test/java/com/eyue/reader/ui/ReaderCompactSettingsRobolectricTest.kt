@@ -71,6 +71,10 @@ class ReaderCompactSettingsRobolectricTest {
             java.io.File(directory, "$name.png").writeBytes(bytes)
         }
         compose.onNodeWithTag("reader_save_theme").assertDoesNotExist()
+        val profile = compose.onNodeWithText("配置", substring = false).fetchSemanticsNode().boundsInRoot
+        val pageTurn = compose.onNodeWithText("翻页方式", substring = false).fetchSemanticsNode().boundsInRoot
+        val typography = compose.onNodeWithText("文字与排版", substring = false).fetchSemanticsNode().boundsInRoot
+        assertTrue("Page turn controls must follow profiles and precede typography", profile.bottom <= pageTurn.top && pageTurn.bottom <= typography.top)
         capture("reader-interface-light")
         compose.onNodeWithText("配置1", substring = false).performTouchInput { longClick() }
         compose.onNodeWithTag("reader_delete_theme_${settings.appearanceProfiles.single().id}").assertIsDisplayed()
@@ -156,7 +160,7 @@ class ReaderCompactSettingsRobolectricTest {
         val background = compose.onNodeWithText("背景").fetchSemanticsNode().boundsInRoot
         val mode = compose.onNodeWithText("模式").fetchSemanticsNode().boundsInRoot
         val brightness = compose.onNodeWithText("亮度").fetchSemanticsNode().boundsInRoot
-        assertTrue(background.bottom <= mode.top && mode.bottom <= brightness.top)
+        assertTrue(mode.bottom <= background.top && background.bottom <= brightness.top)
         compose.onNodeWithTag("reader_mode_paged").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(ReadingMode.PAGED, settings.readingMode) }
         compose.onNodeWithTag("reader_mode_vertical_paged").performClick()
