@@ -1,5 +1,15 @@
 # 构建与验证记录
 
+## 1.11.18 本地书籍目录定位（2026-10-27，本地构建）
+
+版本更新为 **1.11.18／versionCode 62**。文件管理器定位改为带实际文档 URI 的目录 `ACTION_VIEW`，显式选择支持目录浏览的系统文档管理器，不再仅依赖文件选择器的初始位置提示。保留提供方原始文档 ID、SD 卡卷 ID 和树内子文档路径；漫画文件夹的裸树 URI 补为目录文档 URI。排除 E阅自身及普通文件查看器，防止重新导入或误打开其他应用。不支持定位的位置保留复制入口，私有目录不对外暴露。
+
+系统 DocumentsUI 接收文档 URI 后解析提供方路径，文件显示其父目录，文件夹显示自身，依据 [AOSP 目录导航实现](https://android.googlesource.com/platform/packages/apps/DocumentsUI/+/refs/heads/main/src/com/android/documentsui/AbstractActionHandler.java)。没有通过截断未知提供方 ID 猜测父目录，也没有授予应用本身并不持有的父目录权限。
+
+定位回归在旧实现上 **9 项中 8 项失败**，修复后 **9 项全部通过**。最终定向执行定位、书架、设置、版本和更新页面回归 **37 项，0 失败／错误／跳过**。`assembleDebug`、`assembleDebugAndroidTest`、`assembleRelease`、`lintDebug`、`lintRelease` 成功；两种构建 lint 各为 **0 错误／致命错误、64 警告、4 提示**。实际系统文件管理器导航测试已加入 Android 测试包并编译；电脑缺少模拟器硬件加速，软件启动也未完成，**尚未执行该设备测试或真机验收**。没有将模拟的 Intent 断言作为手机跳转成功的证据。
+
+本地安装包：[ERead-1.11.18-release.apk](../android/ERead-1.11.18-release.apk)，**41,387,795 字节**，SHA-256 `7d9f0c7a52f1b1eb27b25bd84aa458f3b3c6b49f3045e1d122d55534e6b04949`。不可调试 Release 构建，zipalign 和签名校验通过，沿用原签名，可覆盖安装。构建日志与打包审计分别为 `app/.tools/location-1118/build.log`、`app/.tools/location-1118/package-report.json`。线上更新清单和已发布的 1.11.17 安装包保持不变；99 份 Windows 工作文件和 6 份本地交接文档经摘要核对未修改。
+
 ## 1.11.17 正式版发布（2026-10-27）
 
 已发布 [E阅 1.11.17](https://github.com/byonesheart/ERead/releases/tag/v1.11.17)，内部版本号 **61**。安装包为不可调试 Release 构建，沿用原签名，可覆盖安装。包含 1.11.15、1.11.16 的未发布功能，以及按作者最后更正的贴底固定弹层、内部滚动和紧凑菜单。

@@ -3,6 +3,8 @@ package com.eyue.reader.ui
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -24,7 +26,14 @@ import java.io.File
 internal fun bookFileManagerIntent(context: Context, book: Book): Intent? {
     if (book.cloudOnly || book.isDemo) return null
     val original = book.sourceUri?.let(Uri::parse)
-    val document = original?.takeIf { it.scheme == "content" && DocumentsContract.isDocumentUri(context, it) }
+    val document = original?.takeIf { it.scheme == "content" }?.let { uri ->
+        when {
+            DocumentsContract.isDocumentUri(context, uri) -> uri
+            DocumentsContract.isTreeUri(uri) -> DocumentsContract.buildDocumentUriUsingTree(uri,
+                DocumentsContract.getTreeDocumentId(uri)).takeIf { DocumentsContract.isDocumentUri(context, it) }
+            else -> null
+        }
+    }
         ?: run {
             val path = if (original?.scheme == "file") original.path else book.sourcePath
             val file = path?.let { runCatching { File(it).canonicalFile }.getOrNull() } ?: return null
@@ -38,8 +47,21 @@ internal fun bookFileManagerIntent(context: Context, book: Book): Intent? {
                 }
             } ?: return null
         }
-    return Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
-        .putExtra(DocumentsContract.EXTRA_INITIAL_URI, document).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    // DocumentsUI resolves the document's provider path, opening its parent for a file
+    // or the folder itself for a directory. A picker initial-URI hint can be ignored.
+    val intent = Intent(Intent.ACTION_VIEW).setDataAndType(document, DocumentsContract.Document.MIME_TYPE_DIR)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    val packages = context.packageManager
+    val navigators = packages.queryIntentActivities(Intent(Intent.ACTION_OPEN_DOCUMENT)
+        .addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), PackageManager.MATCH_DEFAULT_ONLY)
+        .filter { it.activityInfo.applicationInfo.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0 }
+        .map { it.activityInfo.packageName }.toSet()
+    // The reader also accepts comic-folder VIEW intents. Target the system document
+    // navigator explicitly so this never reimports the folder or invokes a generic viewer.
+    val target = packages.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY).firstOrNull {
+        it.activityInfo.exported && it.activityInfo.packageName != context.packageName && it.activityInfo.packageName in navigators
+    } ?: return null
+    return intent.setClassName(target.activityInfo.packageName, target.activityInfo.name)
 }
 
 @Composable internal fun BookLocationDialog(book: Book, onDismiss: () -> Unit) {
@@ -57,7 +79,7 @@ internal fun bookFileManagerIntent(context: Context, book: Book): Intent? {
                 SelectionContainer { Text(book.sourceUri, style = MaterialTheme.typography.bodySmall) }
             }
             if (intent == null && !book.cloudOnly && !book.isDemo)
-                Text("应用私有目录或此文档提供方不支持直接定位，可复制位置。", style = MaterialTheme.typography.bodySmall)
+                Text("此位置或系统文件管理器不支持直接定位，可复制位置。", style = MaterialTheme.typography.bodySmall)
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
     }, confirmButton = {
