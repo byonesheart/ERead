@@ -1,0 +1,24 @@
+{
+  "versionCode": 58,
+  "versionName": "1.11.14",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.14-release",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.14-release/ERead-1.11.14-release.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1w0CJJB-76FLVzgI5oCzncw?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/92fbea605f12",
+      "extractionCode": "b18W"
+    }
+  ],
+  "changelog": [
+    "新增 TXT／EPUB／MOBI 竖排文字模式。",
+    "优化 EPUB／MOBI 字体、背景与简繁切换。",
+    "统一三列书架对齐，支持查看书籍位置。",
+    "更多功能请自行体验。"
+  ]
+}

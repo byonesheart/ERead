@@ -36,13 +36,13 @@ https://raw.githubusercontent.com/byonesheart/ERead/main/update.json
 版本依据 Android 的 `versionCode` 比较，不自动下载或安装。先准备并测试对应安装包，再发布更新信息：
 
 1. 在仓库根目录下的 `app/app/build.gradle.kts` 增加 `versionCode`，设置 `versionName`。
-2. 从 `app/` 工程目录执行 `scripts/build.ps1`（仓库根路径为 `app/scripts/build.ps1`），验证仓库 `release/android/ERead-版本-debug.apk`；发布源码包也存放于 `release/android/`，设备测试包保留在 Android 模块的构建目录。
+2. 从 `app/` 工程目录执行 `scripts/build.ps1 -Tasks @('assembleRelease','lintRelease')`（仓库根路径为 `app/scripts/build.ps1`），使用原签名密钥为 `app/build/outputs/apk/release/app-release-unsigned.apk` 签名，汇总为仓库 `release/android/ERead-版本-release.apk` 并核验不可调试属性及签名；发布源码包也存放于 `release/android/`，设备测试包保留在 Android 模块的构建目录。
 3. 打开 [创建 Release](https://github.com/byonesheart/ERead/releases/new)，填写标签（例如 `v1.9.5`）、名称及核心更新日志，上传对应 APK 后发布，同时更新网盘内的安装包。
 4. 更新共用目录中的 `release/update.json`，同步根目录 `update.json` 兼容副本和 `release/docs/releases/update-版本.json` 版本记录；同时更新 `release/README.md`、`release/CHANGELOG.md` 及 Release 说明，再提交并推送。清单中的版本、Release 页面、APK 下载链接和 `mirrors` 网盘链接及提取码必须与实际发布内容一致。
 
-当前 `1.11.14` 对应标签为 `v1.11.14`，附件名为 `ERead-1.11.14-debug.apk`。发布前可先保存 Release 草稿；不要让更新文件指向尚未上传的安装包。
+当前 `1.11.14` 正式版使用 versionCode **58**，对应标签为 `v1.11.14-release`，附件名为 `ERead-1.11.14-release.apk`；源码附件为 `ERead-1.11.14-release-source.zip`。此前 `v1.11.14` 的测试构建和标签保留，不改写。发布前可先保存 Release 草稿；不要让更新文件指向尚未上传的安装包。
 
-本版清单见 [update-1.11.14.json](releases/update-1.11.14.json)，[共用更新清单](../update.json) 与 [根目录兼容清单](../../update.json) 在安装包公开后同步。发布时先上传安装包、源码包并发布 Release，确认附件完整后，再推送主分支的新清单，避免提前宣告尚未发布的安装包。GitHub 登录授权有效时，可自动完成这套流程。网盘使用已授权的上传分享工具，将 APK 存入百度和夸克的 `/项目/E阅`，百度提取码为 `READ`，校验实际分享结果后同步根目录 `README.md` 的下载表、Release 和更新清单。
+本版清单见 [update-1.11.14-release.json](releases/update-1.11.14-release.json)，[共用更新清单](../update.json) 与 [根目录兼容清单](../../update.json) 在安装包公开后同步。发布时先上传安装包、源码包并发布 Release，确认附件完整后，再推送主分支的新清单，避免提前宣告尚未发布的安装包。GitHub 登录授权有效时，可自动完成这套流程。网盘使用已授权的上传分享工具，将 APK 存入百度和夸克的 `/项目/E阅`，百度提取码为 `READ`，校验实际分享结果后同步根目录 `README.md` 的下载表、Release 和更新清单。
 
 文档与许可证副本位于 `release/docs/`，共用图片位于 `release/assets/`，宣传原始素材位于 `release/marketing/`。Windows 安装包使用 `release/windows/`，并需另行设计平台与架构明确的更新清单；不要将 Android 清单中的 APK 链接替换为 Windows 产物。
 
@@ -50,4 +50,4 @@ https://raw.githubusercontent.com/byonesheart/ERead/main/update.json
 
 ## 安装签名
 
-目前提供调试签名 APK。现有设备覆盖安装需要使用相同签名；换电脑或使用 CI 新生成的调试密钥，可能无法覆盖以前安装的版本。请私下保留原签名密钥；任何签名私钥、密码或凭据都不要上传至公开仓库。未来改用发布签名时，需另行安排安装迁移。
+正式下载使用不可调试的 **Release 构建**。为保持覆盖升级兼容，签名证书仍沿用最初的 Android Debug 证书；Release 构建不等于更换证书。Gradle 生成的 Release APK 默认未签名，公开前须用原密钥签名并验证。现有设备覆盖安装需要使用相同签名；换电脑或使用 CI 新生成的调试密钥，可能无法覆盖以前安装的版本。请私下保留原签名密钥；任何签名私钥、密码或凭据都不要上传至公开仓库。未来改用发布签名时，需另行安排安装迁移。
