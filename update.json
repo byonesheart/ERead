@@ -1,24 +1,22 @@
 {
-  "versionCode": 61,
-  "versionName": "1.11.17",
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.17",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.17/ERead-1.11.17-release.apk",
+  "versionCode": 62,
+  "versionName": "1.11.18",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.18",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.18/ERead-1.11.18-release.apk",
   "mirrors": [
     {
       "name": "百度网盘",
-      "url": "https://pan.baidu.com/s/1r77J0hgJIkJqZE4IVwU2ag?pwd=READ",
+      "url": "https://pan.baidu.com/s/1f6zl5A-Nxt3LRf_6XQ2HCg?pwd=READ",
       "extractionCode": "READ"
     },
     {
       "name": "夸克网盘",
-      "url": "https://pan.quark.cn/s/f8bef0405008",
-      "extractionCode": "JvKv"
+      "url": "https://pan.quark.cn/s/024075f81aca",
+      "extractionCode": "rfPZ"
     }
   ],
   "changelog": [
-    "优化 EPUB／MOBI 导入与全书缓存，阅读操作优先。",
-    "新增 PDF 裁边、点击翻页，扩展实体翻页键支持。",
-    "支持配置重命名与历史更新日志，修复书架菜单定位、段距及云端状态检测。",
+    "修复本地书籍在文件管理器中定位时跳到根目录的问题。",
     "更多功能请自行体验。"
   ]
 }
