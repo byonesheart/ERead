@@ -107,7 +107,7 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
         if (settings.tapPaging != TapPagingMode.OFF) Text("两侧区域翻页，中央区域开关工具栏。",
             style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
     }
-    if (pdf) ReaderSettingSection("PDF 裁边", trailing = {
+    if (pdf || raster || sourceCssAvailable) ReaderSettingSection("图片／PDF 裁边", trailing = {
         TextButton(onClick = { onSettings(settings.copy(pdfCrop = PdfCrop())) }, modifier = Modifier.testTag("reader_pdf_crop_reset")) { Text("重置") }
     }) {
         ReaderToggle("裁去页面边缘", settings.pdfCrop.enabled, Modifier.testTag("reader_pdf_crop_enabled")) {
@@ -116,13 +116,13 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
         if (settings.pdfCrop.enabled) {
             val crop = settings.pdfCrop
             listOf("左" to crop.left, "右" to crop.right, "上" to crop.top, "下" to crop.bottom).forEach { (label, value) ->
-                ReaderAdjustableSlider("${label}边", "PDF ${label}侧裁边", value, 0f..0.4f, .01f, { amount ->
+                ReaderAdjustableSlider("${label}边", "图片${label}侧裁边", value, 0f..0.4f, .01f, { amount ->
                     val changed = when (label) { "左" -> crop.copy(left = amount); "右" -> crop.copy(right = amount)
                         "上" -> crop.copy(top = amount); else -> crop.copy(bottom = amount) }
                     onSettings(settings.copy(pdfCrop = changed))
                 }, { "${(it * 100).roundToInt()}%" })
             }
-            Text("仅调整显示范围，保留原 PDF 文件。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+            Text("适用于漫画页面和正文插图，仅调整显示，不修改原文件。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
         }
     }
     if (!raster) ReaderSettingSection("文字与排版") {

@@ -85,6 +85,7 @@ data class Annotation(
 data class ImportedFont(val name: String, val path: String)
 data class ChapterRulePreset(val id: String = UUID.randomUUID().toString(), val name: String, val pattern: String)
 
+// Shared by reader images and PDF pages; retain the legacy name/key for existing backups.
 data class PdfCrop(val enabled: Boolean = false, val left: Float = 0f, val right: Float = 0f,
                    val top: Float = 0f, val bottom: Float = 0f) {
     fun normalized(): PdfCrop {

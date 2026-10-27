@@ -452,6 +452,8 @@ internal fun rememberEbookConfig(settings: ReaderSettings, foreground: Color, du
         JSONObject().put("mode", settings.readingMode.name).put("turn", settings.pageTurnStyle.name)
             .put("authorCss", settings.useSourceCss).put("dual", dualPage).put("eink", einkMode)
             .put("vertical", settings.verticalText)
+            .put("imageCrop", settings.pdfCrop.normalized().let { crop -> JSONObject().put("enabled", crop.enabled)
+                .put("left", crop.left).put("right", crop.right).put("top", crop.top).put("bottom", crop.bottom) })
             .put("fontSize", settings.fontSize * calibration.sizeScale * fontScale)
             .put("lineHeight", settings.fontSize * settings.lineHeight * fontScale)
             .put("letterSpacing", (settings.letterSpacing + settings.fontSize * calibration.trackingEm) * fontScale)

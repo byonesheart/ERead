@@ -25,6 +25,7 @@ const config = {mode:'SCROLL',turn:'SLIDE',authorCss:true,fontSize:19,lineHeight
 const browser = await chromium.launch({headless:true,executablePath:process.env.EREAD_BROWSER || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'});
 const page = await browser.newPage({viewport:{width:392,height:760},hasTouch:true});
 const results=[],errors=[];
+let cropFixture = false;
 page.on('pageerror', error => errors.push(error.message));
 page.on('console', message => { if(message.type()==='error')console.log('BROWSER '+message.text()); });
 const requests=[];
@@ -40,7 +41,7 @@ await page.addInitScript(()=>{
 });
 function envelope(body,script,options,frames=false) {
   const csp=`default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-test'; img-src https://eread.local data:; font-src https://eread.local; frame-src ${frames?'https://eread.local':"'none'"}`;
-  return `<html data-eread-loading><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html[data-eread-loading] body{opacity:0!important}</style></head><body>${body}<script nonce="test">${script}\nERead.init(${JSON.stringify(options).replaceAll('<','\\u003c')});</script></body></html>`;
+  return `<!doctype html><html data-eread-loading><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html[data-eread-loading] body{opacity:0!important}</style></head><body>${body}<script nonce="test">${script}\nERead.init(${JSON.stringify(options).replaceAll('<','\\u003c')});</script></body></html>`;
 }
 await page.route('https://eread.local/**',async route=>{
   const url=new URL(route.request().url()),match=url.pathname.match(/^\/chapters\/(\d+)\.html$/);
@@ -48,8 +49,10 @@ await page.route('https://eread.local/**',async route=>{
     config,initialNavigation:{type:'navigate',chapter:0,offset:0},chapters:chapters.map((c,i)=>({title:`第${i}章`,length:c.canonical.length}))
   },true)});
   if(match){const index=Number(match[1]),chapter=chapters[index];return route.fulfill({contentType:'text/html',body:envelope(
-    `<style>.same{color:${chapter.color}} p{line-height:35px}</style>`+chapter.body,childScript,{canonical:chapter.canonical,
-      config:{...config,continuous:true},images:[],noteTargets:['#note'],notes:[],decorations:{annotations:[],search:'',spokenStart:-1,spokenEnd:-1}})});}
+    `<style>.same{color:${chapter.color}} p{line-height:35px}</style>`+
+      (cropFixture && index===0 ? '<img id="crop-image" style="display:block;width:320px;height:240px" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22320%22 height=%22240%22%3E%3Crect width=%22320%22 height=%22240%22 fill=%22green%22/%3E%3C/svg%3E">' : '')+
+      chapter.body,childScript,{canonical:chapter.canonical,
+      config:{...config,continuous:true},images:cropFixture && index===0 ? [{offset:0,path:'/book/crop-image.svg'}] : [],noteTargets:['#note'],notes:[],decorations:{annotations:[],search:'',spokenStart:-1,spokenEnd:-1}})});}
   return route.fulfill({status:404,body:''});
 });
 async function test(name,run){try{const evidence=await run();results.push({name,passed:true,evidence});console.log('PASS '+name)}catch(error){
@@ -178,6 +181,30 @@ try{
    const state=await page.evaluate(()=>events.filter(e=>e.type==='viewport').at(-1));
    assert.equal(state.chapter,5);assert.ok(state.offset<=offset+2&&state.endOffset>offset);
    assert.ok(await page.evaluate(()=>document.querySelectorAll('iframe').length<=3));return state;
+ });
+ await test('image-crop-updates-continuous-frame-heights-and-preserves-navigation',async()=>{
+   cropFixture=true;await page.goto('https://eread.local/root.html');await ready(0);
+   const child=page.frames().find(frame=>/\/0\.html/.test(frame.url()));
+   const before=await child.locator('#crop-image').boundingBox();
+   const beforeHeight=await page.locator('iframe[data-chapter="0"]').evaluate(frame=>frame.offsetHeight);
+   await page.evaluate(config=>ERead.command({type:'configure',config}),{...config,imageCrop:{enabled:true,left:0,right:0,top:.2,bottom:.2}});
+   await page.waitForFunction(()=>{
+     const child=document.querySelector('iframe[data-chapter="0"]').contentDocument;
+     return Math.abs(child.querySelector('#crop-image').parentElement.getBoundingClientRect().height-144)<1;
+   });
+   const measured=await page.evaluate(()=>{
+     const frame=document.querySelector('iframe[data-chapter="0"]'),body=frame.contentDocument.body;
+     return {frame:frame.offsetHeight,body:body.offsetHeight,scroll:body.scrollHeight,viewport:frame.contentWindow.innerHeight};
+   });
+   assert.ok(measured.frame<beforeHeight-90,`Cropped chapter must shrink its frame: ${JSON.stringify({beforeHeight,...measured})}`);
+   const cropped=await child.locator('#crop-image').evaluate(node=>({height:node.parentElement.getBoundingClientRect().height,source:node.getAttribute('src')}));
+   assert.equal(before.height,240);assert.equal(cropped.height,144);
+   await jump(1,chapters[1].canonical.indexOf(chapters[1].paragraphs[5]));
+   assert.equal((await page.evaluate(()=>events.filter(e=>e.type==='viewport').at(-1))).chapter,1);
+   await page.evaluate(config=>ERead.command({type:'configure',config}),config);await jump(0);
+   await page.waitForFunction(()=>document.querySelector('iframe[data-chapter="0"]').contentDocument.querySelector('#crop-image').getBoundingClientRect().height===240);
+   assert.ok(await page.evaluate(()=>document.querySelectorAll('iframe').length<=3));
+   return {beforeHeight,cropped,restoredHeight:240};
  });
 }catch(error){
  console.log(JSON.stringify(await page.evaluate(()=>({events:window.events,scroll:scrollY,frames:Array.from(document.querySelectorAll('iframe')).map(f=>({src:f.src,height:f.offsetHeight,ready:f.contentDocument?.readyState,reader:!!f.contentWindow?.ERead,text:f.contentDocument?.body?.textContent.slice(-180)}))})),null,2));

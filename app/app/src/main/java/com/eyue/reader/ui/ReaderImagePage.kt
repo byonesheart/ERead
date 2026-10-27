@@ -60,6 +60,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlin.math.sqrt
+import kotlin.math.roundToInt
 
 private val readerBitmapCache = object : LruCache<String, Bitmap>(minOf(Runtime.getRuntime().maxMemory() / 16, 12L * 1024 * 1024).toInt()) {
     override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
@@ -81,7 +82,7 @@ internal fun ReaderImagePage(
     pdfCrop: PdfCrop = PdfCrop(), onPageTap: ((Float, Float) -> Unit)? = null
 ) {
     val context = LocalContext.current
-    val crop = if (source.pdfPage >= 0 && pdfCrop.enabled) pdfCrop.normalized() else PdfCrop()
+    val crop = if (pdfCrop.enabled) pdfCrop.normalized() else PdfCrop()
     val cacheKey = "${source.path}:${source.pdfPage}:${targetWidth.coerceAtMost(1600)}:$crop"
     var bitmap by remember(cacheKey) { mutableStateOf<Bitmap?>(null) }
     var failure by remember(cacheKey) { mutableStateOf<String?>(null) }
@@ -183,11 +184,11 @@ internal fun ReaderImagePage(
 }
 
 internal fun decodeReaderPage(context: Context, source: PageSource, targetWidth: Int, pdfCrop: PdfCrop = PdfCrop()): Bitmap {
+    val crop = if (pdfCrop.enabled) pdfCrop.normalized() else PdfCrop()
     if (source.pdfPage >= 0) {
         return withDocumentDescriptor(context, source.path) { descriptor ->
             PdfRenderer(descriptor).use { renderer ->
                 renderer.openPage(source.pdfPage).use { page ->
-                    val crop = if (pdfCrop.enabled) pdfCrop.normalized() else PdfCrop()
                     val visibleWidth = page.width * (1f - crop.left - crop.right)
                     val visibleHeight = page.height * (1f - crop.top - crop.bottom)
                     val scale = minOf(targetWidth.toFloat() / visibleWidth, 3200f / visibleHeight,
@@ -221,10 +222,17 @@ internal fun decodeReaderPage(context: Context, source: PageSource, targetWidth:
         ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
         ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.setRotate(-90f); matrix.postScale(-1f, 1f) }
         ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
-        else -> return@withLocalDocument decoded
+        else -> Unit
     }
-    Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true).also {
+    val oriented = if (matrix.isIdentity) decoded else Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true).also {
         if (it !== decoded) decoded.recycle()
+    }
+    val left = (oriented.width * crop.left).roundToInt().coerceIn(0, oriented.width - 1)
+    val top = (oriented.height * crop.top).roundToInt().coerceIn(0, oriented.height - 1)
+    val right = (oriented.width * (1f - crop.right)).roundToInt().coerceIn(left + 1, oriented.width)
+    val bottom = (oriented.height * (1f - crop.bottom)).roundToInt().coerceIn(top + 1, oriented.height)
+    Bitmap.createBitmap(oriented, left, top, right - left, bottom - top).also {
+        if (it !== oriented) oriented.recycle()
     }
     }
 }

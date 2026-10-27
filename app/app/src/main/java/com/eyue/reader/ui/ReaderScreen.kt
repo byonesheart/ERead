@@ -1438,7 +1438,7 @@ internal fun ReaderScreen(
                                 ReaderImagePage(PageSource(image.path), textWidth, false, foreground,
                                     onTap = { tapImage(sourceChapter, index, page.start, image.path) }, onLongPress = { inlineImageSelection(sourceChapter, index, page) }, markColor = color,
                                     onPageTap = { x, y -> tapImage(sourceChapter, index, page.start, image.path, x, y) },
-                                    modifier = Modifier.then(imageTapObserver).testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode)
+                                    modifier = Modifier.then(imageTapObserver).testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode, pdfCrop = settings.pdfCrop)
                             } else ReaderSelectableText(rememberReaderAnnotatedPage(renderDocument.text.getOrNull(sourceChapter).orEmpty(), page, book.id, sourceChapter, annotations, highlightQuery,
                                 colors.primaryContainer, settings.nightMode, renderDocument.sourceStyles.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
                                 renderChapters.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty()), textStyle, sourceChapter, index, page.start, selectionReset,
@@ -1492,7 +1492,7 @@ internal fun ReaderScreen(
                                     onPageTap = { x, y -> if (interactive) tapImage(sourceChapter, sourcePage, page.start, image.path, x, y) },
                                     onLongPress = { if (interactive) inlineImageSelection(sourceChapter, sourcePage, page) }, markColor = color,
                                     modifier = Modifier.padding(readerContentPadding(settings)).then(imageTapObserver)
-                                        .testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode)
+                                        .testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode, pdfCrop = settings.pdfCrop)
                             } else ReaderSelectableText(rememberReaderAnnotatedPage(sourceText, page, book.id, sourceChapter, annotations, highlightQuery,
                                 colors.primaryContainer, settings.nightMode, renderDocument.sourceStyles.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
                                 renderChapters.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty()), textStyle, sourceChapter, sourcePage, page.start, selectionReset,

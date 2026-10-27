@@ -9,6 +9,7 @@
     let stableOffset = 0;
     let configurationGeneration = 0, activeFont = null;
     const loadedFonts = new Map(), sourceMappings = [];
+    const imageCrops = new Map();
     const rangeGeometry = new Map();
     let lastBridgeReport = 0;
     const readerStyle = document.createElement('style');
@@ -108,6 +109,66 @@
     }
     function bounds(rect) { return {left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom}; }
     function visible(rect) { const view = viewBounds(); return rect.right > 0 && rect.left < innerWidth && rect.bottom > view.top && rect.top < view.bottom; }
+    function imageCropTarget(node) {
+        let target = node.closest('svg') || node;
+        while (target.ownerSVGElement) target = target.ownerSVGElement;
+        return target;
+    }
+    function imageBounds(image) {
+        const target = imageCropTarget(image.node), crop = imageCrops.get(target);
+        if (!crop) return image.node.getBoundingClientRect();
+        const frame = crop.frame.getBoundingClientRect();
+        if (target === image.node) return frame;
+        const rect = image.node.getBoundingClientRect();
+        const left = Math.max(frame.left, rect.left), right = Math.min(frame.right, rect.right);
+        const top = Math.max(frame.top, rect.top), bottom = Math.min(frame.bottom, rect.bottom);
+        return right > left && bottom > top ? {left, right, top, bottom, width:right-left, height:bottom-top} :
+            {left:0, right:0, top:0, bottom:0, width:0, height:0};
+    }
+    function applyImageCrop() {
+        function restore(node, style) {
+            if (style === null) node.removeAttribute('style'); else node.setAttribute('style', style);
+        }
+        imageCrops.forEach((state, node) => {
+            if (state.created) state.frame.replaceWith(node); else restore(state.frame, state.frameStyle);
+            restore(node, state.style);
+        });
+        imageCrops.clear();
+        const crop = config.imageCrop;
+        if (!crop || !crop.enabled) return;
+        const margin = key => Number.isFinite(Number(crop[key])) ? Math.max(0, Math.min(.4, Number(crop[key]))) : 0;
+        const left = margin('left'), right = margin('right'), top = margin('top'), bottom = margin('bottom');
+        if (!(left || right || top || bottom)) return;
+        const widthRatio = 1 - left - right, heightRatio = 1 - top - bottom;
+        const maxHeight = Math.max(32, viewBounds().height - config.top - config.bottom);
+        // Measure the original layout in one batch before writing any crop frames.
+        // Keep img/srcset and SVG nodes intact, so resource loading and text offsets do not change.
+        const layout = Array.from(document.body.querySelectorAll('img,svg')).filter(node => !node.parentElement.closest('svg')).map(node => {
+            const rect = node.getBoundingClientRect(), style = getComputedStyle(node);
+            const height = node.naturalWidth > 0 ? rect.width * node.naturalHeight / node.naturalWidth : rect.height;
+            if (!(rect.width > 0 && height > 0)) return null;
+            const scale = Math.min(1 / widthRatio, maxHeight / (height * heightRatio));
+            const picture = node.parentElement.tagName === 'PICTURE' ? node.parentElement : null;
+            const properties = Object.fromEntries(['margin-left', 'margin-right', 'margin-top', 'margin-bottom', 'float',
+                'vertical-align', 'align-self', 'justify-self', 'order', 'z-index'].map(key => [key, style.getPropertyValue(key)]));
+            properties.display = style.display === 'block' ? 'block' : 'inline-block';
+            properties.position = style.position === 'static' ? 'relative' : style.position;
+            if (style.position !== 'static') ['top', 'right', 'bottom', 'left'].forEach(key => properties[key] = style.getPropertyValue(key));
+            return {node, picture, properties, width:rect.width * scale, height:height * scale};
+        }).filter(Boolean);
+        layout.forEach(item => {
+            const node = item.node, frame = item.picture || document.createElement('span');
+            imageCrops.set(node, {frame, created:!item.picture, style:node.getAttribute('style'), frameStyle:frame.getAttribute('style')});
+            if (!item.picture) { node.before(frame); frame.appendChild(node); frame.dataset.ereadImageCrop = '1'; }
+            Object.entries(Object.assign(item.properties, {overflow:'hidden', width:item.width * widthRatio + 'px',
+                height:item.height * heightRatio + 'px', 'max-width':'100%', 'box-sizing':'content-box', 'break-inside':'avoid'}))
+                .forEach(([key, value]) => frame.style.setProperty(key, value, 'important'));
+            Object.entries({position:'absolute', width:item.width + 'px', height:item.height + 'px',
+                left:-item.width * left + 'px', top:-item.height * top + 'px', right:'auto', bottom:'auto',
+                'max-width':'none', 'max-height':'none', 'min-width':'0', 'min-height':'0', margin:'0', 'box-sizing':'border-box'})
+                .forEach(([key, value]) => node.style.setProperty(key, value, 'important'));
+        });
+    }
     function domPoint(offset, end) {
         if (!characters.length) return {node: document.body, offset: 0};
         let index = lowerBound(characters, Math.max(0, Math.min(canonical.length, offset)));
@@ -192,7 +253,7 @@
             });
         });
         images.forEach(image => {
-            if (visible(image.node.getBoundingClientRect())) {
+            if (visible(imageBounds(image))) {
                 shownImages.push(image.path); points.push(image.offset);
             }
         });
@@ -240,7 +301,7 @@
         finishPageAnimation();
         const targetImage = command.image && images.find(image => image.path === command.image);
         const range = targetImage ? null : rangeFor(command.offset || 0, Math.min(canonical.length, (command.offset || 0) + 1));
-        const rect = targetImage ? targetImage.node.getBoundingClientRect() : range.getBoundingClientRect();
+        const rect = targetImage ? imageBounds(targetImage) : range.getBoundingClientRect();
         navigationAnchor = {offset: command.offset || 0, image: command.image};
         if (continuousHost) {
             measureChapter();
@@ -416,6 +477,7 @@
             node.style.setProperty('margin-block-start', '0px', 'important');
             node.style.setProperty('margin-block-end', Math.max(0, Number(config.paragraphGap) || 0) + 'px', 'important');
         });
+        applyImageCrop();
         fitPageBoundary();
         measureChapter();
         if (anchor && (!continuousHost || continuousHost.isActive(frameChapter)))
@@ -440,7 +502,7 @@
         const result = [];
         (decorations.annotations || []).forEach(item => {
             const image = item.image && images.find(image => image.path === item.image);
-            const rects = image ? [image.node.getBoundingClientRect()].filter(visible) : rectsFor(item.start, item.end);
+            const rects = image ? [imageBounds(image)].filter(visible) : rectsFor(item.start, item.end);
             rects.forEach(rect => result.push({item: item, rect: rect}));
         });
         return result;
@@ -599,6 +661,7 @@
             const resourceReady = function () {
                 if (!started) return;
                 rangeGeometry.clear();
+                applyImageCrop();
                 if (continuousHost) { measureChapter(); report(true); return; }
                 fitPageBoundary();
                 navigate(navigationAnchor || {offset:stableOffset});
@@ -613,6 +676,7 @@
             })));
             requestAnimationFrame(function () {
                 try {
+                    applyImageCrop();
                     fitPageBoundary();
                     measureChapter();
                     if (options.initialNavigation) navigate(options.initialNavigation);
@@ -661,12 +725,12 @@
     document.addEventListener('touchstart', function (event) {
         if (!started || event.touches.length !== 1) return;
         finishPageAnimation();
-        touch = {x:event.touches[0].clientX, y:event.touches[0].clientY, time:Date.now(), moved:false, image:event.target.closest('img,svg'),
+        touch = {x:event.touches[0].clientX, y:event.touches[0].clientY, time:Date.now(), moved:false, image:event.target.closest('img,image,svg'),
             startAtStart: scrollY <= 1, startAtEnd: scrollY + innerHeight >= document.documentElement.scrollHeight - 1};
         clearTimeout(selectionTimer);
         if (touch.image) selectionTimer = setTimeout(function () {
             const image = images.find(image => image.node === touch.image || touch.image.contains(image.node));
-            if (image && touch && !touch.moved) { touch.long = true; suppressClickUntil = Date.now() + 1000; send('selection', Object.assign({start:image.offset, end:image.offset, image:image.path, page:pageIndex()}, bounds(image.node.getBoundingClientRect()))); }
+            if (image && touch && !touch.moved) { touch.long = true; suppressClickUntil = Date.now() + 1000; send('selection', Object.assign({start:image.offset, end:image.offset, image:image.path, page:pageIndex()}, bounds(imageBounds(image)))); }
         }, 500);
     }, {passive:true});
     document.addEventListener('touchmove', function (event) {

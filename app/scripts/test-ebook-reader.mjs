@@ -398,6 +398,71 @@ try {
     return { state, imageState, overlayCount: overlay.length };
   });
 
+  for (const mode of ['SCROLL', 'PAGED', 'VERTICAL_PAGED']) for (const kind of ['image', 'picture', 'svg']) {
+    await test(`image-crop-${mode.toLowerCase()}-${kind}`, async () => {
+      const drawing = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><rect width="320" height="240" fill="red"/><rect x="40" y="24" width="200" height="168" fill="#00ff00"/></svg>';
+      const uri = 'data:image/svg+xml,' + encodeURIComponent(drawing);
+      const graphic = kind === 'image' ? `<img id="crop-image" style="display:block;width:320px;height:240px" src="${uri}">` :
+        kind === 'picture' ? `<picture><source srcset="${uri}"><img id="crop-image" style="display:block;width:320px;height:240px" src="${uri}"></picture>` :
+        `<svg id="crop-image" style="display:block;width:320px;height:240px" viewBox="0 0 320 240"><image width="320" height="240" href="${uri}"/></svg>`;
+      const source = { baseUrl:'https://eread.local/book/archive/crop.html', canonicalText:'图片之前\n\n图片之后',
+        html:`<!doctype html><html><head><style>p{margin:0}</style></head><body><p>图片之前</p><p style="line-height:0">${graphic}</p><p id="crop-after">图片之后</p></body></html>`,
+        images:[{offset:4,path:imageIdentity}],noteTargets:{} };
+      const config = {...baseConfig,mode,paragraphGap:0};
+      const crop = {enabled:true,left:.125,right:.25,top:.1,bottom:.2};
+      await open(config,{source});
+      const original = await page.locator('#crop-image').getAttribute('style');
+      async function geometry() { return page.evaluate(() => {
+        const image=document.getElementById('crop-image'),frame=image.parentElement,r=frame.getBoundingClientRect();
+        return {width:r.width,height:r.height,top:r.top,bottom:r.bottom,after:document.getElementById('crop-after').getBoundingClientRect().top,
+          scrollWidth:document.documentElement.scrollWidth,viewportWidth:innerWidth,
+          pictureSources:document.querySelectorAll('picture > source').length,pictureImage:!!document.querySelector('picture > img')};
+      }); }
+      await command({type:'configure',config:{...config,imageCrop:crop}});
+      const retained=await geometry();
+      assert.ok(Math.abs(retained.width-320)<1,'Cropping must retain the original fitted width');
+      assert.ok(Math.abs(retained.height-268.8)<1,'The retained pixels must determine the new layout height');
+      assert.ok(Math.abs(retained.after-retained.bottom)<2,'Cropping must not leave the old image space behind');
+      assert.equal((await viewport()).pages,1,'Clipped source pixels must not create blank pages');
+      assert.ok((await viewport()).images.includes(imageIdentity),'The cropped image must retain its stored identity');
+      if(kind==='picture') { assert.equal(retained.pictureSources,1);assert.equal(retained.pictureImage,true); }
+      await command({type:'decorate',decorations:{annotations:[{id:'crop-mark',image:imageIdentity,start:4,end:4,kind:'HIGHLIGHT',color:0xff194a75}]}});
+      const mark=await page.locator('#eread-overlays > i').first().boundingBox();
+      assert.ok(Math.abs(mark.width-retained.width)<1 && Math.abs(mark.height-retained.height)<1,'Image marks must follow the cropped surface');
+      await command({type:'decorate',decorations:{annotations:[]}});
+      await page.screenshot({path:path.join(outputDir,`crop-retained-${mode.toLowerCase()}-${kind}.png`)});
+      await command({type:'configure',config:{...config,authorCss:false,imageCrop:crop}});
+      assert.ok(Math.abs((await geometry()).height-retained.height)<1,'Repeated configuration must not crop the image twice');
+      await command({type:'configure',config:{...config,imageCrop:{...crop,enabled:false}}});
+      assert.equal(await page.locator('#crop-image').getAttribute('style'),original,'Disabling crop must restore publisher styles');
+      const full=await page.locator('#crop-image').boundingBox();
+      assert.equal(full.width,320);assert.equal(full.height,240);
+      await open({...config,imageCrop:crop},{source});
+      assert.ok(Math.abs((await geometry()).height-retained.height)<1,'Initial loading must apply crop before showing the chapter');
+      return {retained,restored:full,kind,mode};
+    });
+  }
+
+  await test('image-crop-svg-composition-only-reports-visible-images', async () => {
+    const uri='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="green"/></svg>');
+    const source={baseUrl:'https://eread.local/book/archive/svg-crop.html',canonicalText:'',noteTargets:{},
+      images:[{offset:0,path:'/hidden.svg'},{offset:0,path:'/visible.svg'}],
+      html:`<!doctype html><html><head></head><body><svg style="display:block;width:320px;height:240px" viewBox="0 0 320 240"><image x="0" width="64" height="240" preserveAspectRatio="none" href="${uri}"/><image x="64" width="256" height="240" preserveAspectRatio="none" href="${uri}"/></svg></body></html>`};
+    await open({imageCrop:{enabled:true,left:.2,right:0,top:0,bottom:0}},{source});
+    const state=await viewport();
+    assert.deepEqual(state.images,['/visible.svg'],'Fully cropped SVG components must not be reported as visible');
+    await command({type:'decorate',decorations:{annotations:[{id:'visible-crop',image:'/visible.svg',start:0,end:0,kind:'HIGHLIGHT',color:0xff194a75}]}});
+    const rect=await page.locator('#eread-overlays > i').first().boundingBox();
+    assert.ok(Math.abs(rect.width-320)<1 && Math.abs(rect.height-300)<1,'The visible SVG component must use the retained frame bounds');
+    const session=await page.context().newCDPSession(page);
+    await session.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:100,y:100}]});
+    await page.waitForFunction(()=>events.some(event=>event.type==='selection'));
+    await session.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+    const selected=await page.evaluate(()=>events.findLast(event=>event.type==='selection'));
+    assert.equal(selected.image,'/visible.svg','Long pressing must select the visible SVG component');
+    return {state,rect,selected};
+  });
+
   for (const mode of ['PAGED', 'VERTICAL_PAGED']) {
     await test(`${mode.toLowerCase()}-partial-last-page-keeps-margins`, async () => {
       await open({ mode, authorCss: false, left: 31, right: 47, top: 23, bottom: 37 });

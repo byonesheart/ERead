@@ -64,11 +64,27 @@ class ReaderCompactSettingsRobolectricTest {
         compose.onNodeWithTag("reader_tap_horizontal").performScrollTo().performClick().assertIsSelected()
         compose.runOnIdle { assertEquals(com.eyue.reader.data.TapPagingMode.HORIZONTAL, settings.tapPaging) }
         compose.onNode(isToggleable() and hasAnyAncestor(hasTestTag("reader_pdf_crop_enabled"))).performScrollTo().performClick().assertIsOn()
-        compose.onNodeWithContentDescription("PDF 左侧裁边 增大").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("图片左侧裁边 增大").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(.01f, settings.pdfCrop.left, .0001f) }
         compose.onNodeWithTag("reader_pdf_crop_reset").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(com.eyue.reader.data.PdfCrop(), settings.pdfCrop) }
         compose.onNode(isToggleable() and hasAnyAncestor(hasTestTag("reader_pdf_crop_enabled"))).assertIsOff()
+    }
+
+    @Test fun imageAndEbookReadersExposeTheSameCropControlsWithoutRequiringAPdf() {
+        var settings by mutableStateOf(ReaderSettings())
+        var raster by mutableStateOf(true)
+        compose.setContent { MaterialTheme { Surface(Modifier.fillMaxWidth().height(500.dp)) {
+            ReaderCompactSettings(settings, raster, { settings = it }, {}, {}, sourceCssAvailable = !raster)
+        } } }
+        compose.onNode(isToggleable() and hasAnyAncestor(hasTestTag("reader_pdf_crop_enabled"))).performScrollTo().performClick()
+        compose.onNodeWithContentDescription("图片右侧裁边 增大").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(.01f, settings.pdfCrop.right, .0001f); raster = false }
+        compose.onNodeWithText("图片／PDF 裁边").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("图片下侧裁边 增大").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(.01f, settings.pdfCrop.bottom, .0001f) }
+        compose.onNodeWithTag("reader_pdf_crop_reset").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(com.eyue.reader.data.PdfCrop(), settings.pdfCrop) }
     }
 
     @Test fun ebookTypographyAndScrollSubSettingsStayWithTheirRelatedControls() {
@@ -203,9 +219,9 @@ class ReaderCompactSettingsRobolectricTest {
     @Test fun readingModesAreImmediatelyAvailableForComicsWithoutOpeningMoreSettings() {
         var settings by mutableStateOf(ReaderSettings())
         compose.setContent { MaterialTheme { ReaderCompactSettings(settings, true, { settings = it }, {}, {}) } }
-        val background = compose.onNodeWithText("背景").fetchSemanticsNode().boundsInRoot
-        val mode = compose.onNodeWithText("模式").fetchSemanticsNode().boundsInRoot
-        val brightness = compose.onNodeWithText("亮度").fetchSemanticsNode().boundsInRoot
+        val background = compose.onNodeWithText("背景").getUnclippedBoundsInRoot()
+        val mode = compose.onNodeWithText("模式").getUnclippedBoundsInRoot()
+        val brightness = compose.onNodeWithText("亮度").getUnclippedBoundsInRoot()
         assertTrue(mode.bottom <= background.top && background.bottom <= brightness.top)
         compose.onNodeWithTag("reader_mode_paged").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(ReadingMode.PAGED, settings.readingMode) }
