@@ -1,24 +1,24 @@
 {
-  "versionCode": 58,
-  "versionName": "1.11.14",
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.14-release",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.14-release/ERead-1.11.14-release.apk",
+  "versionCode": 61,
+  "versionName": "1.11.17",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.17",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.17/ERead-1.11.17-release.apk",
   "mirrors": [
     {
       "name": "百度网盘",
-      "url": "https://pan.baidu.com/s/1w0CJJB-76FLVzgI5oCzncw?pwd=READ",
+      "url": "https://pan.baidu.com/s/1r77J0hgJIkJqZE4IVwU2ag?pwd=READ",
       "extractionCode": "READ"
     },
     {
       "name": "夸克网盘",
-      "url": "https://pan.quark.cn/s/92fbea605f12",
-      "extractionCode": "b18W"
+      "url": "https://pan.quark.cn/s/f8bef0405008",
+      "extractionCode": "JvKv"
     }
   ],
   "changelog": [
-    "新增 TXT／EPUB／MOBI 竖排文字模式。",
-    "优化 EPUB／MOBI 字体、背景与简繁切换。",
-    "统一三列书架对齐，支持查看书籍位置。",
+    "优化 EPUB／MOBI 导入与全书缓存，阅读操作优先。",
+    "新增 PDF 裁边、点击翻页，扩展实体翻页键支持。",
+    "支持配置重命名与历史更新日志，修复书架菜单定位、段距及云端状态检测。",
     "更多功能请自行体验。"
   ]
 }
