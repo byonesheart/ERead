@@ -1,22 +1,22 @@
 {
-  "versionCode": 62,
-  "versionName": "1.11.18",
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.18",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.18/ERead-1.11.18-release.apk",
+  "versionCode": 63,
+  "versionName": "1.11.19",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.19",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.19/ERead-1.11.19-release.apk",
   "mirrors": [
     {
       "name": "百度网盘",
-      "url": "https://pan.baidu.com/s/1f6zl5A-Nxt3LRf_6XQ2HCg?pwd=READ",
+      "url": "https://pan.baidu.com/s/1XG54bcE8rnWW4HQL2jO9IQ?pwd=READ",
       "extractionCode": "READ"
     },
     {
       "name": "夸克网盘",
-      "url": "https://pan.quark.cn/s/024075f81aca",
-      "extractionCode": "rfPZ"
+      "url": "https://pan.quark.cn/s/fb3a2323a73f",
+      "extractionCode": "KeR8"
     }
   ],
   "changelog": [
-    "修复本地书籍在文件管理器中定位时跳到根目录的问题。",
+    "图片、漫画文件夹及 EPUB／MOBI 正文插图均支持四边裁边与重置。",
     "更多功能请自行体验。"
   ]
 }
