@@ -1,22 +1,24 @@
 {
-  "versionCode": 63,
-  "versionName": "1.11.19",
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.19",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.19/ERead-1.11.19-release.apk",
+  "versionCode": 64,
+  "versionName": "1.11.20",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.20",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.20/ERead-1.11.20-release.apk",
   "mirrors": [
     {
       "name": "百度网盘",
-      "url": "https://pan.baidu.com/s/1XG54bcE8rnWW4HQL2jO9IQ?pwd=READ",
+      "url": "https://pan.baidu.com/s/1GqO3V97QBD2J0WNNLLQnLA?pwd=READ",
       "extractionCode": "READ"
     },
     {
       "name": "夸克网盘",
-      "url": "https://pan.quark.cn/s/fb3a2323a73f",
-      "extractionCode": "KeR8"
+      "url": "https://pan.quark.cn/s/b5b1dab2a5dc",
+      "extractionCode": "Uugs"
     }
   ],
   "changelog": [
-    "图片、漫画文件夹及 EPUB／MOBI 正文插图均支持四边裁边与重置。",
+    "新增可调速的自动滚动与自动翻页。",
+    "更新检查优先使用作者网站，失败后回退到 GitHub。",
+    "修复朗读切换同步后暂停、重读及跳回旧段落的问题。",
     "更多功能请自行体验。"
   ]
 }
