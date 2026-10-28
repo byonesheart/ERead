@@ -474,6 +474,71 @@ class ReaderNarrationInteractionRobolectricTest {
         assertTrue(voice.playing.value)
     }
 
+    @Test fun enablingSyncDuringIndependentPlaybackKeepsTheQueueRunningAfterEarlierNavigation() {
+        voice.resumable = true
+        showReader(ReadingMode.PAGED, follow = false)
+        startListening()
+        emit(0, paragraphOffset(0, 2) + 12)
+        val starts = voice.starts
+        val pauses = voice.pauses
+        compose.onNodeWithContentDescription("下一章").performClick()
+        await { position.get()?.chapter == 1 }
+        compose.onNodeWithText("同步").performClick()
+        advanceBy(1500)
+        assertTrue("Changing sync must not pause the active queue", voice.playing.value)
+        assertEquals(starts, voice.starts)
+        assertEquals(pauses, voice.pauses)
+        emit(0, paragraphOffset(0, 3) + 12)
+        await { position.get()?.chapter == 0 }
+        assertEquals(paragraphOffset(0, 3) + 12, position.get()?.offset)
+    }
+
+    @Test fun disablingSyncWhileNavigationIsPendingResumesTheOriginalQueueWithoutReplaying() {
+        voice.resumable = true
+        showReader(ReadingMode.PAGED, follow = true)
+        startListening()
+        emit(0, paragraphOffset(0, 2) + 12)
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithContentDescription("下一章").performClick()
+        await { position.get()?.chapter == 1 }
+        assertFalse(voice.playing.value)
+        compose.onNodeWithText("同步").performClick()
+        advanceBy(1500)
+        assertTrue("Disabling sync must not strand a queue paused for navigation", voice.playing.value)
+        assertEquals(1, voice.starts)
+        assertEquals(1, voice.resumes)
+        assertEquals(1, position.get()?.chapter)
+    }
+
+    @Test fun togglingSyncRepeatedlyDuringPlaybackNeverRestartsAnEarlierParagraph() {
+        voice.resumable = true
+        showReader(ReadingMode.PAGED, follow = false)
+        startListening()
+        val pauses = voice.pauses
+        for (paragraph in 1..4) {
+            val offset = paragraphOffset(0, paragraph) + 12
+            emit(0, offset)
+            compose.onNodeWithText("同步").performClick()
+            advanceBy(1500)
+            assertTrue(voice.playing.value)
+            assertEquals(1, voice.starts)
+            assertEquals(pauses, voice.pauses)
+        }
+    }
+
+    @Test fun disablingSyncNeverResumesAnExplicitUserPause() {
+        voice.resumable = true
+        showReader(ReadingMode.PAGED, follow = true)
+        startListening()
+        emit(0, paragraphOffset(0, 2) + 12)
+        compose.onNodeWithContentDescription("暂停朗读").performClick()
+        compose.onNodeWithText("同步").performClick()
+        advanceBy(1500)
+        assertFalse(voice.playing.value)
+        assertEquals(1, voice.starts)
+        assertEquals(0, voice.resumes)
+    }
+
     @Test fun enablingSyncAfterPausedNavigationKeepsTheNewPageUntilExplicitResume() {
         voice.resumable = true
         showReader(ReadingMode.PAGED, follow = false)

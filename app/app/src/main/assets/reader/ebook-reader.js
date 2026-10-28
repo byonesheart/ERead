@@ -6,6 +6,26 @@
     let navigationAnchor = null;
     let sourceNotes = [];
     let suppressClickUntil = 0;
+    let autoScrollFrame = 0, autoScrollSpeed = 0, autoScrollTime = 0, autoScrollRemainder = 0;
+    function setAutoScroll(speed) {
+        if (autoScrollFrame) automatic = false;
+        cancelAnimationFrame(autoScrollFrame); autoScrollFrame = 0; autoScrollTime = 0;
+        autoScrollRemainder = 0;
+        autoScrollSpeed = Number.isFinite(speed) && config.mode === 'SCROLL' ? Math.max(0, Math.min(160, speed)) : 0;
+        if (!autoScrollSpeed) return;
+        function tick(now) {
+            if (document.hidden || manual || touch) { setAutoScroll(0); return; }
+            const elapsed = autoScrollTime ? Math.min(50, now - autoScrollTime) / 1000 : 0;
+            autoScrollTime = now;
+            const maximum = Math.max(0, document.documentElement.scrollHeight - innerHeight);
+            if (scrollY >= maximum - .5) { setAutoScroll(0); send('chapterStep', {direction:1}); return; }
+            autoScrollRemainder += autoScrollSpeed * elapsed;
+            const distance = Math.floor(autoScrollRemainder); autoScrollRemainder -= distance;
+            if (distance) { automatic = true; scrollTo(0, Math.min(maximum, scrollY + distance)); schedule(); }
+            autoScrollFrame = requestAnimationFrame(tick);
+        }
+        autoScrollFrame = requestAnimationFrame(tick);
+    }
     let stableOffset = 0;
     let configurationGeneration = 0, activeFont = null;
     const loadedFonts = new Map(), sourceMappings = [];
@@ -701,6 +721,7 @@
                 requestAnimationFrame(function () { send('ready'); report(true); });
             }
             else if (value.type === 'move') step(value.direction);
+            else if (value.type === 'autoScroll') setAutoScroll(value.speed);
             else if (value.type === 'page') moveToPage(value.page);
             else if (value.type === 'clearSelection') getSelection().removeAllRanges();
             else if (value.type === 'configure') await configure(value.config, true);
@@ -714,16 +735,22 @@
     }
     document.addEventListener('selectionchange', selection);
     window.addEventListener('pagehide', function () {
+        setAutoScroll(0);
         if (paragraphObserver) paragraphObserver.disconnect();
         visibleTextParents.clear(); textByParent.clear();
     });
     window.addEventListener('scroll', function () { if (!automatic && touch) beginManual(); schedule(); if (manual) endManual(); }, {passive:true});
+    document.addEventListener('wheel', function () {
+        if (config.mode === 'SCROLL') { setAutoScroll(0); beginManual(); endManual(); }
+    }, {passive:true});
     window.addEventListener('resize', function () {
         if (continuousHost) return;
         clearTimeout(resizeTimer); resizeTimer = setTimeout(function () { configure(config, true, true).catch(fail); }, 80);
     });
     document.addEventListener('touchstart', function (event) {
         if (!started || event.touches.length !== 1) return;
+        if (continuousHost) continuousHost.pauseAutoScroll();
+        if (autoScrollSpeed) { setAutoScroll(0); beginManual(); endManual(); }
         finishPageAnimation();
         touch = {x:event.touches[0].clientX, y:event.touches[0].clientY, time:Date.now(), moved:false, image:event.target.closest('img,image,svg'),
             startAtStart: scrollY <= 1, startAtEnd: scrollY + innerHeight >= document.documentElement.scrollHeight - 1};

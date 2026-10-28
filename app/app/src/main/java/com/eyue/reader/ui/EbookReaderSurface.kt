@@ -69,6 +69,7 @@ internal class EbookReaderController {
     private var chapter = -1
     private var ready = false
     private var acceptsChapterChanges = false
+    private var autoScrollSpeed = 0f
     private var dispatch: ((JSONObject) -> Unit)? = null
     private var pending: Pair<Int?, JSONObject>? = null
 
@@ -93,9 +94,18 @@ internal class EbookReaderController {
             dispatch?.invoke(JSONObject().put("type", "move").put("direction", direction))
     }
 
+    fun autoScroll(speed: Float) {
+        if (ready && speed != autoScrollSpeed) {
+            autoScrollSpeed = speed
+            dispatch?.invoke(JSONObject().put("type", "autoScroll").put("speed", speed.toDouble()))
+        }
+    }
+
     fun clearSelection() { dispatch?.invoke(JSONObject().put("type", "clearSelection")) }
 
     internal fun bind(chapterIndex: Int, continuous: Boolean = false, callback: (JSONObject) -> Unit) {
+        autoScroll(0f)
+        autoScrollSpeed = 0f
         chapter = chapterIndex; dispatch = callback; ready = false; acceptsChapterChanges = continuous
     }
 
@@ -116,7 +126,7 @@ internal class EbookReaderController {
         return true
     }
 
-    internal fun unbind() { dispatch = null; ready = false; acceptsChapterChanges = false }
+    internal fun unbind() { autoScroll(0f); dispatch = null; ready = false; acceptsChapterChanges = false }
 }
 
 @SuppressLint("SetJavaScriptEnabled")

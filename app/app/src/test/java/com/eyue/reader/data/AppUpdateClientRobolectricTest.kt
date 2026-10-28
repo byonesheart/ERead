@@ -1,6 +1,7 @@
 package com.eyue.reader.data
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Response
@@ -83,5 +84,60 @@ class AppUpdateClientRobolectricTest {
         }.build()
         try { AppUpdateClient(client).check(29); fail("Expected a visible error") }
         catch (failure: java.io.IOException) { assertTrue(failure.message!!.contains("稍后重试")) }
+    }
+
+    @Test fun websiteFailuresFallBackForNetworkHttpAndInvalidManifests() = runBlocking {
+        for (scenario in listOf("network", "timeout", "http", "missing", "html", "oversize", "invalid-link")) {
+            val requests = mutableListOf<String>()
+            val client = OkHttpClient.Builder().addInterceptor { chain ->
+                val request = chain.request()
+                requests += request.url.toString()
+                assertNull(request.header("Authorization"))
+                assertNull(request.header("Cookie"))
+                if (request.url.toString() == UPDATE_MANIFEST_URL) {
+                    if (scenario == "network") throw java.io.IOException("offline")
+                    if (scenario == "timeout") throw java.net.SocketTimeoutException("timeout")
+                    Response.Builder().request(request).protocol(Protocol.HTTP_1_1)
+                        .code(if (scenario == "http") 503 else if (scenario == "missing") 404 else 200).message("website")
+                        .body(when (scenario) {
+                            "html" -> "<html>not a manifest</html>"
+                            "oversize" -> " ".repeat(512 * 1024 + 1)
+                            "invalid-link" -> manifest(url = "https://evil.invalid/file.apk")
+                            else -> ""
+                        }.toResponseBody()).build()
+                } else Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("GitHub")
+                    .body(manifest().toResponseBody()).build()
+            }.build()
+            assertTrue("$scenario should use the valid GitHub manifest", AppUpdateClient(client).check(29).available)
+            assertEquals(listOf(UPDATE_MANIFEST_URL, GITHUB_UPDATE_MANIFEST_URL), requests)
+        }
+    }
+
+    @Test fun validWebsiteWithoutNewVersionDoesNotContactGithub() = runBlocking {
+        val requests = mutableListOf<String>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            requests += chain.request().url.toString()
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(manifest(29).toResponseBody()).build()
+        }.build()
+        assertFalse(AppUpdateClient(client).check(29).available)
+        assertEquals(listOf(UPDATE_MANIFEST_URL), requests)
+    }
+
+    @Test fun cancellationDoesNotLaunchTheFallbackRequest() = runBlocking {
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val released = java.util.concurrent.CountDownLatch(1)
+        val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            requests += chain.request().url.toString(); entered.countDown()
+            released.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            throw java.io.IOException("cancelled")
+        }.build()
+        val job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+            AppUpdateClient(client).check(29)
+        }
+        assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        job.cancel(); released.countDown(); job.join()
+        assertEquals(listOf(UPDATE_MANIFEST_URL), requests)
     }
 }

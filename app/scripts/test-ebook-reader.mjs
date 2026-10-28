@@ -162,6 +162,32 @@ async function test(name, callback) {
 }
 
 try {
+  await test('auto-scroll-speed-pause-and-single-chapter-step', async () => {
+    await open({ mode: 'SCROLL' });
+    await page.evaluate(() => { scrollTo(0, 0); window.events = []; ERead.command({ type: 'autoScroll', speed: 8 }); });
+    await page.waitForTimeout(1300);
+    const slow = await page.evaluate(() => scrollY);
+    assert.ok(slow >= 5 && slow <= 15, `Low speed must accumulate subpixel frames: ${slow}`);
+    assert.equal(await page.evaluate(() => events.filter(e => e.type === 'manualStart').length), 0);
+    await command({ type: 'autoScroll', speed: 0 });
+    const stopped = await page.evaluate(() => scrollY);
+    await page.waitForTimeout(250);
+    assert.equal(await page.evaluate(() => scrollY), stopped);
+    await command({ type: 'autoScroll', speed: 128 });
+    await page.waitForTimeout(650);
+    const fast = await page.evaluate(() => scrollY);
+    assert.ok(fast - stopped >= 35 && fast - stopped <= 100, `Selected speed must take effect: ${fast - stopped}`);
+    await page.touchscreen.tap(190, 450);
+    const touched = await page.evaluate(() => scrollY);
+    await page.waitForTimeout(250);
+    assert.equal(await page.evaluate(() => scrollY), touched);
+    assert.ok(await page.evaluate(() => events.some(e => e.type === 'manualStart')));
+    await command({ type: 'navigate', lastPage: true, offset: 0 });
+    await page.evaluate(() => { window.events = []; ERead.command({ type: 'autoScroll', speed: 64 }); });
+    await page.waitForTimeout(300);
+    assert.equal(await page.evaluate(() => events.filter(e => e.type === 'chapterStep' && e.direction === 1).length), 1);
+    return { slow, stopped, fast, touched };
+  });
   for (const mode of ['SCROLL', 'PAGED', 'VERTICAL_PAGED']) {
     for (const chapter of [
       { name: 'blank', body: '', text: '', images: [] },

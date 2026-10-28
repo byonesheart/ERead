@@ -3,6 +3,46 @@
     const bridge = window.__ERead;
     let options, active = -1, serial = 0, ready = false, frame = 0, manual = false, endTimer;
     let pending = null, automatic = 0, last = null;
+    let autoScrollFrame = 0, autoScrollSpeed = 0, autoScrollTime = 0, autoScrollRemainder = 0;
+    function setAutoScroll(speed) {
+        cancelAnimationFrame(autoScrollFrame); autoScrollFrame = 0; autoScrollTime = 0;
+        autoScrollRemainder = 0;
+        autoScrollSpeed = Number.isFinite(speed) ? Math.max(0, Math.min(160, speed)) : 0;
+        if (!autoScrollSpeed) return;
+        function tick(now) {
+            if (document.hidden || manual) { setAutoScroll(0); return; }
+            const elapsed = autoScrollTime ? Math.min(50, now - autoScrollTime) / 1000 : 0;
+            autoScrollTime = now;
+            // Pause at an unprepared seam rather than scrolling through estimated placeholders.
+            const next = rows[active]?.getBoundingClientRect().bottom > innerHeight + 1 ? active : active + 1;
+            if (active === rows.length - 1 && scrollY + innerHeight >= document.documentElement.scrollHeight - 1) {
+                setAutoScroll(0); schedule(); return;
+            }
+            if (!pending && loaded.get(active)?.ready && (next >= rows.length || loaded.get(next)?.ready)) {
+                autoScrollRemainder += autoScrollSpeed * elapsed;
+                const distance = Math.floor(autoScrollRemainder); autoScrollRemainder -= distance;
+                if (distance) {
+                    automatic++;
+                    scrollBy(0, distance);
+                    requestAnimationFrame(() => automatic--);
+                    schedule();
+                }
+            }
+            autoScrollFrame = requestAnimationFrame(tick);
+        }
+        autoScrollFrame = requestAnimationFrame(tick);
+    }
+    function pauseAutoScroll() {
+        if (!autoScrollSpeed) return;
+        setAutoScroll(0); manual = true; send('manualStart');
+        clearTimeout(endTimer); endTimer = setTimeout(() => { manual = false; send('manualEnd'); schedule(); }, 140);
+    }
+    function beginManual() {
+        setAutoScroll(0); pending = null;
+        if (!manual) { manual = true; send('manualStart'); }
+        clearTimeout(endTimer);
+        endTimer = setTimeout(() => { manual = false; send('manualEnd'); schedule(); }, 140);
+    }
     let lastReport = -Infinity, reportTimer = 0;
     const rows = [], loaded = new Map();
     function send(type, data) { bridge.event(JSON.stringify(Object.assign({type:type}, data || {}))); }
@@ -85,7 +125,7 @@
             last = Object.assign({}, value, {chapter:index, scrolling:manual || value.scrolling});
             bridge.event(JSON.stringify(last)); return;
         }
-        if (value.type === 'manualStart') { manual = true; pending = null; clearTimeout(endTimer); }
+        if (value.type === 'manualStart') { setAutoScroll(0); manual = true; pending = null; clearTimeout(endTimer); }
         if (value.type === 'manualEnd') {
             clearTimeout(endTimer); endTimer = setTimeout(() => { manual = false; send('manualEnd'); schedule(); }, 140); return;
         }
@@ -125,6 +165,7 @@
         if (value.type === 'navigate') navigate(value);
         else if (value.type === 'report') schedule();
         else if (value.type === 'clearSelection') loaded.forEach(item => item.frame?.contentWindow?.getSelection()?.removeAllRanges());
+        else if (value.type === 'autoScroll') setAutoScroll(value.speed);
         else if (value.type === 'move') {
             manual = true; send('manualStart'); scrollBy(0, value.direction * innerHeight * .85);
             clearTimeout(endTimer); endTimer = setTimeout(() => { manual = false; send('manualEnd'); schedule(); }, 140);
@@ -142,14 +183,19 @@
         else if (value.type === 'notesChapter') commandChild(value.chapter, {type:'notes', notes:value.notes});
     }
     addEventListener('scroll', () => {
-        if (!automatic && ready) {
-            if (!manual) { manual = true; send('manualStart'); }
+        // Layout/anchor corrections also emit scroll. Only real user input may
+        // pause narration; keep fling events manual until scrolling settles.
+        if (!automatic && ready && manual) {
             clearTimeout(endTimer); endTimer = setTimeout(() => { manual = false; send('manualEnd'); schedule(); }, 140);
         }
         schedule();
     }, {passive:true});
     addEventListener('resize', () => { loaded.forEach((item, index) => commandChild(index, {type:'hostResize'})); schedule(); });
+    addEventListener('touchstart', pauseAutoScroll, {passive:true});
+    addEventListener('touchmove', beginManual, {passive:true});
+    addEventListener('wheel', beginManual, {passive:true});
+    addEventListener('pagehide', () => setAutoScroll(0));
     window.EReadContinuous = {event:event, bounds:bounds, height:height, navigateLocal:navigateLocal, provide:provide,
-        isActive:index => index === active};
+        isActive:index => index === active, pauseAutoScroll:pauseAutoScroll};
     window.ERead = {init:init, command:command};
 })();

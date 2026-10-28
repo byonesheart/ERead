@@ -1,0 +1,24 @@
+{
+  "versionCode": 64,
+  "versionName": "1.11.20",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.20",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.20/ERead-1.11.20-release.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1GqO3V97QBD2J0WNNLLQnLA?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/b5b1dab2a5dc",
+      "extractionCode": "Uugs"
+    }
+  ],
+  "changelog": [
+    "新增可调速的自动滚动与自动翻页。",
+    "更新检查优先使用作者网站，失败后回退到 GitHub。",
+    "修复朗读切换同步后暂停、重读及跳回旧段落的问题。",
+    "更多功能请自行体验。"
+  ]
+}

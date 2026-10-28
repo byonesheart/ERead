@@ -252,6 +252,9 @@ internal fun ReaderScreen(
     var initialPositionPending by remember(book.id) { mutableStateOf(true) }
     var pendingScrollAnchor by remember(book.id) { mutableStateOf<Triple<Int, Int, Int>?>(null) }
     var chromeVisible by remember(book.id) { mutableStateOf(false) }
+    var autoReading by remember(book.id) { mutableStateOf(false) }
+    var autoPaused by remember(book.id) { mutableStateOf(false) }
+    fun pauseAutoReading() { if (autoReading) autoPaused = true }
     var progressDraft by remember(book.id) { mutableStateOf<Float?>(null) }
     var seekPreviewPage by remember(book.id) { mutableStateOf<ReaderSeekPage?>(null) }
     LaunchedEffect(chromeVisible) { if (!chromeVisible) { progressDraft = null; seekPreviewPage = null } }
@@ -607,15 +610,18 @@ internal fun ReaderScreen(
         }
     }
     fun openPanel(value: ReaderPanel) {
+        pauseAutoReading()
         dismissAnnotationBubble()
         if (value == ReaderPanel.CONTENTS) scope.launch { listState.stopScroll() }
         panel = value; chromeVisible = false
     }
     fun tapPage() {
+        pauseAutoReading()
         if (panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS) { panel = null; chromeVisible = false }
         else chromeVisible = !chromeVisible
     }
     fun tapPageAt(x: Float, y: Float) {
+        pauseAutoReading()
         val direction = readerTapPageDirection(settings.tapPaging, x, y)
         if (panel != null || chromeVisible || direction == 0) tapPage() else move(direction)
     }
@@ -766,6 +772,7 @@ internal fun ReaderScreen(
         speaking && it.first.chapter == sourceChapter && it.first.page == sourcePage
     }?.second
     fun startSpeechAt(startChapter: Int, startPage: Int, startOffset: Int) {
+        autoReading = false
         speechResumePending = false
         speechNavigationVersion = manualNavigationVersion
         pendingSpeechLocation = null
@@ -901,17 +908,26 @@ internal fun ReaderScreen(
     LaunchedEffect(chromeVisible) { if (!chromeVisible) { returnPosition = null; speechBarHeight = 0 } }
     LaunchedEffect(speech, settings.ttsSpeed) { speech.setSpeed(settings.ttsSpeed) }
     LaunchedEffect(settings.ttsFollowPage) {
-        if (!settings.ttsFollowPage) speechResumePending = false
-        speechOwnsPosition = settings.ttsFollowPage && speaking
         followPagePrompt = false
-        if (settings.ttsFollowPage) {
-            if (speechNavigationVersion != manualNavigationVersion) {
-                speechOwnsPosition = false
-                if (speaking) pauseSpeechForNavigation()
-            } else spokenLocation?.let { latestFollowSpeech(it.first, it.second) }
+        pendingSpeechLocation = null
+        if (!settings.ttsFollowPage) {
+            val resumeNavigationPause = speechResumePending
+            speechResumePending = false
+            speechOwnsPosition = false
+            // A navigation pause belongs to sync. Removing sync must release it;
+            // explicit user pauses have no pending flag and remain paused.
+            if (resumeNavigationPause && speechSession.active) resumeSpeech()
+        } else if (speech.playing.value) {
+            // Turning sync on follows the existing audio queue. A stale page-move
+            // counter must not seek/restart speech or survive into the next resume.
+            speechResumePending = false
+            speechNavigationVersion = manualNavigationVersion
+            speechOwnsPosition = true
+            spokenLocation?.let { latestFollowSpeech(it.first, it.second) }
         }
     }
     LaunchedEffect(readerForeground) {
+        if (!readerForeground) pauseAutoReading()
         if (readerForeground && speaking) spokenLocation?.let { latestFollowSpeech(it.first, it.second) }
     }
     LaunchedEffect(book.id, pendingSpeechLocation, layoutState.restoring, layoutState.preparing, speechResumePending, manualDrag, speaking, readerForeground,
@@ -926,7 +942,7 @@ internal fun ReaderScreen(
     LaunchedEffect(book.id, listState, speech) {
         listState.interactionSource.interactions.collect { interaction ->
             when (interaction) {
-                is DragInteraction.Start -> { highlightQuery = ""; manualDrag = true; pauseSpeechForNavigation() }
+                is DragInteraction.Start -> { pauseAutoReading(); highlightQuery = ""; manualDrag = true; pauseSpeechForNavigation() }
                 is DragInteraction.Stop, is DragInteraction.Cancel -> manualDrag = false
             }
         }
@@ -1268,8 +1284,21 @@ internal fun ReaderScreen(
             onProgress(chapterIndex, pageIndex, characterOffset, progress, positionImagePath)
     }
     LaunchedEffect(book.id, document, volumeEvents, settings.volumePaging, settings.readingMode, chapterIndex, pageIndex, textPages, speech) {
-        volumeEvents.collect { if (settings.volumePaging) move(it) }
+        volumeEvents.collect { if (settings.volumePaging) { pauseAutoReading(); move(it) } }
     }
+
+    LaunchedEffect(speechSession.active) { if (speechSession.active) autoReading = false }
+    val autoAtEnd = if (sourceEbook) ebookAtEnd else if (raster) totalPages > 0 && globalPage >= totalPages &&
+        (settings.readingMode != ReadingMode.SCROLL || !listState.canScrollForward) else atScrollEnd || atPagedEnd
+    LaunchedEffect(autoReading, autoAtEnd) { if (autoReading && autoAtEnd) autoReading = false }
+    ReaderAutoAdvance(autoReading && !autoPaused && readerForeground && !chromeVisible && panel == null &&
+        requestedSettings.readingMode == activeReadingMode &&
+        selectedPassage == null && txtSelection == null && activeTextSelections.isEmpty() && tappedNoteIds.isEmpty() &&
+        tappedSourceFootnote == null && progressDraft == null && !manualDrag && !speaking && !speechSession.active &&
+        document != null && !layoutState.preparing && !layoutState.restoring && layoutState.error == null &&
+        documentReadError == null && (!sourceEbook || ebookViewport.ready) && !autoAtEnd,
+        settings.readingMode, settings.autoPageSeconds, settings.autoScrollSpeed, density.density,
+        sourceEbook, ebookController, listState) { move(1) }
 
     // Lazy/animated content can be measured after document has been reset for new settings.
     val renderDocument = document
@@ -1291,9 +1320,11 @@ internal fun ReaderScreen(
         }
         // Permanent gutters keep typography and page counts unchanged when controls appear.
         val latestBodyTap by rememberUpdatedState { x: Float, y: Float -> tapPageAt(x, y) }
+        val latestPauseAuto by rememberUpdatedState { pauseAutoReading() }
         val tapObserver = Modifier.pointerInput(book.id, raster) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                latestPauseAuto()
                 bodyCoordinates?.takeIf { it.isAttached }?.localToWindow(down.position)?.let { point ->
                     pointerAnchor = Rect(point.x - 2, point.y - 2, point.x + 2, point.y + 2)
                 }
@@ -1315,6 +1346,7 @@ internal fun ReaderScreen(
         val imageTapObserver = Modifier.pointerInput(book.id) {
             awaitEachGesture {
                 awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                latestPauseAuto()
                 // Images wait for a possible double tap. Their own tap callback opens the
                 // note or controls after that delay, so the body must not toggle early.
                 noteTapHandled = true
@@ -1377,7 +1409,7 @@ internal fun ReaderScreen(
                                 }
                             }
                         }, onTap = ::tapPage, onPageTap = { x, y -> tapPageAt(x, y) },
-                        onManualStart = { highlightQuery = ""; manualDrag = true; pauseSpeechForNavigation() },
+                        onManualStart = { pauseAutoReading(); highlightQuery = ""; manualDrag = true; pauseSpeechForNavigation() },
                         onManualEnd = { manualDrag = false },
                         onChapterStep = { direction ->
                             val target = sourceChapter + direction
@@ -1588,6 +1620,23 @@ internal fun ReaderScreen(
                 }
             }
         }
+        if (chromeVisible && autoReading) {
+            Surface(shape = appShape(16.dp), color = colors.surfaceContainerHigh, contentColor = colors.onSurface,
+                shadowElevation = 4.dp, modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp)
+                    .padding(bottom = if (panel != null) halfScreen + 12.dp else with(density) { toolbarHeight.toDp() } + 12.dp)
+                    .testTag("reader_auto_bar")) {
+                Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (settings.readingMode == ReadingMode.SCROLL) "自动滚动 · ${settings.autoScrollSpeed.roundToInt()}像素/秒"
+                        else "自动翻页 · ${settings.autoPageSeconds.roundToInt()}秒/页", style = MaterialTheme.typography.bodySmall)
+                    IconButton(onClick = { autoPaused = false; panel = null; chromeVisible = false }) {
+                        Icon(Icons.Outlined.PlayArrow, "继续自动阅读")
+                    }
+                    IconButton(onClick = { autoReading = false }, modifier = Modifier.testTag("reader_auto_stop")) {
+                        Icon(Icons.Outlined.Close, "停止自动阅读")
+                    }
+                }
+            }
+        }
         if (chromeVisible && speechSession.active && selectedPassage == null && txtSelection == null) {
             Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp), color = colors.surfaceContainerHigh,
                 contentColor = colors.onSurface,
@@ -1681,7 +1730,11 @@ internal fun ReaderScreen(
                 if (panel != ReaderPanel.SETTINGS) ReaderCompactSettings(requestedSettings, raster, onSettings,
                     onImportFont, onImportBackground, onFonts = { panel = ReaderPanel.FONTS },
                     sourceCssAvailable = !raster && book.format in setOf(BookFormat.EPUB, BookFormat.MOBI), pdf = book.format == BookFormat.PDF)
-                else ReaderPreferencesPanel(requestedSettings, onSettings, onResetDefaults)
+                else ReaderPreferencesPanel(requestedSettings, onSettings, onResetDefaults, autoReading) { enabled ->
+                    autoReading = enabled
+                    autoPaused = false
+                    if (enabled) { stopSpeech(); panel = null; chromeVisible = false }
+                }
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))

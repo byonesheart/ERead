@@ -62,6 +62,26 @@ async function ready(index){await page.waitForFunction(index=>window.events.some
 async function jump(index,offset=0){await page.evaluate(({index,offset})=>{window.events=[];ERead.command({type:'navigate',chapter:index,offset});},{index,offset});await ready(index);}
 try{
  await page.goto('https://eread.local/root.html');await ready(0);
+ await test('auto-scroll-crosses-preloaded-seam-and-touch-pauses',async()=>{
+   await page.waitForFunction(()=>document.querySelectorAll('iframe').length===2&&Array.from(document.querySelectorAll('iframe')).every(f=>f.style.opacity==='1'));
+   await page.evaluate(()=>scrollTo(0,document.querySelector('section').offsetHeight-innerHeight-30));
+   await page.waitForTimeout(250);
+   const before=await page.evaluate(()=>scrollY);
+   await page.evaluate(()=>{window.events=[];ERead.command({type:'autoScroll',speed:160})});
+   await page.waitForTimeout(1100);
+   const after=await page.evaluate(()=>scrollY);
+   assert.ok(after-before>=80,`Auto-scroll must cross the chapter seam: ${after-before}`);
+   assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='manualStart').length),0);
+   const visible=await page.evaluate(()=>Array.from(document.querySelectorAll('section')).filter(s=>{const r=s.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight}).map(s=>Number(s.dataset.chapter)));
+   assert.ok(visible.includes(1));
+   await page.touchscreen.tap(190,450);
+   const touched=await page.evaluate(()=>scrollY);
+   await page.waitForTimeout(250);
+   assert.equal(await page.evaluate(()=>scrollY),touched);
+   assert.ok(await page.evaluate(()=>events.some(e=>e.type==='manualStart')));
+   assert.ok(await page.evaluate(()=>document.querySelectorAll('iframe').length<=3));
+   await jump(0);return {before,after,visible,touched};
+ });
  await test('independent-css-and-bounded-adjacent-preload',async()=>{
    await page.waitForFunction(()=>document.querySelectorAll('iframe').length===2&&Array.from(document.querySelectorAll('iframe')).every(f=>f.style.opacity==='1'));
    const colors=await page.evaluate(()=>Array.from(document.querySelectorAll('iframe')).map(f=>getComputedStyle(f.contentDocument.querySelector('.same')).color));
@@ -69,6 +89,16 @@ try{
    const heights=await page.evaluate(()=>Array.from(document.querySelectorAll('section')).slice(0,2).map(s=>s.offsetHeight));
    await page.waitForTimeout(250);assert.deepEqual(await page.evaluate(()=>Array.from(document.querySelectorAll('section')).slice(0,2).map(s=>s.offsetHeight)),heights);
    assert.deepEqual([...new Set(requests)].sort(),[0,1]);return {colors,heights};
+ });
+ await test('programmatic-scroll-and-narration-navigation-never-report-manual-input',async()=>{
+   await page.waitForTimeout(250);
+   await page.evaluate(()=>{window.events=[];scrollTo(0,150)});
+   await page.waitForTimeout(250);
+   assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='manualStart').length),0,'Layout or narration scrolling must not pause/restart speech');
+   await jump(1,chapters[1].canonical.indexOf(chapters[1].paragraphs[7]));
+   await page.waitForTimeout(250);
+   assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='manualStart').length),0);
+   await jump(0);return {manualEvents:0};
  });
  await test('two-chapters-visible-at-the-seam-without-document-reload',async()=>{
    await page.evaluate(()=>{window.original=document.querySelector('iframe');scrollTo(0,document.querySelector('section').offsetHeight-180)});

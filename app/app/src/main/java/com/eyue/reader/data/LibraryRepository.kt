@@ -317,6 +317,10 @@ class LibraryRepository(private val context: Context) {
             continuousEbookScroll = json.optBoolean("continuousEbookScroll", defaults.continuousEbookScroll),
             verticalText = json.optBoolean("verticalText", defaults.verticalText),
             tapPaging = enumValue(json.optString("tapPaging"), defaults.tapPaging),
+            autoScrollSpeed = json.optDouble("autoScrollSpeed", defaults.autoScrollSpeed.toDouble()).toFloat()
+                .let { if (it.isFinite()) it.coerceIn(8f, 160f) else defaults.autoScrollSpeed },
+            autoPageSeconds = json.optDouble("autoPageSeconds", defaults.autoPageSeconds.toDouble()).toFloat()
+                .let { if (it.isFinite()) it.coerceIn(2f, 120f) else defaults.autoPageSeconds },
             pdfCrop = json.optJSONObject("pdfCrop")?.let { crop -> PdfCrop(crop.optBoolean("enabled"),
                 crop.optDouble("left", 0.0).toFloat(), crop.optDouble("right", 0.0).toFloat(),
                 crop.optDouble("top", 0.0).toFloat(), crop.optDouble("bottom", 0.0).toFloat()).normalized() } ?: defaults.pdfCrop,
@@ -346,6 +350,7 @@ class LibraryRepository(private val context: Context) {
         .put("volumePaging", settings.volumePaging).put("keepScreenOn", settings.keepScreenOn)
         .put("ttsSpeed", settings.ttsSpeed.toDouble()).put("chapterRule", pattern)
         .put("ttsFollowPage", settings.ttsFollowPage)
+        .put("autoScrollSpeed", settings.autoScrollSpeed.toDouble()).put("autoPageSeconds", settings.autoPageSeconds.toDouble())
         .put("appearanceProfiles", JSONArray(settings.appearanceProfiles.map { it.toJson() }))
         .put("activeAppearanceProfileId", settings.activeAppearanceProfileId)
         .put("hierarchicalContents", settings.hierarchicalContents)

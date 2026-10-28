@@ -2,6 +2,7 @@ package com.eyue.reader.data
 
 import com.eyue.reader.BuildConfig
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.CancellationException
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.OkHttpClient
@@ -28,10 +29,18 @@ data class AppUpdateMirror(val name: String, val url: String, val extractionCode
 
 /** An anonymous request; no book, device identifier or configured service credentials are sent. */
 class AppUpdateClient(private val client: OkHttpClient = OkHttpClient.Builder()
-    .connectTimeout(12, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS)
-    .callTimeout(20, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()) {
-    suspend fun check(currentVersionCode: Int): AppUpdateResult = suspendCancellableCoroutine { continuation ->
-        val request = Request.Builder().url(UPDATE_MANIFEST_URL)
+    .connectTimeout(6, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS)
+    .callTimeout(10, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()) {
+    suspend fun check(currentVersionCode: Int): AppUpdateResult = try {
+        fetch(UPDATE_MANIFEST_URL, currentVersionCode)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        fetch(GITHUB_UPDATE_MANIFEST_URL, currentVersionCode)
+    }
+
+    private suspend fun fetch(url: String, currentVersionCode: Int): AppUpdateResult = suspendCancellableCoroutine { continuation ->
+        val request = Request.Builder().url(url)
             .header("Accept", "application/json").header("User-Agent", "ERead/${BuildConfig.VERSION_NAME}")
             .header("Cache-Control", "no-cache").build()
         val call = client.newCall(request)
@@ -44,11 +53,11 @@ class AppUpdateClient(private val client: OkHttpClient = OkHttpClient.Builder()
             override fun onResponse(call: Call, response: Response) {
                 try {
                     val result = response.use {
-                        if (it.code == 404) AppUpdateResult(false, BuildConfig.VERSION_NAME, currentVersionCode,
+                        if (it.code == 404 && url == GITHUB_UPDATE_MANIFEST_URL) AppUpdateResult(false, BuildConfig.VERSION_NAME, currentVersionCode,
                             "仓库尚未发布更新文件，可前往 GitHub 查看。", null, APP_RELEASES_URL, published = false)
                         else {
                             if (!it.isSuccessful) throw IOException(when (it.code) {
-                                403, 429 -> "GitHub 暂时限制请求，请稍后重试"
+                                403, 429 -> "更新服务暂时限制请求，请稍后重试"
                                 else -> "检查更新失败（HTTP ${it.code}）"
                             })
                             val body = it.body ?: throw IOException("更新文件为空")
@@ -60,14 +69,15 @@ class AppUpdateClient(private val client: OkHttpClient = OkHttpClient.Builder()
                     if (continuation.isActive) continuation.resume(result)
                 } catch (failure: Exception) {
                     if (continuation.isActive) continuation.resumeWithException(
-                        if (failure is IOException) failure else IOException("更新文件格式不正确，请前往 GitHub 查看", failure))
+                        if (failure is IOException) failure else IOException("更新文件格式不正确，请前往更新页面查看", failure))
                 }
             }
         })
     }
 }
 
-internal const val UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/byonesheart/ERead/main/update.json"
+internal const val UPDATE_MANIFEST_URL = "https://byonesheart.beer/api/update/eyue"
+internal const val GITHUB_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/byonesheart/ERead/main/update.json"
 internal const val APP_RELEASES_URL = "https://github.com/byonesheart/ERead/releases"
 private const val MAX_UPDATE_BYTES = 512 * 1024
 

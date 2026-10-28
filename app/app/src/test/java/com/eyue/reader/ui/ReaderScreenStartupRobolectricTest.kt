@@ -76,6 +76,38 @@ class ReaderScreenStartupRobolectricTest {
         root.deleteRecursively()
     }
 
+    @Test fun automaticPagingStartsFromSettingsAndManualControlsPauseIt() {
+        val marker = "AUTO_PAGING_READER_BODY"
+        showReader(textBook(BookFormat.TXT, "$marker\n" + "This is a paragraph on the next automatically turned page.\n".repeat(120)),
+            ReadingMode.PAGED, { SilentSpeech() }, initialSettings = ReaderSettings(autoPageSeconds = 2f))
+        awaitText(marker)
+        revealToolbar()
+        compose.onNodeWithContentDescription("阅读设置").performClick()
+        compose.onNodeWithText("自动翻页").assertIsDisplayed()
+        compose.mainClock.autoAdvance = false
+        compose.onNode(isToggleable() and hasAnyAncestor(hasTestTag("reader_auto_enabled"))).performClick()
+        fun advance(milliseconds: Long) {
+            compose.runOnUiThread { org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle() }
+            compose.mainClock.advanceTimeByFrame()
+            compose.runOnUiThread { org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(milliseconds)) }
+            compose.mainClock.advanceTimeBy(milliseconds)
+            compose.runOnUiThread { org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle() }
+            compose.waitForIdle()
+        }
+        advance(2300)
+        compose.waitUntil(15_000) { advance(32); (position.get()?.offset ?: 0) > 0 }
+        compose.onNodeWithTag("reader_body").performTouchInput { click() }
+        advance(32)
+        compose.onNodeWithTag("reader_auto_bar").assertIsDisplayed()
+        val pausedOffset = position.get()?.offset
+        advance(5000)
+        assertEquals(pausedOffset, position.get()?.offset)
+        compose.onNodeWithTag("reader_auto_stop").performClick()
+        advance(32)
+        compose.onNodeWithTag("reader_auto_bar").assertDoesNotExist()
+        compose.mainClock.autoAdvance = true
+    }
+
     @Test fun defaultSystemSpeechFactoryOpensTxtWithoutStartingNarration() {
         val marker = "DEFAULT_SYSTEM_SPEECH_STARTUP_BODY"
         showReader(textBook(BookFormat.TXT, marker), ReadingMode.SCROLL)

@@ -131,6 +131,8 @@ data class ReaderSettings(
     val continuousEbookScroll: Boolean = true,
     val verticalText: Boolean = false,
     val tapPaging: TapPagingMode = TapPagingMode.OFF,
+    val autoScrollSpeed: Float = 32f,
+    val autoPageSeconds: Float = 10f,
     val pdfCrop: PdfCrop = PdfCrop()
 )
 

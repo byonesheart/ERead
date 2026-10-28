@@ -18,6 +18,6 @@ class ConsentStore(context: Context) {
         .commit()
 
     companion object {
-        const val DOCUMENT_VERSION = "2026-10-22"
+        const val DOCUMENT_VERSION = "2026-10-28"
     }
 }

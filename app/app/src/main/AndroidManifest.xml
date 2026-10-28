@@ -9,15 +9,6 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <queries>
         <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
-        <intent>
-            <action android:name="android.intent.action.OPEN_DOCUMENT" />
-            <category android:name="android.intent.category.OPENABLE" />
-            <data android:mimeType="*/*" />
-        </intent>
-        <intent>
-            <action android:name="android.intent.action.VIEW" />
-            <data android:scheme="content" android:mimeType="vnd.android.document/directory" />
-        </intent>
     </queries>
     <application
         android:allowBackup="false"

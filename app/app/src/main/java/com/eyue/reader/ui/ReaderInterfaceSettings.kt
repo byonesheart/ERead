@@ -61,10 +61,20 @@ internal fun ReaderCompactSettings(
 
 @Composable
 internal fun ReaderPreferencesPanel(settings: ReaderSettings, onSettings: (ReaderSettings) -> Unit,
-    onResetDefaults: () -> Unit = {}) {
+    onResetDefaults: () -> Unit = {}, autoReading: Boolean = false, onAutoReading: ((Boolean) -> Unit)? = null) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
         Text("设置", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = 12.dp))
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+            if (onAutoReading != null) ReaderSettingSection("自动阅读") {
+                val scroll = settings.readingMode == ReadingMode.SCROLL
+                ReaderToggle(if (scroll) "自动滚动" else "自动翻页", autoReading,
+                    Modifier.testTag("reader_auto_enabled"), onAutoReading)
+                if (scroll) ReaderAdjustableSlider("速度", "自动滚动速度", settings.autoScrollSpeed, 8f..160f, 4f,
+                    { onSettings(settings.copy(autoScrollSpeed = it)) }, { "${it.roundToInt()}像素/秒" })
+                else ReaderAdjustableSlider("间隔", "自动翻页间隔", settings.autoPageSeconds, 2f..120f, 1f,
+                    { onSettings(settings.copy(autoPageSeconds = it)) }, { "${it.roundToInt()}秒/页" })
+                Text("手动操作或切到后台会暂停，可在工具栏继续。", style = MaterialTheme.typography.bodySmall)
+            }
             ReaderPreferenceSettings(settings, onSettings, onResetDefaults)
         }
     }
