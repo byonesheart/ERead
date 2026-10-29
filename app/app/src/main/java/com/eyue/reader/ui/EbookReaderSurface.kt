@@ -184,11 +184,7 @@ internal fun EbookReaderSurface(
     DisposableEffect(localSession) { onDispose { localSession?.close() } }
     val lifecycleOwner = LocalLifecycleOwner.current
     val clipboard = LocalClipboardManager.current
-    val paperColor = (if (settings.nightMode) MaterialTheme.colorScheme.background else when (settings.background) {
-        ReaderBackground.WHITE -> Color.White
-        ReaderBackground.GREEN -> Color(0xFFE5EBD9)
-        else -> MaterialTheme.colorScheme.background
-    }).toArgb()
+    val paperColor = readerPalette(settings.background, settings.nightMode, MaterialTheme.colorScheme, einkMode).background.toArgb()
     val config = rememberEbookConfig(settings, foreground, dualPage, einkMode)
     val openFont = rememberEbookFontOpener(settings)
     var document by remember(store) { mutableStateOf<Pair<String, EbookSourceDocument>?>(null) }
@@ -452,11 +448,8 @@ internal fun rememberEbookConfig(settings: ReaderSettings, foreground: Color, du
     val density = LocalDensity.current
     val calibration = remember(settings.fontName, settings.fontPath, settings.bold) { readerFontCalibration(context, settings) }
     val fontScale = density.fontScale
-    val paper = if (settings.nightMode) MaterialTheme.colorScheme.background else when (settings.background) {
-        ReaderBackground.WHITE -> Color.White
-        ReaderBackground.GREEN -> Color(0xFFE5EBD9)
-        else -> MaterialTheme.colorScheme.background
-    }
+    val palette = readerPalette(settings.background, settings.nightMode, MaterialTheme.colorScheme, einkMode)
+    val paper = palette.background
     val fontUrl = remember(settings.fontName, settings.fontPath) { ebookReaderFontUrl(settings) }
     val config = remember(settings, foreground, dualPage, einkMode, fontScale, calibration, fontUrl, paper) {
         JSONObject().put("mode", settings.readingMode.name).put("turn", settings.pageTurnStyle.name)
@@ -470,7 +463,7 @@ internal fun rememberEbookConfig(settings: ReaderSettings, foreground: Color, du
             .put("paragraphGap", settings.fontSize * settings.paragraphSpacing * fontScale)
             .put("bold", settings.bold).put("night", settings.nightMode)
             .put("color", "#%06x".format(foreground.toArgb() and 0xffffff))
-            .put("paper", "#%06x".format(paper.toArgb() and 0xffffff))
+            .put("overrideInk", palette.overridePublisherColors).put("paper", "#%06x".format(paper.toArgb() and 0xffffff))
             .put("paperImage", settings.backgroundImagePath?.takeIf { settings.background == ReaderBackground.IMAGE && !einkMode }
                 ?.let { "https://eread.local/reader-background?v=${it.hashCode()}" })
             .put("left", settings.marginLeft).put("right", settings.marginRight)

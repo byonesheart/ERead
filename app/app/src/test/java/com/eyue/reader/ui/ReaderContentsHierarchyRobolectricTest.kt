@@ -36,6 +36,22 @@ class ReaderContentsHierarchyRobolectricTest {
             Chapter(id = "three", title = "第三章 山海", tocParentTitle = "第二卷 远行", characterCount = 100),
             Chapter(id = "four", title = "第四章 回家", tocParentTitle = "第二卷 远行", characterCount = 100)))
 
+    @Test fun parentStaysPinnedWhileItsChildrenScrollAndChangesWithTheVisibleGroup() {
+        val large = novel.copy(chapters = List(90) { index -> Chapter(id = "c$index", title = "第${index + 1}章",
+            tocParentTitle = if (index < 45) "第一卷 起点" else "第二卷 远行") })
+        var chapter by mutableStateOf(0)
+        var settings by mutableStateOf(ReaderSettings())
+        compose.setContent { MaterialTheme { ReaderContentsPanel(large, chapter, 0, settings, {},
+            onHierarchyChange = { settings = settings.copy(hierarchicalContents = it) }) { _, _ -> } } }
+        compose.onNodeWithTag("reader_contents_list").performScrollToIndex(25)
+        compose.onNode(hasText("第一卷 起点") and hasAnyAncestor(hasTestTag("reader_contents_pinned_parent"))).assertIsDisplayed()
+        compose.onNodeWithTag("reader_contents_entry_c0/parent").assertDoesNotExist()
+        compose.runOnIdle { chapter = 65 }
+        compose.onNode(hasText("第二卷 远行") and hasAnyAncestor(hasTestTag("reader_contents_pinned_parent"))).assertIsDisplayed()
+        compose.onNodeWithTag("reader_contents_hierarchy").performClick()
+        compose.onNodeWithTag("reader_contents_pinned_parent").assertDoesNotExist()
+    }
+
     @Test fun currentGroupStartsExpandedAndDisclosureButtonsDoNotJump() {
         var jumped: Pair<Int, Int>? = null
         compose.setContent { MaterialTheme { ReaderContentsPanel(novel, 0, 0, ReaderSettings(), {}) { chapter, page ->

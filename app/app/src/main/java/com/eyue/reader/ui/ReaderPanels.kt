@@ -60,6 +60,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -253,7 +254,7 @@ private data class ReaderSearchHit(val result: ReaderSearchResult, val matchedTe
 
 @Composable
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-internal fun ReaderSearchPanel(book: Book, document: ReaderDocument?, raster: Boolean, query: String,
+internal fun androidx.compose.foundation.layout.ColumnScope.ReaderSearchPanel(book: Book, document: ReaderDocument?, raster: Boolean, query: String,
     onQuery: (String) -> Unit,
     onReplaceMatch: ((ReaderSearchResult, String, String) -> Unit)? = null,
     onReplaceAll: ((String, String) -> Unit)? = null,
@@ -314,14 +315,11 @@ internal fun ReaderSearchPanel(book: Book, document: ReaderDocument?, raster: Bo
           catch (error: Exception) { searchFailure = error.message ?: "无法读取书籍正文" }
           finally { searching = false }
     }
-    ReaderPanelTitle("全文搜索与替换", if (raster) "搜索已导入的文字层，双击进入结果位置" else "搜索整本书，双击进入结果位置")
-    OutlinedTextField(query, onQuery, Modifier.fillMaxWidth().padding(horizontal = 24.dp).testTag("reader_search_query"), singleLine = true,
-        enabled = !replacing, placeholder = { Text("输入关键词") }, leadingIcon = { Icon(Icons.Outlined.Search, null) },
-        trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { onQuery("") }, enabled = !replacing) { Icon(Icons.Outlined.Close, "清空") } })
+    ReaderSearchField(query, onQuery, "输入关键词", !replacing,
+        Modifier.padding(horizontal = 12.dp).testTag("reader_search_query"), search = true)
     if (canReplace) {
-        OutlinedTextField(replacement, { replacement = it }, Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp)
-            .testTag("reader_search_replacement"), enabled = !replacing, singleLine = true,
-            label = { Text("替换为") }, placeholder = { Text("留空可删除匹配文字") })
+        ReaderSearchField(replacement, { replacement = it }, "替换为（留空可删除匹配文字）", !replacing,
+            Modifier.padding(horizontal = 12.dp, vertical = 6.dp).testTag("reader_search_replacement"))
         if (onReplaceAll != null) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.End) {
             TextButton(onClick = { confirmingAll = true },
                 enabled = !replacing && !searching && query.isNotBlank() && results.isNotEmpty(),
@@ -340,9 +338,10 @@ internal fun ReaderSearchPanel(book: Book, document: ReaderDocument?, raster: Bo
         results.size == 100 -> if (canReplace && onReplaceAll != null) "显示前 100 个结果；全部替换会处理整本书的所有匹配"
             else "显示前 100 个结果，请缩小关键词范围"
         else -> "找到 ${results.size} 处结果"
-    }, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(24.dp, 12.dp))
-    val matchColor = MaterialTheme.colorScheme.primaryContainer
-    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+    }, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.padding(12.dp, 6.dp))
+    Text("双击进入结果位置", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 12.dp))
+    val matchColor = Color(0xFFFFD76C)
+    LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("reader_search_results"), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         items(results, key = { "${it.result.chapter}:${it.result.page}:${it.result.offset}" }) { hit ->
             val result = hit.result
@@ -353,7 +352,8 @@ internal fun ReaderSearchPanel(book: Book, document: ReaderDocument?, raster: Bo
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(locationLabels.label(result.chapter, result.page) + if (raster) " · 第 ${result.page + 1} 页" else "",
                         modifier = Modifier.testTag("reader_search_location_$tag"), color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
-                    Text(readerSearchHighlight(result.snippet, query.trim(), matchColor), fontSize = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    Text(readerSearchHighlight(result.snippet, query.trim(), matchColor, Color(0xFF262626)),
+                        Modifier.testTag("reader_search_snippet_$tag"), fontSize = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                     if (editable && onReplaceMatch != null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         TextButton(onClick = { editing = hit }, enabled = !replacing && !searching,
                             modifier = Modifier.testTag("reader_search_edit_$tag")) { Text("编辑") }
@@ -457,13 +457,20 @@ internal fun ReaderContentsPanel(book: Book, chapter: Int, page: Int, settings: 
     val selectedKey = remember(visiblePositionIndex, chapter, page) { visibleEntries.getOrNull(visiblePositionIndex.current(chapter, page))?.key }
     val currentKey = entries.getOrNull(current)?.key
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = visiblePositions[currentKey] ?: 0)
+    val pinnedParent by remember(visibleEntries, parents, groupKeys, listState, hierarchical) { derivedStateOf {
+        var item = visibleEntries.getOrNull(listState.firstVisibleItemIndex)
+        while (true) { val parent = item?.parentKey ?: break; item = parents[parent] }
+        item?.takeIf { hierarchical && it.key in groupKeys }
+    } }
     LaunchedEffect(book.id, currentKey, hierarchical) {
         val expanded = expandedGroups + currentGroups()
         val position = if (expanded == expandedGroups) visiblePositions[currentKey] ?: -1 else {
             expandedGroups = expanded
             visibleContents(expanded).indexOfFirst { it.key == currentKey }
         }
-        if (position >= 0) listState.scrollToItem(position)
+        // Expansion changes the lazy item count in the next measure. Applying
+        // the target there avoids clamping it against the collapsed old group.
+        if (position >= 0) listState.requestScrollToItem(position)
     }
     val sections = if (hierarchical) entries.count { it.parentKey != null } else entries.size - book.chapters.size
     val colors = MaterialTheme.colorScheme
@@ -533,6 +540,12 @@ internal fun ReaderContentsPanel(book: Book, chapter: Int, page: Int, settings: 
                         modifier = Modifier.testTag("reader_contents_speech_cancel"),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
                         Text("取消", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                pinnedParent?.let { parent ->
+                    Surface(color = colors.surfaceContainerHigh, modifier = Modifier.fillMaxWidth().testTag("reader_contents_pinned_parent")) {
+                        Text(parent.title, Modifier.padding(horizontal = 24.dp, vertical = 10.dp), style = MaterialTheme.typography.titleSmall,
+                            color = colors.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("reader_contents_list"), state = listState,
@@ -625,14 +638,14 @@ internal fun ReaderToggle(label: String, checked: Boolean, modifier: Modifier = 
     }
 }
 
-internal fun readerSearchHighlight(text: String, query: String, color: Color): AnnotatedString {
+internal fun readerSearchHighlight(text: String, query: String, color: Color, ink: Color = Color.Unspecified): AnnotatedString {
     val result = AnnotatedString.Builder(text)
     if (query.isNotBlank()) {
         var from = 0
         while (from < text.length) {
             val found = text.indexOf(query, from, ignoreCase = true)
             if (found < 0) break
-            result.addStyle(SpanStyle(background = color), found, found + query.length)
+            result.addStyle(SpanStyle(background = color, color = ink, fontWeight = FontWeight.Bold), found, found + query.length)
             from = found + query.length
         }
     }

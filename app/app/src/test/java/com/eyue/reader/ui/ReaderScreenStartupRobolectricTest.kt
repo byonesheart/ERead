@@ -82,10 +82,13 @@ class ReaderScreenStartupRobolectricTest {
             ReadingMode.PAGED, { SilentSpeech() }, initialSettings = ReaderSettings(autoPageSeconds = 2f))
         awaitText(marker)
         revealToolbar()
-        compose.onNodeWithContentDescription("阅读设置").performClick()
+        val toolbarTop = compose.onNodeWithTag("reader_toolbar").fetchSemanticsNode().boundsInRoot.top
+        assertTrue(compose.onNodeWithTag("reader_auto_floating_action").fetchSemanticsNode().boundsInRoot.bottom <= toolbarTop)
+        assertTrue(compose.onNodeWithTag("reader_speech_floating_action").fetchSemanticsNode().boundsInRoot.bottom <= toolbarTop)
+        compose.onNodeWithTag("reader_auto_floating_action").performClick()
         compose.onNodeWithText("自动翻页").assertIsDisplayed()
         compose.mainClock.autoAdvance = false
-        compose.onNode(isToggleable() and hasAnyAncestor(hasTestTag("reader_auto_enabled"))).performClick()
+        compose.onNodeWithTag("reader_auto_start").performClick()
         fun advance(milliseconds: Long) {
             compose.runOnUiThread { org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle() }
             compose.mainClock.advanceTimeByFrame()
@@ -97,6 +100,8 @@ class ReaderScreenStartupRobolectricTest {
         advance(2300)
         compose.waitUntil(15_000) { advance(32); (position.get()?.offset ?: 0) > 0 }
         compose.onNodeWithTag("reader_body").performTouchInput { click() }
+        advance(32)
+        compose.onNodeWithTag("reader_auto_floating_action").performClick()
         advance(32)
         compose.onNodeWithTag("reader_auto_bar").assertIsDisplayed()
         val pausedOffset = position.get()?.offset

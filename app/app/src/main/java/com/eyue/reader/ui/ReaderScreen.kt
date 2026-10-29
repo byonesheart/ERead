@@ -254,6 +254,8 @@ internal fun ReaderScreen(
     var chromeVisible by remember(book.id) { mutableStateOf(false) }
     var autoReading by remember(book.id) { mutableStateOf(false) }
     var autoPaused by remember(book.id) { mutableStateOf(false) }
+    var autoControlsVisible by remember(book.id) { mutableStateOf(false) }
+    var floatingActionsHeight by remember(book.id) { mutableIntStateOf(0) }
     fun pauseAutoReading() { if (autoReading) autoPaused = true }
     var progressDraft by remember(book.id) { mutableStateOf<Float?>(null) }
     var seekPreviewPage by remember(book.id) { mutableStateOf<ReaderSeekPage?>(null) }
@@ -301,20 +303,16 @@ internal fun ReaderScreen(
         readerLayoutSpec(settings, density, layoutDirection, pageViewport, context)
     }
     val colors = MaterialTheme.colorScheme
-    val background = if (einkMode) { if (settings.nightMode) Color.Black else Color.White }
-        else if (settings.nightMode) colors.background else when (settings.background) {
-        ReaderBackground.WHITE -> Color.White
-        ReaderBackground.GREEN -> Color(0xFFE5EBD9)
-        else -> colors.background
-    }
+    val palette = readerPalette(settings.background, settings.nightMode, colors, einkMode)
+    val background = palette.background
     val backgroundPath = settings.backgroundImagePath.takeIf { settings.background == ReaderBackground.IMAGE && !einkMode }
     val backgroundImage by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, backgroundPath) {
         value = withContext(Dispatchers.IO) { backgroundPath?.let { path ->
             runCatching { BitmapLoader.decodeBounded(File(path), 1440, 2880, 2_000_000)?.asImageBitmap() }.getOrNull()
         } }
     }
-    val foreground = if (einkMode) { if (settings.nightMode) Color.White else Color.Black } else colors.onBackground
-    val muted = foreground.copy(alpha = if (einkMode) 1f else 0.56f)
+    val foreground = palette.foreground
+    val muted = palette.secondary
     val textStyle = layoutSpec.textStyle.copy(color = foreground)
     val textWidth = layoutSpec.textWidth
     val textHeight = layoutSpec.textHeight
@@ -758,7 +756,7 @@ internal fun ReaderScreen(
             val line = layout.result.getLineForOffset(local)
             visible.offset + layout.result.getLineTop(line) >= listState.layoutInfo.viewportStartOffset &&
                 visible.offset + layout.result.getLineBottom(line) <= listState.layoutInfo.viewportEndOffset -
-                    speechBarHeight - if (chromeVisible) toolbarHeight else with(density) { 36.dp.roundToPx() }
+                    (speechBarHeight + floatingActionsHeight) - if (chromeVisible) toolbarHeight else with(density) { 36.dp.roundToPx() }
         } else false
         chapterIndex = targetChapter
         pageIndex = targetPage
@@ -811,7 +809,7 @@ internal fun ReaderScreen(
         val line = layout.result.getLineForOffset(local)
         return visible.offset + layout.result.getLineTop(line) >= listState.layoutInfo.viewportStartOffset &&
             visible.offset + layout.result.getLineBottom(line) <= listState.layoutInfo.viewportEndOffset -
-                speechBarHeight - if (chromeVisible) toolbarHeight else with(density) { 36.dp.roundToPx() }
+                (speechBarHeight + floatingActionsHeight) - if (chromeVisible) toolbarHeight else with(density) { 36.dp.roundToPx() }
     }
     fun resumeSpeech() {
         // A user-paused queue stays paused during navigation, but sync resumes from the new page.
@@ -905,7 +903,7 @@ internal fun ReaderScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(chromeVisible) { if (!chromeVisible) { returnPosition = null; speechBarHeight = 0 } }
+    LaunchedEffect(chromeVisible) { if (!chromeVisible) { returnPosition = null; speechBarHeight = 0; floatingActionsHeight = 0; autoControlsVisible = false } }
     LaunchedEffect(speech, settings.ttsSpeed) { speech.setSpeed(settings.ttsSpeed) }
     LaunchedEffect(settings.ttsFollowPage) {
         followPagePrompt = false
@@ -1571,7 +1569,7 @@ internal fun ReaderScreen(
         }
         if (chromeVisible) {
             Surface(color = colors.surface.copy(alpha = 0.97f), contentColor = colors.onSurface,
-                modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter)
+                modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).testTag("reader_toolbar")
                 .onSizeChanged { toolbarHeight = it.height }) {
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
                     if (progressDraft != null && seekChapter != null) BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -1610,9 +1608,6 @@ internal fun ReaderScreen(
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         ReaderToolbarAction("目录", Icons.AutoMirrored.Outlined.MenuBook) { openPanel(ReaderPanel.CONTENTS) }
-                        ReaderToolbarAction("朗读", Icons.Outlined.Headphones, tint = if (speechSession.active) Color(0xFFE35858) else colors.onSurface) {
-                            if (speechSession.active) stopSpeech() else startSpeech()
-                        }
                         ReaderToolbarAction("书签", Icons.Outlined.BookmarkBorder) { annotationKind = null; openPanel(ReaderPanel.ANNOTATIONS) }
                         ReaderToolbarAction("界面设置", Icons.Outlined.Palette, "界面", tint = colors.onSurface) { openPanel(ReaderPanel.INTERFACE) }
                         ReaderToolbarAction("阅读设置", Icons.Outlined.Settings, "设置", tint = colors.onSurface) { openPanel(ReaderPanel.SETTINGS) }
@@ -1620,29 +1615,28 @@ internal fun ReaderScreen(
                 }
             }
         }
-        if (chromeVisible && autoReading) {
+        if (chromeVisible && panel == null && selectedPassage == null && txtSelection == null) {
+            ReaderFloatingActions(autoReading, speechSession.active, onAuto = { autoControlsVisible = !autoControlsVisible },
+                onSpeech = { autoControlsVisible = false; if (speechSession.active) stopSpeech() else startSpeech() },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = with(density) { toolbarHeight.toDp() } + 8.dp)
+                    .onSizeChanged { floatingActionsHeight = it.height })
+        }
+        if (chromeVisible && autoControlsVisible && panel == null) {
             Surface(shape = appShape(16.dp), color = colors.surfaceContainerHigh, contentColor = colors.onSurface,
                 shadowElevation = 4.dp, modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp)
-                    .padding(bottom = if (panel != null) halfScreen + 12.dp else with(density) { toolbarHeight.toDp() } + 12.dp)
+                    .padding(bottom = with(density) { (toolbarHeight + floatingActionsHeight).toDp() } + 16.dp)
                     .testTag("reader_auto_bar")) {
-                Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (settings.readingMode == ReadingMode.SCROLL) "自动滚动 · ${settings.autoScrollSpeed.roundToInt()}像素/秒"
-                        else "自动翻页 · ${settings.autoPageSeconds.roundToInt()}秒/页", style = MaterialTheme.typography.bodySmall)
-                    IconButton(onClick = { autoPaused = false; panel = null; chromeVisible = false }) {
-                        Icon(Icons.Outlined.PlayArrow, "继续自动阅读")
-                    }
-                    IconButton(onClick = { autoReading = false }, modifier = Modifier.testTag("reader_auto_stop")) {
-                        Icon(Icons.Outlined.Close, "停止自动阅读")
-                    }
-                }
+                ReaderAutoControls(requestedSettings, onSettings, autoReading, onStart = {
+                    stopSpeech(); autoReading = true; autoPaused = false; autoControlsVisible = false; chromeVisible = false
+                }, onStop = { autoReading = false; autoControlsVisible = false }, onDismiss = { autoControlsVisible = false })
             }
         }
-        if (chromeVisible && speechSession.active && selectedPassage == null && txtSelection == null) {
+        if (chromeVisible && !autoControlsVisible && speechSession.active && selectedPassage == null && txtSelection == null) {
             Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp), color = colors.surfaceContainerHigh,
                 contentColor = colors.onSurface,
                 shadowElevation = 6.dp, modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp)
                     .padding(bottom = if (panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS || panel == ReaderPanel.FONTS) halfScreen + 12.dp
-                        else if (chromeVisible) with(density) { toolbarHeight.toDp() } + 12.dp else 36.dp)
+                        else if (chromeVisible) with(density) { (toolbarHeight + floatingActionsHeight).toDp() } + 16.dp else 36.dp)
                     .onSizeChanged { speechBarHeight = it.height }
                     .testTag("reader_speech_bar")) {
                 Column(Modifier.padding(horizontal = 8.dp, vertical = 2.dp)) {
@@ -1672,7 +1666,7 @@ internal fun ReaderScreen(
             Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), color = colors.surfaceContainerHigh,
                 contentColor = colors.onSurface, shadowElevation = 6.dp,
                 modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp)
-                    .padding(bottom = if (chromeVisible) with(density) { (toolbarHeight + speechBarHeight).toDp() } + 24.dp else 36.dp)
+                    .padding(bottom = if (chromeVisible) with(density) { (toolbarHeight + speechBarHeight + floatingActionsHeight).toDp() } + 24.dp else 36.dp)
                     .testTag("reader_speech_prompt")) {
                 Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("从当前页面朗读？", Modifier.weight(1f), fontSize = 11.sp)
@@ -1707,7 +1701,7 @@ internal fun ReaderScreen(
             }, enabled = !layoutState.preparing && !layoutState.restoring,
                 modifier = Modifier.align(Alignment.BottomCenter)
                     .padding(start = 16.dp, end = 16.dp, bottom =
-                        (if (chromeVisible) with(density) { (toolbarHeight + speechBarHeight).toDp() } + 12.dp else 36.dp) +
+                        (if (chromeVisible) with(density) { (toolbarHeight + speechBarHeight + floatingActionsHeight).toDp() } + 12.dp else 36.dp) +
                             if (speechSession.active && followPagePrompt) 56.dp else 0.dp)
                     .testTag("reader_search_return"),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)) {
@@ -1730,11 +1724,7 @@ internal fun ReaderScreen(
                 if (panel != ReaderPanel.SETTINGS) ReaderCompactSettings(requestedSettings, raster, onSettings,
                     onImportFont, onImportBackground, onFonts = { panel = ReaderPanel.FONTS },
                     sourceCssAvailable = !raster && book.format in setOf(BookFormat.EPUB, BookFormat.MOBI), pdf = book.format == BookFormat.PDF)
-                else ReaderPreferencesPanel(requestedSettings, onSettings, onResetDefaults, autoReading) { enabled ->
-                    autoReading = enabled
-                    autoPaused = false
-                    if (enabled) { stopSpeech(); panel = null; chromeVisible = false }
-                }
+                else ReaderPreferencesPanel(requestedSettings, onSettings, onResetDefaults)
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
@@ -1783,13 +1773,18 @@ internal fun ReaderScreen(
             jumpPage(targetChapter, targetPage); panel = null
             }
         }
-        ReaderPanel.SEARCH, ReaderPanel.ANNOTATIONS -> {
-            ModalBottomSheet(onDismissRequest = { panel = null; onSearchClosed() },
-                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-                containerColor = colors.surface) {
-                ReaderDialogAppearance(settings)
-                when (panel) {
-                    ReaderPanel.SEARCH -> ReaderSearchPanel(book, document, raster, searchQuery, { searchQuery = it },
+        ReaderPanel.SEARCH -> androidx.compose.ui.window.Dialog(onDismissRequest = { panel = null; onSearchClosed() },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+            ReaderDialogAppearance(settings)
+            Surface(Modifier.fillMaxSize().testTag("reader_search_fullscreen"), color = colors.surface) {
+                Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
+                    Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { panel = null; onSearchClosed() }, modifier = Modifier.testTag("reader_search_close")) {
+                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, "关闭搜索")
+                        }
+                        Text("全文搜索与替换", style = MaterialTheme.typography.titleSmall)
+                    }
+                    ReaderSearchPanel(book, document, raster, searchQuery, { searchQuery = it },
                         onReplaceMatch = onReplaceMatch, onReplaceAll = onReplaceAll, replacing = textEditBusy,
                         initialReplacement = resumeSearch?.replacement.orEmpty()) { result ->
                         val previous = ReaderReturnPosition(chapterIndex, pageIndex, characterOffset, positionImagePath,
@@ -1798,11 +1793,16 @@ internal fun ReaderScreen(
                         searchReturnPosition = previous
                         highlightQuery = searchQuery.trim(); panel = null; onSearchClosed()
                     }
-                    ReaderPanel.ANNOTATIONS -> ReaderAnnotationsPanel(book, raster, annotations, annotationKind, { annotationKind = it },
-                        annotationQuery, { annotationQuery = it }, onJump = { item -> jump(item.chapterIndex, item.pageIndex, item.characterOffset, item.imagePath); panel = null }, onDelete = onDeleteAnnotation)
-                    else -> Unit
                 }
             }
+        }
+        ReaderPanel.ANNOTATIONS -> ModalBottomSheet(onDismissRequest = { panel = null },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = colors.surface) {
+            ReaderDialogAppearance(settings)
+            ReaderAnnotationsPanel(book, raster, annotations, annotationKind, { annotationKind = it },
+                annotationQuery, { annotationQuery = it }, onJump = { item ->
+                    jump(item.chapterIndex, item.pageIndex, item.characterOffset, item.imagePath); panel = null
+                }, onDelete = onDeleteAnnotation)
         }
         ReaderPanel.INTERFACE, ReaderPanel.SETTINGS, null -> Unit
     }

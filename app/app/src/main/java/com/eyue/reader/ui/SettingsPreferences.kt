@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -179,6 +180,9 @@ private enum class SettingsPage(val title: String) {
                             if (index > 0) SettingsSeparator()
                             SettingsLink(Icons.Outlined.ChevronRight, destination.title, "", "settings_about_${destination.name.lowercase()}", { open(destination) })
                         }
+                        SettingsSeparator()
+                        SettingsLink(Icons.AutoMirrored.Outlined.OpenInNew, "更多项目", "byonesheart.beer", "settings_more_projects",
+                            { openAuthorLink(context, AUTHOR_PROJECTS) })
                     }
                 }
                 SettingsPage.AUTHOR -> AuthorContent()

@@ -157,7 +157,7 @@ class ReaderSearchReplaceRobolectricTest {
             ReaderSearchPanel(book, one, false, "moon", {}) { jumped = it }
         } } }
         awaitTag("reader_search_result_0_0_7")
-        compose.onNodeWithText("搜索整本书，双击进入结果位置").assertExists()
+        compose.onNodeWithText("双击进入结果位置").assertExists()
         compose.onNodeWithTag("reader_search_result_0_0_7").performTouchInput { click() }
         compose.mainClock.advanceTimeBy(500)
         compose.runOnIdle { assertNull(jumped) }

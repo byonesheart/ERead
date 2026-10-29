@@ -61,20 +61,10 @@ internal fun ReaderCompactSettings(
 
 @Composable
 internal fun ReaderPreferencesPanel(settings: ReaderSettings, onSettings: (ReaderSettings) -> Unit,
-    onResetDefaults: () -> Unit = {}, autoReading: Boolean = false, onAutoReading: ((Boolean) -> Unit)? = null) {
+    onResetDefaults: () -> Unit = {}) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
         Text("设置", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = 12.dp))
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-            if (onAutoReading != null) ReaderSettingSection("自动阅读") {
-                val scroll = settings.readingMode == ReadingMode.SCROLL
-                ReaderToggle(if (scroll) "自动滚动" else "自动翻页", autoReading,
-                    Modifier.testTag("reader_auto_enabled"), onAutoReading)
-                if (scroll) ReaderAdjustableSlider("速度", "自动滚动速度", settings.autoScrollSpeed, 8f..160f, 4f,
-                    { onSettings(settings.copy(autoScrollSpeed = it)) }, { "${it.roundToInt()}像素/秒" })
-                else ReaderAdjustableSlider("间隔", "自动翻页间隔", settings.autoPageSeconds, 2f..120f, 1f,
-                    { onSettings(settings.copy(autoPageSeconds = it)) }, { "${it.roundToInt()}秒/页" })
-                Text("手动操作或切到后台会暂停，可在工具栏继续。", style = MaterialTheme.typography.bodySmall)
-            }
             ReaderPreferenceSettings(settings, onSettings, onResetDefaults)
         }
     }
@@ -178,20 +168,19 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
         }
     }) {
         if (raster) Text("保持原页排版，双指可缩放", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-        ReaderSettingOptions("背景") {
-            listOf(ReaderBackground.PAPER to "纸白", ReaderBackground.WHITE to "纯白", ReaderBackground.GREEN to "护眼").forEach { (value, name) ->
-                ReaderSettingChoice(name, !settings.nightMode && settings.background == value,
-                    { onSettings(settings.copy(background = value, nightMode = false)) }, Modifier.weight(1f), leading = {
-                        val paper = when (value) {
-                            ReaderBackground.WHITE -> androidx.compose.ui.graphics.Color.White
-                            ReaderBackground.GREEN -> androidx.compose.ui.graphics.Color(0xFFE5EBD9)
-                            else -> androidx.compose.ui.graphics.Color(0xFFF6F6EF)
-                        }
-                        Box(Modifier.size(16.dp).clip(appShape(3.dp)).background(paper)
+        ReaderBackgroundChoices.chunked(3).forEachIndexed { index, choices -> ReaderSettingOptions(if (index == 0) "背景" else "") {
+            choices.forEach { (value, name) ->
+                val night = value == ReaderBackground.DARK
+                val preview = readerPalette(value, night, colors)
+                ReaderSettingChoice(name, if (night) settings.nightMode else !settings.nightMode && settings.background == value,
+                    { onSettings(if (night) settings.copy(nightMode = true) else settings.copy(background = value, nightMode = false)) },
+                    Modifier.weight(1f).testTag("reader_background_${value.name.lowercase()}"), leading = {
+                        Box(Modifier.size(16.dp).clip(appShape(3.dp)).background(preview.background)
                             .border(.5.dp, colors.outlineVariant, appShape(3.dp)))
                     })
             }
-        }
+            repeat(3 - choices.size) { Spacer(Modifier.weight(1f)) }
+        } }
         ReaderSettingRow(null) {
             if (settings.backgroundImagePath != null) ReaderSettingChoice("图片", settings.background == ReaderBackground.IMAGE,
                 { onSettings(settings.copy(background = ReaderBackground.IMAGE)) })

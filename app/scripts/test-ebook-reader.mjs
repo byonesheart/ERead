@@ -162,6 +162,57 @@ async function test(name, callback) {
 }
 
 try {
+  for (const mode of ['SCROLL', 'PAGED', 'VERTICAL_PAGED']) await test(`publication-background-and-protected-ink-${mode}`, async () => {
+    const paragraphs = Array.from({ length: 25 }, (_, i) => `第${i}段原书画布和插图配色应保持完整。`.repeat(5));
+    const text = paragraphs.join('\n\n');
+    await open({ mode, authorCss: true, overrideInk: true, paper: '#44474c', color: '#bfc0c4' }, { source: {
+      baseUrl: 'https://eread.local/book/archive/chapter.html', canonicalText: text, images: [], noteTargets: {},
+      html: '<!doctype html><html><head><style>html,body{height:95%}body{background:linear-gradient(#183b28,#183b28);color:white}</style></head><body>' +
+        paragraphs.map(p => `<p>${p}</p>`).join('') + '</body></html>'
+    } });
+    const evidence = await page.evaluate(() => {
+      const canvas = document.getElementById('eread-publication-background');
+      return { canvas: canvas && { width: canvas.getBoundingClientRect().width, height: canvas.getBoundingClientRect().height,
+        image: getComputedStyle(canvas).backgroundImage }, bodyImage: getComputedStyle(document.body).backgroundImage,
+        ink: getComputedStyle(document.querySelector('p')).color };
+    });
+    assert.equal(evidence.canvas?.width, 392); assert.equal(evidence.canvas?.height, 760);
+    assert.ok(evidence.canvas.image.includes('gradient')); assert.equal(evidence.bodyImage, 'none');
+    assert.equal(evidence.ink, 'rgb(255, 255, 255)');
+    await page.screenshot({ path: path.join(outputDir, `publication-background-${mode}.png`) });
+    await command({ type: 'configure', config: { ...baseConfig, mode, authorCss: false } });
+    assert.equal(await page.locator('#eread-publication-background').evaluate(node => getComputedStyle(node).display), 'none');
+    return evidence;
+  });
+  await test('reader-palette-overrides-inline-ink-without-flattening-local-cards', async () => {
+    await open({ mode: 'SCROLL', authorCss: true, overrideInk: true, color: '#bfc0c4' }, { source: {
+      baseUrl: 'https://eread.local/book/archive/chapter.html', canonicalText: '普通正文\n\n卡片红字', images: [], noteTargets: {},
+      html: '<!doctype html><html><head></head><body><p id="plain" style="color:black!important;-webkit-text-fill-color:black!important">普通正文</p>' +
+        '<div style="background:white;color:#222"><span id="card" style="color:red;-webkit-text-fill-color:red">卡片红字</span></div></body></html>'
+    } });
+    assert.equal(await page.locator('#plain').evaluate(node => getComputedStyle(node).color), 'rgb(191, 192, 196)');
+    assert.equal(await page.locator('#card').evaluate(node => getComputedStyle(node).webkitTextFillColor), 'rgb(255, 0, 0)');
+    await command({ type: 'configure', config: { ...baseConfig, authorCss: true, color: '#404040', overrideInk: true } });
+    assert.equal(await page.locator('#plain').evaluate(node => getComputedStyle(node).color), 'rgb(64, 64, 64)');
+    await command({ type: 'configure', config: { ...baseConfig, authorCss: true, overrideInk: false } });
+    assert.equal(await page.locator('#plain').evaluate(node => node.style.getPropertyValue('color')), 'black');
+    assert.equal(await page.locator('#plain').evaluate(node => node.style.getPropertyPriority('color')), 'important');
+    await page.locator('#card').evaluate(node => node.parentElement.style.background = 'black');
+    await command({ type: 'configure', config: { ...baseConfig, authorCss: true, eink: true, color: '#000000' } });
+    assert.equal(await page.locator('#card').evaluate(node => getComputedStyle(node).color), 'rgb(0, 0, 0)');
+    assert.equal(await page.locator('#card').evaluate(node => getComputedStyle(node.parentElement).backgroundColor), 'rgba(0, 0, 0, 0)');
+    return { inlineInkOverride: true, cardColorsPreserved: true, originalInlineRestored: true, einkBackgroundCleared: true };
+  });
+  await test('authored-title-page-breaks-are-preserved', async () => {
+    await open({ mode: 'PAGED', authorCss: true }, { source: {
+      baseUrl: 'https://eread.local/book/archive/chapter.html', canonicalText: '章节标题\n\n正文', images: [], noteTargets: {},
+      html: '<!doctype html><html><head><style>h2{break-after:page}</style></head><body><h2>章节标题</h2><p>正文</p></body></html>'
+    } });
+    assert.equal(await page.locator('h2').evaluate(node => getComputedStyle(node).breakAfter), 'page');
+    await command({ type: 'configure', config: { ...baseConfig, mode: 'PAGED', authorCss: false } });
+    assert.equal(await page.locator('h2').evaluate(node => getComputedStyle(node).breakAfter), 'avoid');
+    return { authoredPageBreakPreserved: true, softwareTitleKeptWithBody: true };
+  });
   await test('auto-scroll-speed-pause-and-single-chapter-step', async () => {
     await open({ mode: 'SCROLL' });
     await page.evaluate(() => { scrollTo(0, 0); window.events = []; ERead.command({ type: 'autoScroll', speed: 8 }); });

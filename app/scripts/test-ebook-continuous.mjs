@@ -25,7 +25,7 @@ const config = {mode:'SCROLL',turn:'SLIDE',authorCss:true,fontSize:19,lineHeight
 const browser = await chromium.launch({headless:true,executablePath:process.env.EREAD_BROWSER || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'});
 const page = await browser.newPage({viewport:{width:392,height:760},hasTouch:true});
 const results=[],errors=[];
-let cropFixture = false;
+let cropFixture = false, publicationFixture = false;
 page.on('pageerror', error => errors.push(error.message));
 page.on('console', message => { if(message.type()==='error')console.log('BROWSER '+message.text()); });
 const requests=[];
@@ -49,7 +49,7 @@ await page.route('https://eread.local/**',async route=>{
     config,initialNavigation:{type:'navigate',chapter:0,offset:0},chapters:chapters.map((c,i)=>({title:`第${i}章`,length:c.canonical.length}))
   },true)});
   if(match){const index=Number(match[1]),chapter=chapters[index];return route.fulfill({contentType:'text/html',body:envelope(
-    `<style>.same{color:${chapter.color}} p{line-height:35px}</style>`+
+    `<style>.same{color:${publicationFixture ? 'white' : chapter.color}} p{line-height:35px}${publicationFixture ? `body{background:linear-gradient(${index % 2 ? '#18283b,#18283b' : '#183b28,#183b28'});color:white}` : ''}</style>`+
       (cropFixture && index===0 ? '<img id="crop-image" style="display:block;width:320px;height:240px" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22320%22 height=%22240%22%3E%3Crect width=%22320%22 height=%22240%22 fill=%22green%22/%3E%3C/svg%3E">' : '')+
       chapter.body,childScript,{canonical:chapter.canonical,
       config:{...config,continuous:true},images:cropFixture && index===0 ? [{offset:0,path:'/book/crop-image.svg'}] : [],noteTargets:['#note'],notes:[],decorations:{annotations:[],search:'',spokenStart:-1,spokenEnd:-1}})});}
@@ -235,6 +235,18 @@ try{
    await page.waitForFunction(()=>document.querySelector('iframe[data-chapter="0"]').contentDocument.querySelector('#crop-image').getBoundingClientRect().height===240);
    assert.ok(await page.evaluate(()=>document.querySelectorAll('iframe').length<=3));
    return {beforeHeight,cropped,restoredHeight:240};
+ });
+ await test('publication-background-spans-each-chapters-margins-without-merging-their-css',async()=>{
+   publicationFixture=true;cropFixture=false;await page.goto('https://eread.local/root.html');await ready(0);
+   const first=page.frames().find(f=>/\/0\.html/.test(f.url()));
+   assert.equal(await first.locator('body').evaluate(node=>getComputedStyle(node).backgroundImage),'none');
+   assert.ok(await first.locator('#eread-publication-background').evaluate(node=>getComputedStyle(node).backgroundImage.includes('24, 59, 40')));
+   await page.screenshot({path:path.join(output,'publication-continuous-0.png')});
+   await jump(1,chapters[1].canonical.indexOf(chapters[1].paragraphs[4]));
+   const second=page.frames().find(f=>/\/1\.html/.test(f.url()));
+   assert.ok(await second.locator('#eread-publication-background').evaluate(node=>getComputedStyle(node).backgroundImage.includes('24, 40, 59')));
+   await page.screenshot({path:path.join(output,'publication-continuous-1.png')});
+   assert.ok(await page.evaluate(()=>document.querySelectorAll('iframe').length<=3));return {independentCanvases:true};
  });
 }catch(error){
  console.log(JSON.stringify(await page.evaluate(()=>({events:window.events,scroll:scrollY,frames:Array.from(document.querySelectorAll('iframe')).map(f=>({src:f.src,height:f.offsetHeight,ready:f.contentDocument?.readyState,reader:!!f.contentWindow?.ERead,text:f.contentDocument?.body?.textContent.slice(-180)}))})),null,2));

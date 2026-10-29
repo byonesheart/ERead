@@ -41,6 +41,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 internal const val AUTHOR_REPOSITORY = "https://github.com/byonesheart/ERead"
+internal const val AUTHOR_PROJECTS = "https://byonesheart.beer"
 internal const val AUTHOR_BILIBILI = "https://space.bilibili.com/481766725"
 internal const val AUTHOR_ISSUES = "https://github.com/byonesheart/ERead/issues"
 internal const val AUTHOR_QQ_GROUP = "https://qun.qq.com/universal-share/share?ac=1&authKey=uDvL1dKO4N9Ml3frBbU53mJkECbDfdfOzcEXej2d1tWiP%2BXUQBnNFRCVLGmvmDd8&busi_data=eyJncm91cENvZGUiOiI1MzgyNjIwODgiLCJ0b2tlbiI6IjNZTDVoWmg5c3h4a1lhQXNoNDBrNC9wemRqanhCSk1YWHFYQjUwVzZrQ2hOZk81VHY1Uk9YVmhmZlRmWGdzd0IiLCJ1aW4iOiIzNjE1NDMwODM2In0%3D&data=XZA8m6dBfhaiQ7ZIeOmEyzUudX0Mt1VFSoJmaaCRZ1Pi2LJXFNcyb_Bnl5WHVtRVG5tfe5M7jWEht6EDL8BY8g&svctype=4&tempid=h5_group_info"

@@ -30,6 +30,47 @@
     let configurationGeneration = 0, activeFont = null;
     const loadedFonts = new Map(), sourceMappings = [];
     const imageCrops = new Map();
+    // Adapted from 7Mrlan/ebook build.66: a publication canvas belongs to the
+    // document, not its constrained text column. Never infer it from a local card.
+    let publisherBackground = null, publisherCanvas = null;
+    const publisherColors = [];
+    function capturePublicationAppearance() {
+        const root = getComputedStyle(document.documentElement), body = getComputedStyle(document.body);
+        const source = body.backgroundImage !== 'none' ? body : root.backgroundImage !== 'none' ? root : null;
+        publisherBackground = source && source.background;
+        const pending = [{node:document.body, protectedInk:false}];
+        const transparent = value => value === 'transparent' || /^rgba\(.+,\s*0(?:\.0+)?\)$/.test(value);
+        while (pending.length) {
+            const {node, protectedInk} = pending.pop();
+            if (!node.style || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(node.tagName)) continue;
+            const css = getComputedStyle(node);
+            const surface = protectedInk || node !== document.body && (node.namespaceURI !== 'http://www.w3.org/1999/xhtml' ||
+                !transparent(css.backgroundColor) || css.backgroundImage !== 'none');
+            publisherColors.push({node, surface, ink:[css.color, css.webkitTextFillColor || css.color],
+                original:['color','-webkit-text-fill-color'].map(name => [node.style.getPropertyValue(name), node.style.getPropertyPriority(name)])});
+            for (const child of node.children) pending.push({node:child, protectedInk:surface});
+        }
+        if (publisherBackground) {
+            publisherCanvas = document.createElement('div'); publisherCanvas.id = 'eread-publication-background';
+            publisherCanvas.setAttribute('aria-hidden', 'true');
+            publisherCanvas.style.cssText = 'display:none;position:fixed;inset:0;z-index:-1;pointer-events:none;';
+            publisherCanvas.style.background = publisherBackground;
+            document.documentElement.appendChild(publisherCanvas);
+            for (const node of [document.documentElement, document.body]) node.style.setProperty('background','none','important');
+        }
+    }
+    function applyPublicationAppearance() {
+        const authoredCanvas = !!publisherBackground && config.authorCss && !config.eink;
+        if (publisherCanvas) publisherCanvas.style.display = authoredCanvas ? 'block' : 'none';
+        const override = authoredCanvas || config.overrideInk || config.night || config.eink;
+        publisherColors.forEach(({node, surface, ink, original}) => {
+            ['color','-webkit-text-fill-color'].forEach((name, index) => {
+                if (override) node.style.setProperty(name, !config.eink && (authoredCanvas || surface) ? ink[index] : config.color, 'important');
+                else if (original[index][0]) node.style.setProperty(name, original[index][0], original[index][1]);
+                else node.style.removeProperty(name);
+            });
+        });
+    }
     const rangeGeometry = new Map();
     let lastBridgeReport = 0;
     const readerStyle = document.createElement('style');
@@ -472,7 +513,7 @@
             ::view-transition-image-pair(root) { isolation:isolate; }
             ::view-transition-old(root),::view-transition-new(root) { mix-blend-mode:normal; height:100%; object-fit:fill; backface-visibility:hidden;
                 background:${config.paper || '#fff'} ${config.paperImage ? `linear-gradient(${config.night ? 'rgba(0,0,0,.72),rgba(0,0,0,.72)' : 'rgba(255,255,255,.72),rgba(255,255,255,.72)'}),url('${config.paperImage}') center/cover` : ''}; }
-            html { margin:0!important; padding:0!important; width:100%!important; height:${continuousHost ? 'auto' : '100%'}!important; writing-mode:horizontal-tb!important; scroll-behavior:auto!important; overflow:${scrolling && !continuousHost ? 'auto' : 'hidden'}!important; background:transparent!important; }
+            html { margin:0!important; padding:0!important; width:100%!important; height:${continuousHost ? 'auto' : '100%'}!important; writing-mode:horizontal-tb!important; scroll-behavior:auto!important; overflow:${scrolling && !continuousHost ? 'auto' : 'hidden'}!important; background:transparent!important; isolation:isolate; }
             body { box-sizing:content-box!important; margin:0!important; padding:${config.top}px ${config.right}px ${config.bottom}px ${config.left}px!important;
                 width:${horizontal ? width : Math.max(32, innerWidth - config.left - config.right)}px!important; min-width:0!important;
                 height:${horizontal || vertical ? height + 'px' : 'auto'}!important; min-height:${horizontal || vertical ? '0' : height + 'px'}!important;
@@ -483,7 +524,8 @@
             body,body * { font-family:${family}!important; }
             ${vertical ? 'body * { writing-mode:inherit!important; text-orientation:inherit!important; }' : ''}
             ${software}
-            ${config.night || config.eink ? `body * { color:${config.color}!important; background-color:transparent!important; }` : ''}
+            ${!config.authorCss ? 'h1,h2,h3 { break-after:avoid; break-inside:avoid; }' : ''}
+            ${config.eink ? 'body * { background-color:transparent!important; }' : ''}
             img,svg,image,video { max-width:100%!important; max-height:${height}px; object-fit:contain; break-inside:avoid; }
             table { max-width:100%; } a { color:inherit; } a[href] { text-decoration:underline; }
             #eread-overlays { position:${continuousHost ? 'absolute' : 'fixed'}!important; inset:0!important; padding:0!important; margin:0!important; pointer-events:none!important;
@@ -497,6 +539,7 @@
             node.style.setProperty('margin-block-start', '0px', 'important');
             node.style.setProperty('margin-block-end', Math.max(0, Number(config.paragraphGap) || 0) + 'px', 'important');
         });
+        applyPublicationAppearance();
         applyImageCrop();
         fitPageBoundary();
         measureChapter();
@@ -646,6 +689,7 @@
         try {
             canonical = options.canonical; decorations = options.decorations; noteTargets = new Set(options.noteTargets || []);
             sourceNotes = options.notes || [];
+            capturePublicationAppearance();
             // MOBI 6 encodes paragraph indentation/spacing as HTML attributes rather
             // than CSS. Translate those presentation attributes, retaining the DOM.
             const length = value => /^-?\d+(?:\.\d+)?(?:em|ex|pt|px|%|in|cm|mm)?$/i.test(value || '') ?

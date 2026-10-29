@@ -22,6 +22,8 @@ OpenCC 1.1.9 的 STCharacters、STPhrases、TSCharacters、TSPhrases 词库用�
 
 EPUB 与未加密 MOBI 由本地兼容引擎读取，使用 Android 系统 WebView 显示原书 HTML、CSS、图片和字体。阅读索引用于目录、搜索、标注及朗读定位；保留完整原始文件。E阅不再打包 Readium Toolkit、Readium CSS 或其字体资源。
 
+出版物背景与正文分层、受保护区域的配色处理及部分阅读背景配色，参考 7Mrlan 提供的 ebook v3.0.0+build.66 源码（GPL-3.0）进行适配；仍使用 E阅现有阅读及定位链路。
+
 ## 界面与 Android 基础组件
 
 AndroidX Activity、Compose UI / Foundation / Runtime、Material 3、Material Icons：用于页面、手势和图标。项目以 Compose BOM 管理对应版本，最终运行时版本由 Gradle 依赖解析确定。许可证：Apache-2.0。

@@ -8,7 +8,7 @@ enum class ReadingMode { SCROLL, PAGED, VERTICAL_PAGED }
 enum class PageTurnStyle { COVER, SLIDE, CURL }
 enum class TapPagingMode { OFF, HORIZONTAL, VERTICAL }
 enum class ChineseConversion { ORIGINAL, SIMPLIFIED, TRADITIONAL }
-enum class ReaderBackground { PAPER, WHITE, GREEN, DARK, IMAGE }
+enum class ReaderBackground { PAPER, WHITE, GREEN, DARK, IMAGE, PARCHMENT, MIST_GREEN, GRAY, CHARCOAL }
 enum class AnnotationKind { BOOKMARK, NOTE, HIGHLIGHT, UNDERLINE }
 enum class UnderlineStyle { STRAIGHT, WAVY }
 enum class SpeechEngine { SYSTEM, AI }

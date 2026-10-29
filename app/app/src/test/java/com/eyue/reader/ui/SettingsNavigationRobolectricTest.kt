@@ -31,6 +31,15 @@ import java.io.File
 @LooperMode(LooperMode.Mode.PAUSED)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class SettingsNavigationRobolectricTest {
+    @Test fun moreProjectsOpensTheAuthorsWebsiteInTheBrowser() {
+        compose.setContent { MaterialTheme { SettingsScreen(LibraryState(), {}, {}, {}, {}) } }
+        compose.onNodeWithTag("settings_about").performScrollTo().performClick()
+        compose.onNodeWithTag("settings_more_projects").performScrollTo().performClick()
+        val context = RuntimeEnvironment.getApplication()
+        val intent = org.robolectric.Shadows.shadowOf(context).nextStartedActivity
+        assertEquals("https://byonesheart.beer", intent.data.toString())
+        assertEquals(android.content.Intent.ACTION_VIEW, intent.action)
+    }
     @get:Rule val compose = createComposeRule()
 
     @Test fun updateNotesOpenASecondaryPageAndNewVersionsOfferCloudDownloads() {

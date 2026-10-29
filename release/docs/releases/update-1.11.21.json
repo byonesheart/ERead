@@ -1,0 +1,24 @@
+{
+  "versionCode": 65,
+  "versionName": "1.11.21",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.21",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.21/ERead-1.11.21-release.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1G4uc0LryG2rt2hoVfH1zsw?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/15991c5119b9",
+      "extractionCode": "vcL6"
+    }
+  ],
+  "changelog": [
+    "优化 EPUB 原书背景与文字配色，新增阅读背景。",
+    "二级目录置顶显示当前分组，搜索结果全屏显示并高亮关键词。",
+    "自动阅读和朗读入口改为工具栏上方的悬浮图标。",
+    "更多功能请自行体验。"
+  ]
+}

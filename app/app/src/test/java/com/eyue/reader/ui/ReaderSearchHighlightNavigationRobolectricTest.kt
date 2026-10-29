@@ -5,6 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.text.TextLayoutResult
@@ -64,6 +65,11 @@ class ReaderSearchHighlightNavigationRobolectricTest {
             } }
         }
         await { compose.onAllNodesWithTag("reader_search_result_1_0_7").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("reader_search_fullscreen").assertIsDisplayed()
+        assertTrue(compose.onNodeWithTag("reader_search_query").fetchSemanticsNode().boundsInRoot.height <= 46f)
+        assertTrue(compose.onNodeWithTag("reader_search_results").fetchSemanticsNode().boundsInRoot.height > 400f)
+        val snippet = compose.onNodeWithTag("reader_search_snippet_1_0_7", useUnmergedTree = true).fetchSemanticsNode().config[SemanticsProperties.Text].single()
+        assertTrue(snippet.spanStyles.any { it.item.background == Color(0xFFFFD76C) && snippet.text.substring(it.start, it.end).equals("needle", true) })
         compose.onNodeWithTag("reader_search_result_1_0_7").performTouchInput { doubleClick() }
         await({ "chapter=${chapter.get()}, searchResults=${compose.onAllNodesWithTag("reader_search_result_1_0_7").fetchSemanticsNodes().size}, " +
             "loading=${compose.onAllNodesWithTag("reader_loading").fetchSemanticsNodes().size}, text=" +

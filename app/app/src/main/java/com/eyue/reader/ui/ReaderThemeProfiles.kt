@@ -119,12 +119,7 @@ private fun ReaderThemeThumbnail(profile: ReaderThemeProfile, selected: Boolean,
             BitmapLoader.decodeBounded(File(it), 144, 144, 20_736)?.asImageBitmap()
         }.getOrNull() } }
     }
-    val color = when (background) {
-        ReaderBackground.WHITE -> Color.White
-        ReaderBackground.GREEN -> Color(0xFFE5EBD9)
-        ReaderBackground.DARK -> Color(0xFF141B15)
-        else -> Color(0xFFF6F6EF)
-    }
+    val color = readerPalette(background, background == ReaderBackground.DARK, MaterialTheme.colorScheme).background
     val shape = appShape(6.dp)
     val colors = MaterialTheme.colorScheme
     Surface(color = if (selected) colors.primaryContainer else colors.surface, shape = shape,
