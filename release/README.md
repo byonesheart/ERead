@@ -10,6 +10,8 @@
 
 ## 软件预览
 
+[观看 E阅宣传视频 · B站](https://www.bilibili.com/video/BV14dn76nER9/)
+
 <table>
   <tr>
     <td width="33%"><img src="docs/images/promo/01_导入.png" width="280" alt="导入书籍" /></td>
