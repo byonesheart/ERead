@@ -9,6 +9,40 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 class EpubArchiveTest {
+    @Test fun publicationOutlineKeepsFourLevelsAndSharedTargetsWithoutRemovingReadingFragments() {
+        val files = linkedMapOf(
+            "META-INF/container.xml" to "<container><rootfile full-path='book.opf'/></container>",
+            "book.opf" to "<package><manifest>" + (0..7).joinToString("") { "<item id='p$it' href='p$it.xhtml'/>" } +
+                "<item id='toc' href='toc.ncx' media-type='application/x-dtbncx+xml'/></manifest><spine toc='toc'>" +
+                (0..7).joinToString("") { "<itemref idref='p$it'/>" } + "</spine></package>",
+            "toc.ncx" to """<ncx><navMap><navPoint><navLabel><text>套装</text></navLabel><content src="p1.xhtml"/><navPoint><navLabel><text>第一册</text></navLabel><content src="p2.xhtml"/><navPoint><navLabel><text>第一章</text></navLabel><content src="p3.xhtml"/><navPoint><navLabel><text>小节</text></navLabel><content src="p4.xhtml"/></navPoint></navPoint><navPoint><navLabel><text>附录</text></navLabel><content src="p7.xhtml"/><navPoint><navLabel><text>年表</text></navLabel><content src="p7.xhtml"/></navPoint></navPoint></navPoint></navPoint></navMap></ncx>""")
+        (0..7).forEach { files["p$it.xhtml"] = "<html><body><p>正文分片 $it，均须保留。</p></body></html>" }
+        val file = archive(files)
+        try {
+            val parsed = EpubArchive.read(file)
+            val contents = epubPublicationContents(parsed)
+            assertEquals(8, parsed.sections.size)
+            assertEquals(listOf("套装", "第一册", "第一章", "小节", "附录", "年表"), contents.map { it.title })
+            assertEquals(listOf(1, 2, 3, 4, 7, 7), contents.map { it.chapter })
+            assertEquals(listOf(null, contents[0].id, contents[1].id, contents[2].id, contents[1].id, contents[4].id), contents.map { it.parentId })
+            assertEquals(parsed.navigation, EpubArchive.read(file, catalogOnly = true).navigation)
+            assertTrue(parsed.sections[5].html.contains("正文分片 5"))
+        } finally { file.delete() }
+    }
+
+    @Test fun spanOnlyPublicationParentsOpenTheirFirstChildAndRetainNativeHierarchy() {
+        val file = archive(mapOf(
+            "META-INF/container.xml" to "<container><rootfile full-path='book.opf'/></container>",
+            "book.opf" to "<package><manifest><item id='a' href='a.xhtml'/><item id='b' href='b.xhtml'/><item id='nav' href='nav.xhtml' properties='nav'/></manifest><spine><itemref idref='a'/><itemref idref='b'/></spine></package>",
+            "nav.xhtml" to "<html><nav><ol><li><span>合集</span><ol><li><span>分册</span><ol><li><a href='a.xhtml'>开头</a></li><li><a href='b.xhtml'>结尾</a></li></ol></li></ol></li></ol></nav></html>",
+            "a.xhtml" to "<html><body>正文一</body></html>", "b.xhtml" to "<html><body>正文二</body></html>"))
+        try {
+            val contents = epubPublicationContents(EpubArchive.read(file))
+            assertEquals(listOf("合集", "分册", "开头", "结尾"), contents.map { it.title })
+            assertEquals(listOf(0, 0, 0, 1), contents.map { it.chapter })
+        } finally { file.delete() }
+    }
+
     @Test fun streamingKeepsOnlyIndexesAndPreservesCrossDocumentNotesAndSplitMarkup() {
         val body = "<html><head><style>p{color:red}</style></head><body><div class='wrapper'><h1 id='a'>甲</h1><p>甲🙂<a href='notes.xhtml#fn1'>[1]</a></p><h2 id='b'>乙</h2><p>乙<a href='#fn2'>[2]</a></p><aside id='fn2'>本章注释</aside></div></body></html>"
         val files = linkedMapOf(

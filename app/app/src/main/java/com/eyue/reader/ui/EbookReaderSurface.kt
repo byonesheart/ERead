@@ -102,6 +102,7 @@ internal class EbookReaderController {
     }
 
     fun clearSelection() { dispatch?.invoke(JSONObject().put("type", "clearSelection")) }
+    fun cancelTouch() { dispatch?.invoke(JSONObject().put("type", "cancelTouch")) }
 
     internal fun bind(chapterIndex: Int, continuous: Boolean = false, callback: (JSONObject) -> Unit) {
         autoScroll(0f)
@@ -214,7 +215,13 @@ internal fun EbookReaderSurface(
         loadingVisible = false
         if (!ready && loadingError == null) { delay(180); loadingVisible = true }
     }
-    fun invoke(command: JSONObject) { webView?.evaluateJavascript("window.ERead && ERead.command($command)", null) }
+    fun invoke(command: JSONObject) {
+        if (command.optString("type") == "cancelTouch") webView?.let { view ->
+            val now = android.os.SystemClock.uptimeMillis()
+            val event = android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
+            try { view.dispatchTouchEvent(event) } finally { event.recycle() }
+        } else webView?.evaluateJavascript("window.ERead && ERead.command($command)", null)
+    }
     LaunchedEffect(generation) {
         selected = null; ready = false; latestViewport(EbookViewportState())
         controller.bind(chapterIndex) { invoke(it) }

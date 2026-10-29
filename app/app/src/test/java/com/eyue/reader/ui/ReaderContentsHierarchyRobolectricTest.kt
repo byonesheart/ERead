@@ -28,6 +28,26 @@ import org.robolectric.annotation.LooperMode
 @LooperMode(LooperMode.Mode.PAUSED)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ReaderContentsHierarchyRobolectricTest {
+    @Test fun nativeFourLevelContentsStayCollapsedAndJumpToTheExistingReadingFragment() {
+        val source = novel.copy(chapters = List(8) { Chapter(id = "f$it", title = "内部片段 $it") }, publicationContents = listOf(
+            com.eyue.reader.data.PublicationContentsEntry("suite", "合集", 0),
+            com.eyue.reader.data.PublicationContentsEntry("volume", "分册", 1, "suite"),
+            com.eyue.reader.data.PublicationContentsEntry("chapter", "章节", 2, "volume"),
+            com.eyue.reader.data.PublicationContentsEntry("section", "小节", 3, "chapter"),
+            com.eyue.reader.data.PublicationContentsEntry("end", "后记", 6, "volume")))
+        var jumped: Pair<Int, Int>? = null
+        compose.setContent { MaterialTheme { ReaderContentsPanel(source, 4, 0, ReaderSettings(), {},
+            cachedSpeechChapters = setOf(3, 4, 5)) { chapter, page -> jumped = chapter to page } } }
+        compose.onNodeWithText("5 项").assertExists()
+        compose.onNodeWithTag("reader_contents_entry_publication/section").assertIsDisplayed()
+        compose.onNodeWithTag("reader_contents_cached_speech_3").assertExists()
+        compose.onNodeWithTag("reader_contents_entry_publication/section").performClick()
+        compose.runOnIdle { assertEquals(3 to 0, jumped); jumped = null }
+        compose.onNodeWithTag("reader_contents_toggle_publication/volume").performClick()
+        compose.onNodeWithTag("reader_contents_entry_publication/section").assertDoesNotExist()
+        compose.runOnIdle { assertNull(jumped) }
+    }
+
     @get:Rule val compose = createComposeRule()
     private val novel = Book(id = "nested", title = "分卷小说", format = BookFormat.EPUB, mode = LibraryMode.NOVEL,
         chapters = listOf(

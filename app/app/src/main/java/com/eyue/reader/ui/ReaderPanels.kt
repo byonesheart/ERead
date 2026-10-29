@@ -268,7 +268,7 @@ internal fun androidx.compose.foundation.layout.ColumnScope.ReaderSearchPanel(bo
     var editing by remember(book.id, book.contentVersion) { mutableStateOf<ReaderSearchHit?>(null) }
     var editText by remember(editing) { mutableStateOf(editing?.matchedText.orEmpty()) }
     var confirmingAll by remember(book.id, book.contentVersion) { mutableStateOf(false) }
-    val locationLabels = remember(book.chapters) { readerSearchLocationIndex(book.chapters) }
+    val locationLabels = remember(book.chapters, book.publicationContents) { readerSearchLocationIndex(book.chapters, book.publicationContents) }
     val searchSources = remember(book.chapters) { book.chapters.map { it.id to it.textPath } }
     val editable = book.mode == LibraryMode.NOVEL && !raster && !book.cloudOnly &&
         book.format in setOf(BookFormat.TXT, BookFormat.EPUB, BookFormat.MOBI)
@@ -432,7 +432,10 @@ internal fun ReaderContentsPanel(book: Book, chapter: Int, page: Int, settings: 
     speechBookComplete: Boolean = false, onCancelSpeech: (() -> Unit)? = null,
     otherCachedSpeechChapters: Set<Int> = emptySet(), onHierarchyChange: (Boolean) -> Unit = {}, onJump: (Int, Int) -> Unit) {
     val hierarchical = settings.hierarchicalContents
-    val entries = remember(book.chapters, book.mode, hierarchical) { readerContentsEntries(book.chapters, hierarchical && book.mode == LibraryMode.NOVEL) }
+    val nativeContents = book.publicationContents?.takeIf { it.isNotEmpty() && book.mode == LibraryMode.NOVEL }
+    val entries = remember(book.chapters, book.mode, hierarchical, nativeContents) {
+        readerContentsEntries(book.chapters, hierarchical && book.mode == LibraryMode.NOVEL, nativeContents)
+    }
     val positionIndex = remember(entries) { readerContentsPositionIndex(entries) }
     val current = remember(positionIndex, chapter, page) { positionIndex.current(chapter, page) }
     val parents = remember(entries) { entries.associateBy { it.key } }
@@ -495,7 +498,7 @@ internal fun ReaderContentsPanel(book: Book, chapter: Int, page: Int, settings: 
                         Text(book.title, style = MaterialTheme.typography.bodySmall,
                             color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    Text("${book.chapters.size} 章" + if (sections > 0) " · $sections 小节" else "",
+                    Text(if (nativeContents != null) "${entries.size} 项" else "${book.chapters.size} 章" + if (sections > 0) " · $sections 小节" else "",
                         style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant,
                         modifier = Modifier.padding(end = 16.dp))
                     onChapterRules?.let { callback ->
@@ -553,20 +556,21 @@ internal fun ReaderContentsPanel(book: Book, chapter: Int, page: Int, settings: 
                     items(visibleEntries, key = { it.key }, contentType = { "chapter" }) { item ->
                         val selected = item.key == selectedKey
                         val group = hierarchical && item.key in groupKeys
-                        val physical = book.chapters.getOrNull(item.chapter)?.id == item.key
+                        val physical = book.chapters.getOrNull(item.chapter)?.id == item.key || nativeContents != null
+                        val speechChapters = if (nativeContents != null || group) item.groupChapters else setOf(item.chapter)
                         Row(Modifier.fillMaxWidth().testTag("reader_contents_entry_${item.key}")
                             .clickable(enabled = !selectingSpeech || !speechGenerationBusy) {
-                                if (selectingSpeech && canGenerateSpeech) toggleSpeechChapters(if (group) item.groupChapters else setOf(item.chapter))
+                                if (selectingSpeech && canGenerateSpeech) toggleSpeechChapters(speechChapters)
                                 else onJump(item.chapter, item.startPage)
                             }
                             .padding(start = 24.dp + 16.dp * item.depth, end = 24.dp, top = 16.dp, bottom = 16.dp),
                             verticalAlignment = Alignment.CenterVertically) {
                             if (selectingSpeech && canGenerateSpeech && (book.mode == LibraryMode.NOVEL || item.depth == 0)) {
-                                val indices = if (group) item.groupChapters else setOf(item.chapter)
+                                val indices = speechChapters
                                 Checkbox(speechSelection.containsAll(indices), { toggleSpeechChapters(indices) }, enabled = !speechGenerationBusy,
                                     modifier = Modifier.testTag(if (group) "reader_contents_select_group_${item.key}" else "reader_contents_select_${item.chapter}"))
                             }
-                            Text(if (item.depth == 0) "${if (hierarchical) rootOrdinals[item.key] ?: item.chapter + 1 else item.chapter + 1}".padStart(2, '0') else "·",
+                            Text(if (item.depth == 0) "${rootOrdinals[item.key] ?: item.chapter + 1}".padStart(2, '0') else "·",
                                 Modifier.width(32.dp), fontSize = 12.sp, color = colors.onSurfaceVariant)
                             Text(item.title, Modifier.weight(1f), color = if (selected) colors.primary else colors.onSurface,
                                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
@@ -575,7 +579,7 @@ internal fun ReaderContentsPanel(book: Book, chapter: Int, page: Int, settings: 
                                 val chapterProgress = generation?.chapterProgress?.get(item.chapter) ?: generation?.takeIf {
                                     item.chapter == it.chapterIndex
                                 }?.let { com.eyue.reader.data.AiSpeechChapterProgress(it.chapterCompleted, it.chapterTotal) }
-                                if (item.chapter in cachedSpeechChapters) ReaderSpeechStatusIcon(true, "本章当前音色语音已缓存",
+                                if (speechChapters.all { it in cachedSpeechChapters }) ReaderSpeechStatusIcon(true, "本章当前音色语音已缓存",
                                     Modifier.padding(horizontal = 6.dp).size(22.dp).testTag("reader_contents_cached_speech_${item.chapter}"))
                                 else if (generation != null && chapterProgress != null &&
                                     item.chapter !in generation.completedChapters) Column(Modifier.width(58.dp).padding(horizontal = 4.dp)

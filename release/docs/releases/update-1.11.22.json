@@ -1,0 +1,24 @@
+{
+  "versionCode": 66,
+  "versionName": "1.11.22",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.22",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.22/ERead-1.11.22-release.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/19Epl_s98k3WgXXyw2Qmo6Q?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/fc73905c5314",
+      "extractionCode": "MR9Q"
+    }
+  ],
+  "changelog": [
+    "保留 EPUB 原书多层目录，避免将插图和正文分片误列为章节。",
+    "已导入书籍可补充原书目录，保留阅读进度、书签与笔记。",
+    "点击翻页区域支持按住连续翻页，实体翻页键支持长按。",
+    "更多功能请自行体验。"
+  ]
+}

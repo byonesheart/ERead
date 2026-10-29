@@ -104,7 +104,7 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
                     Modifier.weight(1f).testTag("reader_tap_${mode.name.lowercase()}"))
             }
         }
-        if (settings.tapPaging != TapPagingMode.OFF) Text("两侧区域翻页，中央区域开关工具栏。",
+        if (settings.tapPaging != TapPagingMode.OFF) Text("两侧区域翻页，中央区域开关工具栏。翻页模式下按住可连续翻页，松开停止。",
             style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
     }
     if (pdf || raster || sourceCssAvailable) ReaderSettingSection("图片／PDF 裁边", trailing = {

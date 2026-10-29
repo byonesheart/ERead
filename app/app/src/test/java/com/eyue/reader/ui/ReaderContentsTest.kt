@@ -3,6 +3,7 @@ package com.eyue.reader.ui
 import com.eyue.reader.data.Chapter
 import com.eyue.reader.data.ComicSection
 import com.eyue.reader.data.PageSource
+import com.eyue.reader.data.PublicationContentsEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -10,6 +11,26 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReaderContentsTest {
+    @Test fun nativeOutlineKeepsEveryLevelAndContinuationWithoutListingReadingFragments() {
+        val chapters = List(10) { Chapter(id = "fragment-$it", title = "内部片段 $it") }
+        val contents = listOf(PublicationContentsEntry("suite", "套装", 1), PublicationContentsEntry("book", "分册", 3, "suite"),
+            PublicationContentsEntry("chapter", "第一章", 4, "book"), PublicationContentsEntry("section", "小节", 5, "chapter"),
+            PublicationContentsEntry("appendix", "附录", 7, "book"), PublicationContentsEntry("table", "年表", 7, "appendix"),
+            PublicationContentsEntry("book2", "第二册", 8, "suite"), PublicationContentsEntry("end", "最后一章", 9, "book2"))
+        val entries = readerContentsEntries(chapters, true, contents)
+        assertEquals(contents.map { it.title }, entries.map { it.title })
+        assertEquals(listOf(0, 1, 2, 3, 2, 3, 1, 2), entries.map { it.depth })
+        assertEquals(chapters.indices.toSet(), entries.first().groupChapters)
+        val positions = readerContentsPositionIndex(entries)
+        assertEquals("小节", entries[positions.current(6, 0)].title)
+        assertEquals("年表", entries[positions.current(7, 0)].title)
+        assertEquals(0, readerContentsPositionIndex(entries.filter { it.parentKey == null }).current(6, 0))
+        assertEquals(8, readerContentsEntries(chapters, false, contents).size)
+        assertTrue(readerContentsEntries(chapters, false, contents).all { it.depth == 0 && it.parentKey == null })
+        assertEquals("套装 / 分册 / 第一章 / 小节", readerSearchLocationIndex(chapters, contents).label(6, 0))
+        assertEquals(List(10) { "fragment-$it" }, chapters.map { it.id })
+    }
+
     private val chapter = Chapter(id = "chapter", title = "第1话", pages = List(8) { PageSource("$it.png") },
         subsections = listOf(ComicSection("上篇", 2, 6,
             listOf(ComicSection("场景1", 2, 4), ComicSection("场景2", 4, 6))), ComicSection("下篇", 6, 8)))

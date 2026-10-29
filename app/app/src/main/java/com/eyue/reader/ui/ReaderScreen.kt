@@ -275,6 +275,7 @@ internal fun ReaderScreen(
     var bodyCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var noteTapHandled by remember(book.id) { mutableStateOf(false) }
     var selectionReset by remember(book.id) { mutableIntStateOf(0) }
+    var holdPagingActive by remember(book.id) { mutableStateOf(false) }
     var editorKind by remember { mutableStateOf(AnnotationKind.NOTE) }
     var noteDraft by remember { mutableStateOf("") }
     var markColor by remember { mutableStateOf(ReaderMarkColors.first().second) }
@@ -330,7 +331,11 @@ internal fun ReaderScreen(
     }
     val requestedLayoutKey = layoutKey(requestedSettings.readingMode, requestedSpec)
     val chapter = book.chapters.getOrNull(chapterIndex)
-    val chapterTitle = chapter?.let { readerChapterTitle(it, pageIndex) }.orEmpty()
+    val publicationLocations = remember(importedBook.chapters, importedBook.publicationContents) {
+        importedBook.publicationContents?.takeIf { it.isNotEmpty() }?.let { readerSearchLocationIndex(importedBook.chapters, it) }
+    }
+    val chapterTitle = publicationLocations?.label(chapterIndex, pageIndex)?.substringAfterLast(" / ")
+        ?: chapter?.let { readerChapterTitle(it, pageIndex) }.orEmpty()
     val currentText = document?.text?.getOrNull(chapterIndex).orEmpty()
     val currentPages = textPages.getOrNull(chapterIndex).orEmpty()
     val scrollItemCounts = document?.scrollItemCounts
@@ -546,7 +551,8 @@ internal fun ReaderScreen(
         val previousGlobal = chapterStarts.getOrElse(chapterIndex) { 0 } + pageIndex
         fun rememberReturn(forward: Boolean) {
             // Slider callbacks can run again before Compose has rebuilt derived labels/progress.
-            val title = book.chapters.getOrNull(chapterIndex)?.let { readerChapterTitle(it, pageIndex) }.orEmpty()
+            val title = publicationLocations?.label(chapterIndex, pageIndex)?.substringAfterLast(" / ")
+                ?: book.chapters.getOrNull(chapterIndex)?.let { readerChapterTitle(it, pageIndex) }.orEmpty()
             val previousProgress = if (raster) if (totalPages > 0) (chapterStarts.getOrElse(chapterIndex) { 0 } +
                 readerVisiblePageEnd(pageIndex, pageCounts.getOrElse(chapterIndex) { 0 }, dualPage)).toFloat() / totalPages else 0f
                 else document?.scrollIndex?.progress(chapterIndex, characterOffset, previousImage) ?: progress
@@ -604,7 +610,7 @@ internal fun ReaderScreen(
                 jumpPage(previous, adjacent.page)
                 lastPagePending = needsLastPage
             }
-            else -> scope.launch { snackbar.showSnackbar(if (direction > 0) "已到全书末尾" else "已到全书开头") }
+            else -> if (!holdPagingActive) scope.launch { snackbar.showSnackbar(if (direction > 0) "已到全书末尾" else "已到全书开头") }
         }
     }
     fun openPanel(value: ReaderPanel) {
@@ -1351,7 +1357,12 @@ internal fun ReaderScreen(
             }
         }
         Box(Modifier.fillMaxSize().padding(top = ReaderBodyTopPadding, bottom = ReaderBodyBottomPadding).onSizeChanged { viewport = it }
-            .onGloballyPositioned { bodyCoordinates = it }.testTag("reader_body").then(if (sourceEbook) Modifier else tapObserver)) {
+            .onGloballyPositioned { bodyCoordinates = it }.testTag("reader_body")
+            .readerHoldPaging(book.id, settings.tapPaging, settings.readingMode != ReadingMode.SCROLL &&
+                !chromeVisible && panel == null && selectedPassage == null && txtSelection == null,
+                onHolding = { holding -> holdPagingActive = holding; if (holding && sourceEbook) ebookController.cancelTouch() }) { direction ->
+                pauseAutoReading(); noteTapHandled = true; selectionReset++; move(direction)
+            }.then(if (sourceEbook) Modifier else tapObserver)) {
             when {
                 book.chapters.isEmpty() -> Text("这本书没有可阅读的章节", Modifier.align(Alignment.Center), color = muted)
                 layoutState.error != null || documentReadError != null || renderDocument == null || (!raster && (!conversionReady || !sourceEbook && chapterIndex !in renderDocument.readyChapters ||
@@ -1382,7 +1393,7 @@ internal fun ReaderScreen(
                         initialOffset = characterOffset, initialImagePath = positionImagePath,
                         continuousChapters = importedBook.chapters, readContinuousText = chapterStore::readText,
                         dualPage = dualPage, einkMode = einkMode, foreground = foreground, selectionReset = selectionReset,
-                        selectionMenuEnabled = selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() &&
+                        selectionMenuEnabled = !holdPagingActive && selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() &&
                             tappedSourceFootnote == null && panel == null,
                         searchQuery = highlightQuery, spokenRange = spokenRange(sourceChapter), chineseConverter = chineseConverter,
                         onViewport = { state ->
@@ -1412,7 +1423,7 @@ internal fun ReaderScreen(
                         onChapterStep = { direction ->
                             val target = sourceChapter + direction
                             if (target in book.chapters.indices) jump(target, lastPage = direction < 0)
-                            else scope.launch { snackbar.showSnackbar(if (direction > 0) "已到全书末尾" else "已到全书开头") }
+                            else if (!holdPagingActive) scope.launch { snackbar.showSnackbar(if (direction > 0) "已到全书末尾" else "已到全书开头") }
                         }, onSelectionActive = { textSelectionChanged(sourceChapter, -1, it) },
                         onAction = { selection, kind -> openSelection(if (selection.imagePath == null) selection else
                             selection.copy(raster = true, quote = selection.quote.ifBlank { "正文插图" }), kind) },
@@ -1479,7 +1490,7 @@ internal fun ReaderScreen(
                                 onTextLayout = { rememberLayout(sourceChapter, index, it, renderDocument, renderPages, renderGeneration, renderStore) },
                                 onTextTap = { offset, anchor -> tapText(sourceChapter, offset, anchor) }, onEdit = if (editable) { selection -> openTxtEditor(selection) } else null,
                                 onRole = onRoleSelection?.let { callback -> { passage -> selectionReset++; callback(passage.quote) } },
-                                selectionMenuEnabled = selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() && tappedSourceFootnote == null && panel == null,
+                                selectionMenuEnabled = !holdPagingActive && selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() && tappedSourceFootnote == null && panel == null,
                                 paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter,
                                 sourceContext = renderDocument.text.getOrNull(sourceChapter),
                                 onSelectionActive = { textSelectionChanged(sourceChapter, index, it) })
@@ -1509,7 +1520,7 @@ internal fun ReaderScreen(
                             ReaderImagePage(source, textWidth, true, foreground,
                                 onTap = { if (interactive) tapImage(sourceChapter, sourcePage) },
                                 onPageTap = { x, y -> if (interactive) tapImage(sourceChapter, sourcePage, x = x, y = y) }, pdfCrop = settings.pdfCrop,
-                                onLongPress = { if (interactive) imageSelection(sourceChapter, sourcePage) }, markColor = color,
+                                onLongPress = { if (interactive && !holdPagingActive) imageSelection(sourceChapter, sourcePage) }, markColor = color,
                                 modifier = Modifier.padding(readerContentPadding(settings)).testTag("reader_image_${sourceChapter}_$sourcePage"),
                                 speechOffset = pdfSpeechOffset(sourceChapter, sourcePage), speechText = renderDocument.pageText.getOrNull(sourceChapter)?.getOrNull(sourcePage).orEmpty(),
                                 einkMode = einkMode)
@@ -1520,7 +1531,7 @@ internal fun ReaderScreen(
                                 ReaderImagePage(PageSource(image.path), textWidth, true, foreground,
                                     onTap = { if (interactive) tapImage(sourceChapter, sourcePage, page.start, image.path) },
                                     onPageTap = { x, y -> if (interactive) tapImage(sourceChapter, sourcePage, page.start, image.path, x, y) },
-                                    onLongPress = { if (interactive) inlineImageSelection(sourceChapter, sourcePage, page) }, markColor = color,
+                                    onLongPress = { if (interactive && !holdPagingActive) inlineImageSelection(sourceChapter, sourcePage, page) }, markColor = color,
                                     modifier = Modifier.padding(readerContentPadding(settings)).then(imageTapObserver)
                                         .testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode, pdfCrop = settings.pdfCrop)
                             } else ReaderSelectableText(rememberReaderAnnotatedPage(sourceText, page, book.id, sourceChapter, annotations, highlightQuery,
@@ -1531,7 +1542,7 @@ internal fun ReaderScreen(
                                 onTextTap = { offset, anchor -> if (interactive) tapText(sourceChapter, offset, anchor) },
                                 onEdit = if (editable && interactive) { selection -> openTxtEditor(selection) } else null,
                                 onRole = onRoleSelection?.let { callback -> { passage -> selectionReset++; callback(passage.quote) } },
-                                selectionMenuEnabled = interactive && selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() && tappedSourceFootnote == null && panel == null,
+                                selectionMenuEnabled = !holdPagingActive && interactive && selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() && tappedSourceFootnote == null && panel == null,
                                 paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter, sourceContext = sourceText,
                                 onSelectionActive = { textSelectionChanged(sourceChapter, sourcePage, it) })
                         }

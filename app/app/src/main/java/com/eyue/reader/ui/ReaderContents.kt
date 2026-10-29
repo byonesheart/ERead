@@ -2,6 +2,7 @@ package com.eyue.reader.ui
 
 import com.eyue.reader.data.Chapter
 import com.eyue.reader.data.ComicSection
+import com.eyue.reader.data.PublicationContentsEntry
 
 internal data class ReaderContentsEntry(val key: String, val title: String, val chapter: Int,
     val startPage: Int, val endPage: Int, val depth: Int, val parentKey: String? = null,
@@ -47,7 +48,10 @@ private fun seriesVolumeEnds(chapters: List<Chapter>): Map<Int, Int> {
 }
 
 /** Directory grouping never changes physical chapter indices or cached chapter content. */
-internal fun readerContentsEntries(chapters: List<Chapter>, hierarchical: Boolean = false): List<ReaderContentsEntry> = buildList {
+internal fun readerContentsEntries(chapters: List<Chapter>, hierarchical: Boolean = false,
+    publicationContents: List<PublicationContentsEntry>? = null): List<ReaderContentsEntry> =
+    if (!publicationContents.isNullOrEmpty() && chapters.all { it.pages.isEmpty() && it.subsections.isEmpty() })
+        readerPublicationContents(chapters, publicationContents, hierarchical) else buildList {
     fun appendChapter(index: Int, depth: Int = 0, parentKey: String? = null, groupChapters: Set<Int> = setOf(index)) {
         val chapter = chapters[index]
         add(ReaderContentsEntry(chapter.id, chapter.title, index, 0,
@@ -171,8 +175,18 @@ internal class ReaderSearchLocationIndex internal constructor(
 }
 
 /** Search hits share this one linear outline pass, rather than rebuilding a directory for each result. */
-internal fun readerSearchLocationIndex(chapters: List<Chapter>): ReaderSearchLocationIndex {
-    val entries = readerContentsEntries(chapters, hierarchical = true)
+internal fun readerSearchLocationIndex(chapters: List<Chapter>, publicationContents: List<PublicationContentsEntry>? = null): ReaderSearchLocationIndex {
+    val entries = readerContentsEntries(chapters, hierarchical = true, publicationContents)
+    if (!publicationContents.isNullOrEmpty()) {
+        val byKey = entries.associateBy { it.key }
+        val positions = readerContentsPositionIndex(entries)
+        val labels = chapters.indices.map { chapter ->
+            val item = entries.getOrNull(positions.current(chapter, 0))
+            generateSequence(item) { it.parentKey?.let(byKey::get) }.toList().asReversed().joinToString(" / ") { it.title }
+                .ifEmpty { chapters[chapter].title }
+        }
+        return ReaderSearchLocationIndex(chapters, labels, IntArray(chapters.size) { it + 1 })
+    }
     val parents = entries.filter { it.parentKey == null }.mapIndexed { index, entry -> entry.key to (index + 1 to entry.title) }.toMap()
     val sections = mutableMapOf<String, Int>()
     val chapterNumbers = IntArray(chapters.size)

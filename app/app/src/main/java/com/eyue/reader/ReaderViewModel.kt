@@ -77,6 +77,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val cloudDirtyIndex = CloudDirtyBookIndex(repository)
     private var cloudDirtyFilesRevision by mutableStateOf(0)
     private var openJob: Job? = null
+    private var contentsJob: Job? = null
     private var sessionStarted = 0L
     private var foreground = false
     private val saves = LibrarySaveCoordinator(viewModelScope,
@@ -629,9 +630,27 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         activeBookId = book.id
         sessionStarted = if (foreground) System.currentTimeMillis() else 0L
         changed(state.copy(books = state.books.map { if (it.id == book.id) book.copy(lastReadAt = System.currentTimeMillis()) else it }))
+        if (book.format == BookFormat.EPUB && book.mode == LibraryMode.NOVEL && book.publicationContents == null &&
+            (!book.sourcePath.isNullOrBlank() || !book.sourceUri.isNullOrBlank())) {
+            contentsJob = viewModelScope.launch {
+                try {
+                    val outlined = importer.withPublicationContents(book)
+                    if (activeBookId == book.id) changed(state.copy(books = state.books.map { current ->
+                        if (current.id == book.id && current.contentVersion == book.contentVersion &&
+                            current.chapters.map { it.id } == book.chapters.map { it.id }) current.copy(publicationContents = outlined.publicationContents)
+                        else current
+                    }))
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    message = "原书目录读取失败：${error.message ?: error.javaClass.simpleName}"
+                }
+            }
+        }
     }
 
     fun close() {
+        contentsJob?.cancel()
+        contentsJob = null
         openJob?.cancel()
         openJob = null
         if (activeBookId != null) flush()

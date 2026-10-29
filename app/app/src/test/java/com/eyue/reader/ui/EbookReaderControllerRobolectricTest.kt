@@ -10,6 +10,18 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
 class EbookReaderControllerRobolectricTest {
+    @Test fun holdPagingCancelsTheCurrentNativeGestureWithoutQueuingAnotherPageTurn() {
+        val controller = EbookReaderController()
+        val commands = mutableListOf<JSONObject>()
+        controller.bind(0) { commands += it }
+        controller.cancelTouch()
+        assertEquals("cancelTouch", commands.single().getString("type"))
+        assertFalse(controller.consumePending())
+        controller.unbind()
+        val count = commands.size
+        controller.cancelTouch()
+        assertEquals(count, commands.size)
+    }
     @Test fun continuousWindowNavigatesAcrossChaptersWithoutRebindingItsBrowser() {
         val controller = EbookReaderController()
         val commands = mutableListOf<JSONObject>()

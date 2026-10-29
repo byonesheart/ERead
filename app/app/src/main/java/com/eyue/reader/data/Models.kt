@@ -17,6 +17,7 @@ data class ShelfGroup(val name: String, val mode: LibraryMode, val id: String = 
 
 data class PageSource(val path: String, val pdfPage: Int = -1, val textPath: String? = null)
 data class InlineImage(val offset: Int, val path: String)
+data class PublicationContentsEntry(val id: String, val title: String, val chapter: Int, val parentId: String? = null)
 /** All ranges are [startPage, endPage) in the owning chapter's flat page list. */
 data class ComicSection(val title: String, val startPage: Int, val endPage: Int,
                         val children: List<ComicSection> = emptyList())
@@ -63,7 +64,8 @@ data class Book(
     val hasTextEdits: Boolean = false,
     val voiceRoles: List<BookVoiceRole> = emptyList(),
     val sourceFileName: String? = null,
-    val sourceFileBytes: Long? = null
+    val sourceFileBytes: Long? = null,
+    val publicationContents: List<PublicationContentsEntry>? = null
 )
 
 data class Annotation(

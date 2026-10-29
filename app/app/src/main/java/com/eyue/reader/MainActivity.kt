@@ -72,7 +72,7 @@ class MainActivity : ComponentActivity() {
         val direction = readerPageKeyDirection(event.keyCode)
         if (direction != null && readerReady && reader.activeBookId != null && reader.readerSettings.volumePaging) {
             if (event.action == KeyEvent.ACTION_DOWN) {
-                if (!event.isCanceled && event.repeatCount == 0) volumeEvents.tryEmit(direction)
+                if (!event.isCanceled) volumeEvents.tryEmit(direction)
                 return true
             }
             if (event.action == KeyEvent.ACTION_UP) return true

@@ -163,6 +163,45 @@ class ReaderScreenStartupRobolectricTest {
         compose.onNodeWithContentDescription("目录").assertIsDisplayed()
     }
 
+    @Test fun holdingTheActualReaderEdgeTurnsSeveralPagesAndReleaseKeepsTheToolbarClosed() {
+        val text = "HOLD_PAGING_BODY\n" + "A paragraph fills another page without changing the canonical text.\n".repeat(200)
+        showReader(textBook(BookFormat.TXT, text), ReadingMode.PAGED, { SilentSpeech() },
+            initialSettings = ReaderSettings(tapPaging = TapPagingMode.HORIZONTAL))
+        awaitText("HOLD_PAGING_BODY")
+        compose.waitUntil(15_000) { position.get() != null }
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithTag("reader_body").performTouchInput { down(Offset(width * .9f, center.y)) }
+        advanceHoldBy(1200)
+        val stopped = position.get()!!.offset
+        compose.runOnIdle { assertTrue("offset=$stopped", stopped > 0) }
+        compose.onNodeWithTag("reader_body").performTouchInput { up() }
+        advanceHoldBy(1500)
+        compose.runOnIdle { assertEquals(stopped, position.get()!!.offset) }
+        compose.onNodeWithTag("reader_toolbar").assertDoesNotExist()
+    }
+
+    @Test fun holdingAtTheBookBoundaryDoesNotLeaveQueuedNoticesAfterRelease() {
+        showReader(textBook(BookFormat.TXT, "HOLD_LAST_PAGE"), ReadingMode.PAGED, { SilentSpeech() },
+            initialSettings = ReaderSettings(tapPaging = TapPagingMode.HORIZONTAL))
+        awaitText("HOLD_LAST_PAGE")
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithTag("reader_body").performTouchInput { down(Offset(width * .9f, center.y)) }
+        advanceHoldBy(1500)
+        compose.onNodeWithText("已到全书末尾").assertDoesNotExist()
+        compose.onNodeWithTag("reader_body").performTouchInput { up() }
+        advanceHoldBy(1500)
+        compose.onNodeWithText("已到全书末尾").assertDoesNotExist()
+        compose.onNodeWithTag("reader_toolbar").assertDoesNotExist()
+    }
+
+    private fun advanceHoldBy(milliseconds: Long) {
+        compose.runOnUiThread { org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle() }
+        compose.mainClock.advanceTimeByFrame()
+        compose.mainClock.advanceTimeBy(milliseconds)
+        compose.runOnUiThread { org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(milliseconds)) }
+        compose.waitForIdle()
+    }
+
     @Test fun pagedNovelOpensWithSpeechFactoryIsolated() {
         val marker = "PAGED_NOVEL_STARTUP_BODY"
         showReader(textBook(BookFormat.MOBI, marker), ReadingMode.PAGED, { SilentSpeech() })

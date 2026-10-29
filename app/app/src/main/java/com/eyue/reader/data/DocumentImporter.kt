@@ -18,6 +18,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import org.json.JSONObject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
@@ -422,6 +423,23 @@ class DocumentImporter(private val context: Context) {
         }
     }
 
+    suspend fun withPublicationContents(book: Book): Book = withContext(Dispatchers.IO) {
+        if (book.format != BookFormat.EPUB || book.mode != LibraryMode.NOVEL || book.publicationContents != null || book.cloudOnly) return@withContext book
+        val work = currentCoroutineContext()
+        withLocalDocument(context, bookSource(book)) { source ->
+            val parsed = EpubArchive.readForChapters(source, book.chapters.size, catalogOnly = true) { work.ensureActive() }
+            require(parsed.sections.size == book.chapters.size) { "原书目录与已保存的正文分片不匹配，保留原阅读记录" }
+            book.chapters.forEachIndexed { index, chapter ->
+                work.ensureActive()
+                chapter.lazySourcePath?.let(::File)?.takeIf { it.isFile }?.let { manifest ->
+                    val path = JSONObject(manifest.readText()).optString("archivePath")
+                    require(path.isBlank() || path == parsed.sections[index].path) { "原书目录与已有正文顺序不匹配，保留原阅读记录" }
+                }
+            }
+            book.copy(publicationContents = epubPublicationContents(parsed))
+        }
+    }
+
     suspend fun rebuildChapters(book: Book, rule: String): Book = withContext(Dispatchers.IO) {
         val work = currentCoroutineContext()
         importTask {
@@ -493,7 +511,7 @@ class DocumentImporter(private val context: Context) {
         return Book(id = id, title = parsed.title, author = parsed.author, format = BookFormat.EPUB,
             mode = if (novel) LibraryMode.NOVEL else LibraryMode.COMIC,
             coverPath = if (novel) coverPath else cover(chapters.first().pages.first(), directory), chapters = chapters, contentVersion = 10,
-            sourcePath = source.absolutePath)
+            sourcePath = source.absolutePath, publicationContents = if (novel) epubPublicationContents(parsed) else null)
     }
 
     private fun importPdf(source: File, sourceReference: String, directory: File, id: String, title: String, mode: LibraryMode): Book {

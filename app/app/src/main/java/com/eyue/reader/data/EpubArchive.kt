@@ -15,8 +15,12 @@ data class ParsedEpub(
     val author: String,
     val sections: List<EpubSection>,
     val coverPath: String?,
-    val imagePaths: List<String>
+    val imagePaths: List<String>,
+    val navigation: List<EpubNavigationEntry> = emptyList()
 )
+
+data class EpubNavigationEntry(val id: String, val title: String, val path: String?, val fragment: String,
+                               val parentId: String? = null)
 
 /** EPUB package/spine parsing is independent of Android, so real ZIP fixtures can be tested. */
 object EpubArchive {
@@ -59,6 +63,16 @@ object EpubArchive {
         val imagePaths = images.toSet()
         val labels = mutableMapOf<String, TocLabel>()
         val anchors = mutableMapOf<String, MutableList<TocLabel>>()
+        val navigation = mutableListOf<EpubNavigationEntry>()
+        fun navigationEntry(base: String, href: String, title: String, parentId: String?): String? {
+            if (title.isBlank() || isNoteReference("", title)) return null
+            val path = href.takeIf(String::isNotBlank)?.let { runCatching { resolve(base, it) }.getOrNull() }?.takeIf { it in entries }
+            val fragment = URLDecoder.decode(href.substringAfter('#', "").replace("+", "%2B"), "UTF-8")
+            if (isFootnoteTarget("id='$fragment'")) return null
+            val id = "epub-toc-${navigation.size}"
+            navigation += EpubNavigationEntry(id, title, path, fragment, parentId)
+            return id
+        }
         fun addLabel(base: String, href: String, title: String, parentTitle: String? = null) {
             val fragment = URLDecoder.decode(href.substringAfter('#', "").replace("+", "%2B"), "UTF-8")
             if (isNoteReference("", title) || isFootnoteTarget("id='$fragment'")) return
@@ -83,9 +97,22 @@ object EpubArchive {
                 types.none { type -> type in setOf("footnotes", "endnotes", "page-list", "landmarks") } &&
                     it.getAttribute("role") !in setOf("doc-endnotes", "doc-footnote", "doc-endnote")
             }
+            fun navAttributes(node: Element) = "epub:type='${node.getAttributeNS("http://www.idpf.org/2007/ops", "type")} ${node.getAttribute("epub:type")}' role='${node.getAttribute("role")}'"
+            fun outline(node: Element, parentId: String?) {
+                if (node.elementName() == "li") {
+                    val label = node.childElements().firstOrNull { it.elementName() in setOf("a", "span") }
+                    val id = label?.takeUnless { isNoteReference(navAttributes(it), it.textContent) }
+                        ?.let { navigationEntry(navPath, it.getAttribute("href"), it.textContent.trim(), parentId) } ?: parentId
+                    node.childElements().filter { it !== label }.forEach { outline(it, id) }
+                } else if (node.elementName() == "a") {
+                    if (!isNoteReference(navAttributes(node), node.textContent)) navigationEntry(navPath, node.getAttribute("href"), node.textContent.trim(), parentId)
+                }
+                else node.childElements().forEach { outline(it, parentId) }
+            }
+            nav?.let { outline(it, null) }
             nav?.descendants("a")?.forEach {
                 val href = it.getAttribute("href")
-                val attributes = "epub:type='${it.getAttributeNS("http://www.idpf.org/2007/ops", "type")} ${it.getAttribute("epub:type")}' role='${it.getAttribute("role")}'"
+                val attributes = navAttributes(it)
                 val parentTitle = generateSequence(it.parentNode) { node -> node.parentNode }
                     .takeWhile { node -> node !== nav }.filterIsInstance<Element>()
                     .filter { node -> node.elementName() == "li" }.drop(1)
@@ -112,9 +139,17 @@ object EpubArchive {
             ?: manifest.firstOrNull { it.getAttribute("media-type") == "application/x-dtbncx+xml" }
         if (ncx != null && (mergeLegacyToc || labels.isEmpty() && anchors.isEmpty())) {
             val ncxPath = resolve(packagePath, ncx.getAttribute("href"))
+            val useNcxOutline = navigation.none { it.path != null }
+            if (useNcxOutline) navigation.clear()
+            val nodeIds = java.util.IdentityHashMap<Element, String>()
             xml(ncxPath).descendants("navPoint").forEach { point ->
                 val src = point.descendants("content").firstOrNull()?.getAttribute("src").orEmpty()
                 val label = point.descendants("navLabel").firstOrNull()?.textContent?.trim().orEmpty()
+                if (useNcxOutline) {
+                    val parentId = generateSequence(point.parentNode) { it.parentNode }.filterIsInstance<Element>()
+                        .firstOrNull { it.elementName() == "navPoint" }?.let { nodeIds[it] }
+                    navigationEntry(ncxPath, src, label, parentId)?.let { nodeIds[point] = it }
+                }
                 val parentTitle = generateSequence(point.parentNode) { it.parentNode }.filterIsInstance<Element>()
                     .filter { it.elementName() == "navPoint" }
                     .mapNotNull { parent -> parent.childElements().firstOrNull { it.elementName() == "navLabel" }
@@ -238,14 +273,14 @@ object EpubArchive {
             ?: byId[coverId]
         onProgress(1f)
         ParsedEpub(title, author, notedSections,
-            cover?.let { resolve(packagePath, it.getAttribute("href")) }?.takeIf { entries.containsKey(it) }, images)
+            cover?.let { resolve(packagePath, it.getAttribute("href")) }?.takeIf { entries.containsKey(it) }, images, navigation)
     }
 
     /** Existing books may have retained extra NCX anchors; never move their saved offsets. */
-    internal fun readForChapters(file: File, chapterCount: Int, onProgress: (Float) -> Unit = {}): ParsedEpub {
-        val parsed = read(file, onProgress = onProgress)
+    internal fun readForChapters(file: File, chapterCount: Int, catalogOnly: Boolean = false, onProgress: (Float) -> Unit = {}): ParsedEpub {
+        val parsed = read(file, catalogOnly = catalogOnly, onProgress = onProgress)
         if (parsed.sections.size == chapterCount) return parsed
-        val legacy = read(file, mergeLegacyToc = true, onProgress = { onProgress(1f) })
+        val legacy = read(file, catalogOnly = catalogOnly, mergeLegacyToc = true, onProgress = { onProgress(1f) })
         return legacy.takeIf { it.sections.size == chapterCount } ?: parsed
     }
 

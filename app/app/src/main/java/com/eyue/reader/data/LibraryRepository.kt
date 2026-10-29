@@ -167,7 +167,10 @@ class LibraryRepository(private val context: Context) {
         cloudBackupAt = json.optLong("cloudBackupAt", 0), hasTextEdits = json.optBoolean("hasTextEdits", false),
         voiceRoles = json.array("voiceRoles").objects().map(BookVoiceRole::fromJson),
         sourceFileName = json.nullableString("sourceFileName")?.takeIf { it.isNotBlank() },
-        sourceFileBytes = if (json.isNull("sourceFileBytes")) null else json.optLong("sourceFileBytes", -1).takeIf { it >= 0 }
+        sourceFileBytes = if (json.isNull("sourceFileBytes")) null else json.optLong("sourceFileBytes", -1).takeIf { it >= 0 },
+        publicationContents = if (json.isNull("publicationContents")) null else json.array("publicationContents").objects().map {
+            PublicationContentsEntry(it.getString("id"), it.getString("title"), it.getInt("chapter"), it.nullableString("parentId"))
+        }
     )
 
     internal fun readChapter(chapter: JSONObject): Chapter =
@@ -199,6 +202,9 @@ class LibraryRepository(private val context: Context) {
         .put("cloudEnabled", book.cloudEnabled).put("cloudOnly", book.cloudOnly).put("cloudBackupAt", book.cloudBackupAt)
         .put("hasTextEdits", book.hasTextEdits)
         .put("sourceFileName", book.sourceFileName).put("sourceFileBytes", book.sourceFileBytes)
+        .apply { book.publicationContents?.let { contents -> put("publicationContents", JSONArray(contents.map {
+            JSONObject().put("id", it.id).put("title", it.title).put("chapter", it.chapter).put("parentId", it.parentId)
+        })) } }
         .apply { if (book.voiceRoles.isNotEmpty()) put("voiceRoles", JSONArray(book.voiceRoles.map { it.toJson() })) }
 
     internal fun writeChapter(chapter: Chapter): JSONObject =
