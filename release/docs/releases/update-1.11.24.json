@@ -1,0 +1,24 @@
+{
+  "versionCode": 73,
+  "versionName": "1.11.24",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.24",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.24/ERead-1.11.24-release.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/11C-mVFE7ddisF4MELzJqiA?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/2e40abc34bf1",
+      "extractionCode": "w6xV"
+    }
+  ],
+  "changelog": [
+    "优化覆盖、滑动和仿真翻页及拖拽响应，稳定模式切换时的阅读位置。",
+    "自动翻页／滚动支持快捷启动、运行时调速，展开工具栏不中断自动阅读。",
+    "完善长按选字、系统翻译及跨页选取，简化阅读设置。",
+    "更多功能请自行体验。"
+  ]
+}

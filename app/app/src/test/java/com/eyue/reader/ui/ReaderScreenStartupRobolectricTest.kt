@@ -103,7 +103,7 @@ class ReaderScreenStartupRobolectricTest {
         root.deleteRecursively()
     }
 
-    @Test fun automaticPagingStartsFromSettingsAndManualControlsPauseIt() {
+    @Test fun automaticPagingStartsImmediatelyAndToolbarDoesNotPauseIt() {
         val marker = "AUTO_PAGING_READER_BODY"
         showReader(textBook(BookFormat.TXT, "$marker\n" + "This is a paragraph on the next automatically turned page.\n".repeat(120)),
             ReadingMode.PAGED, { SilentSpeech() }, initialSettings = ReaderSettings(autoPageSeconds = 2f))
@@ -113,9 +113,8 @@ class ReaderScreenStartupRobolectricTest {
         assertTrue(compose.onNodeWithTag("reader_auto_floating_action").fetchSemanticsNode().boundsInRoot.bottom <= toolbarTop)
         assertTrue(compose.onNodeWithTag("reader_speech_floating_action").fetchSemanticsNode().boundsInRoot.bottom <= toolbarTop)
         compose.onNodeWithTag("reader_auto_floating_action").performClick()
-        compose.onNodeWithText("自动翻页").assertIsDisplayed()
+        compose.onNodeWithTag("reader_toolbar").assertDoesNotExist()
         compose.mainClock.autoAdvance = false
-        compose.onNodeWithTag("reader_auto_start").performClick()
         fun advance(milliseconds: Long) {
             compose.runOnUiThread { org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle() }
             compose.mainClock.advanceTimeByFrame()
@@ -131,15 +130,20 @@ class ReaderScreenStartupRobolectricTest {
         compose.waitUntil(15000) { advance(32); position.get()!!.offset > afterFirst }
         compose.onNodeWithTag("reader_body").performTouchInput { click() }
         advance(32)
-        compose.onNodeWithTag("reader_auto_floating_action").performClick()
-        advance(32)
         compose.onNodeWithTag("reader_auto_bar").assertIsDisplayed()
-        val pausedOffset = position.get()?.offset
-        advance(5000)
-        assertEquals(pausedOffset, position.get()?.offset)
+        compose.onNodeWithTag("reader_auto_stop").assertIsDisplayed()
+        compose.onNodeWithContentDescription("自动翻页间隔").assertIsDisplayed()
+        val previousOffset = position.get()!!.offset
+        advance(2300)
+        compose.waitUntil(15000) { advance(32); position.get()!!.offset > previousOffset }
+        compose.onNodeWithTag("reader_toolbar").assertIsDisplayed()
+        compose.onNodeWithTag("reader_auto_bar").assertIsDisplayed()
         compose.onNodeWithTag("reader_auto_stop").performClick()
         advance(32)
         compose.onNodeWithTag("reader_auto_bar").assertDoesNotExist()
+        val stopped = position.get()!!.offset
+        advance(5000)
+        assertEquals(stopped, position.get()!!.offset)
         compose.mainClock.autoAdvance = true
     }
 

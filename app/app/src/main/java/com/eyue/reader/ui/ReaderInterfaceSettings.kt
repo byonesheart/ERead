@@ -112,18 +112,6 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
             else "两侧区域翻页，中央区域开关工具栏。长按正文选取文字，短按后横向拖动翻页。",
             style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
     }
-    if (pdf || raster || sourceCssAvailable) ReaderCollapsibleSection("图片／PDF 裁边",
-        onReset = { onSettings(settings.copy(pdfCrop = PdfCrop())) }) {
-        val crop = settings.pdfCrop.normalized()
-        listOf("左" to crop.left, "右" to crop.right, "上" to crop.top, "下" to crop.bottom).forEach { (label, value) ->
-            ReaderInterfaceSlider("${label}边", "图片${label}侧裁边", value, 0f..0.4f, .01f, { amount ->
-                val changed = when (label) { "左" -> crop.copy(left = amount); "右" -> crop.copy(right = amount)
-                    "上" -> crop.copy(top = amount); else -> crop.copy(bottom = amount) }
-                onSettings(settings.copy(pdfCrop = changed))
-            }, { "${(it * 100).roundToInt()}%" })
-        }
-        Text("始终启用，0% 保留完整页面；仅调整显示，不修改原文件。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-    }
     if (!raster) ReaderCollapsibleSection("文字与排版", readerTypographySummary(settings), onReset = {
         val defaults = ReaderSettings()
         onSettings(settings.copy(fontSize = defaults.fontSize, fontName = defaults.fontName, fontPath = defaults.fontPath,
@@ -201,6 +189,18 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
             { onSettings(settings.copy(marginTop = it)) }, { "${it.roundToInt()}dp" })
         ReaderInterfaceSlider("下距", "阅读下边距", settings.marginBottom, 0f..64f, 1f,
             { onSettings(settings.copy(marginBottom = it)) }, { "${it.roundToInt()}dp" })
+    }
+    if (pdf || raster || sourceCssAvailable) ReaderCollapsibleSection("图片／PDF 裁边",
+        onReset = { onSettings(settings.copy(pdfCrop = PdfCrop())) }) {
+        val crop = settings.pdfCrop.normalized()
+        listOf("左" to crop.left, "右" to crop.right, "上" to crop.top, "下" to crop.bottom).forEach { (label, value) ->
+            ReaderInterfaceSlider("${label}边", "图片${label}侧裁边", value, 0f..0.4f, .01f, { amount ->
+                val changed = when (label) { "左" -> crop.copy(left = amount); "右" -> crop.copy(right = amount)
+                    "上" -> crop.copy(top = amount); else -> crop.copy(bottom = amount) }
+                onSettings(settings.copy(pdfCrop = changed))
+            }, { "${(it * 100).roundToInt()}%" })
+        }
+        Text("始终启用，0% 保留完整页面；仅调整显示，不修改原文件。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
     }
 }
 

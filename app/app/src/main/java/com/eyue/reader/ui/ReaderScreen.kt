@@ -585,12 +585,12 @@ internal fun ReaderScreen(
             jump(target.chapter, offset = target.offset, imagePath = imagePath, imageIndexHint = target.imageIndex)
         }
     }
-    fun move(direction: Int) {
+    fun move(direction: Int, preserveToolbar: Boolean = false) {
         com.eyue.reader.data.ImportWorkPriority.interaction()
         if (book.chapters.isEmpty() || document == null || layoutState.preparing || layoutState.restoring) return
         highlightQuery = ""
         pauseSpeechForNavigation()
-        chromeVisible = false
+        if (!preserveToolbar) chromeVisible = false
         if (sourceEbook) {
             ebookController.move(direction, expectedChapterIndex = chapterIndex)
             return
@@ -628,11 +628,11 @@ internal fun ReaderScreen(
         panel = value; chromeVisible = false
     }
     fun tapPage() {
-        pauseAutoReading()
         if (panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS) { panel = null; chromeVisible = false }
         else chromeVisible = !chromeVisible
     }
     fun tapPageAt(x: Float, y: Float) {
+        if (autoReading) { tapPage(); return }
         pauseAutoReading()
         val direction = readerTapPageDirection(settings.tapPaging, x, y)
         if (panel != null || chromeVisible || direction == 0) tapPage() else move(direction)
@@ -1315,14 +1315,14 @@ internal fun ReaderScreen(
     val autoAtEnd = if (sourceEbook) ebookAtEnd else if (raster) totalPages > 0 && globalPage >= totalPages &&
         (settings.readingMode != ReadingMode.SCROLL || !listState.canScrollForward) else atScrollEnd || atPagedEnd
     LaunchedEffect(autoReading, autoAtEnd) { if (autoReading && autoAtEnd) autoReading = false }
-    ReaderAutoAdvance(autoReading && !autoPaused && readerForeground && !chromeVisible && panel == null &&
+    ReaderAutoAdvance(autoReading && !autoPaused && readerForeground && panel == null &&
         requestedSettings.readingMode == activeReadingMode &&
         selectedPassage == null && txtSelection == null && activeTextSelections.isEmpty() && tappedNoteIds.isEmpty() &&
         tappedSourceFootnote == null && progressDraft == null && !manualDrag && !speaking && !speechSession.active &&
         document != null && !layoutState.preparing && !layoutState.restoring && layoutState.error == null &&
         documentReadError == null && (!sourceEbook || ebookViewport.ready) && !autoAtEnd,
         settings.readingMode, settings.autoPageSeconds, settings.autoScrollSpeed, density.density,
-        sourceEbook, ebookController, listState) { move(1) }
+        sourceEbook, ebookController, listState) { move(1, preserveToolbar = true) }
 
     // Lazy/animated content can be measured after document has been reset for new settings.
     val renderDocument = document
@@ -1348,7 +1348,6 @@ internal fun ReaderScreen(
         val tapObserver = Modifier.pointerInput(book.id, raster) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                latestPauseAuto()
                 bodyCoordinates?.takeIf { it.isAttached }?.localToWindow(down.position)?.let { point ->
                     pointerAnchor = Rect(point.x - 2, point.y - 2, point.x + 2, point.y + 2)
                 }
@@ -1359,7 +1358,7 @@ internal fun ReaderScreen(
                 do {
                     val event = awaitPointerEvent(PointerEventPass.Final)
                     val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                    if ((change.position - down.position).getDistance() > pointerConfiguration.touchSlop) moved = true
+                    if (!moved && (change.position - down.position).getDistance() > pointerConfiguration.touchSlop) { moved = true; latestPauseAuto() }
                     upTime = change.uptimeMillis
                     released = !change.pressed
                 } while (!released)
@@ -1370,7 +1369,6 @@ internal fun ReaderScreen(
         val imageTapObserver = Modifier.pointerInput(book.id) {
             awaitEachGesture {
                 awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                latestPauseAuto()
                 // Images wait for a possible double tap. Their own tap callback opens the
                 // note or controls after that delay, so the body must not toggle early.
                 noteTapHandled = true
@@ -1680,23 +1678,26 @@ internal fun ReaderScreen(
             ReaderBrightnessControl(requestedSettings.brightness, { onSettings(requestedSettings.copy(brightness = it)) },
                 Modifier.align(Alignment.BottomStart).padding(start = 8.dp,
                     bottom = with(density) { (toolbarHeight + when {
-                        autoControlsVisible -> autoControlsHeight + floatingActionsHeight
+                        autoControlsVisible || autoReading -> autoControlsHeight + floatingActionsHeight
                         speechSession.active -> speechBarHeight + floatingActionsHeight
                         else -> 0
-                    }).toDp() } + if (autoControlsVisible || speechSession.active) 24.dp else 12.dp))
-            ReaderFloatingActions(autoReading, speechSession.active, onAuto = { autoControlsVisible = !autoControlsVisible },
+                    }).toDp() } + if (autoControlsVisible || autoReading || speechSession.active) 24.dp else 12.dp))
+            ReaderFloatingActions(autoReading, speechSession.active, onAuto = {
+                if (autoReading) autoControlsVisible = true
+                else { stopSpeech(); autoReading = true; autoPaused = false; autoControlsVisible = false; chromeVisible = false }
+            },
                 onSpeech = { autoControlsVisible = false; if (speechSession.active) stopSpeech() else startSpeech() },
                 modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = with(density) { toolbarHeight.toDp() } + 8.dp)
                     .onSizeChanged { floatingActionsHeight = it.height })
         }
-        if (chromeVisible && autoControlsVisible && panel == null) {
+        if (chromeVisible && (autoControlsVisible || autoReading) && panel == null) {
             Surface(shape = appShape(16.dp), color = colors.surfaceContainerHigh, contentColor = colors.onSurface,
                 shadowElevation = 4.dp, modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp)
                     .padding(bottom = with(density) { (toolbarHeight + floatingActionsHeight).toDp() } + 16.dp)
                     .testTag("reader_auto_bar").onSizeChanged { autoControlsHeight = it.height }) {
                 ReaderAutoControls(requestedSettings, onSettings, autoReading, onStart = {
                     stopSpeech(); autoReading = true; autoPaused = false; autoControlsVisible = false; chromeVisible = false
-                }, onStop = { autoReading = false; autoControlsVisible = false }, onDismiss = { autoControlsVisible = false })
+                }, onStop = { autoReading = false; autoControlsVisible = false }, onDismiss = { autoControlsVisible = false; if (autoReading) chromeVisible = false })
             }
         }
         if (chromeVisible && !autoControlsVisible && speechSession.active && selectedPassage == null && txtSelection == null) {

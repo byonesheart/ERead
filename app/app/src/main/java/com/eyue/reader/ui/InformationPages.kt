@@ -187,7 +187,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent(onHistory: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 提高翻页灵敏度，支持快速短划翻页。\n• 拖拽翻页跟随所选的覆盖、滑动或仿真效果。\n• 修复自动翻页只翻一页就暂停的问题。\n• 修复反复切换翻页和滚动时阅读位置向章首偏移。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 优化覆盖、滑动和仿真翻页及拖拽响应，稳定模式切换时的阅读位置。\n• 自动翻页／滚动支持快捷启动、运行时调速，展开工具栏不中断自动阅读。\n• 完善长按选字、系统翻译及跨页选取，简化阅读设置。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton(onClick = onHistory, modifier = Modifier.testTag("settings_history_changelog")) { Text("历史更新日志") }
     }

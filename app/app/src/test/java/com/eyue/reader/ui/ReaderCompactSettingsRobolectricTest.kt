@@ -48,6 +48,13 @@ class ReaderCompactSettingsRobolectricTest {
         compose.onNodeWithText("时间").assertExists()
     }
 
+    @Test fun imageCropIsTheLastInterfaceSection() {
+        compose.setContent { MaterialTheme { ReaderCompactSettings(ReaderSettings(), false, {}, {}, {}, sourceCssAvailable = true) } }
+        val crop = compose.onNodeWithTag("reader_section_图片／PDF 裁边").performScrollTo()
+        val margins = compose.onNodeWithTag("reader_section_页边距")
+        assertTrue(margins.fetchSemanticsNode().positionInRoot.y < crop.fetchSemanticsNode().positionInRoot.y)
+    }
+
     private fun expand(vararg titles: String) {
         titles.forEach { title ->
             val header = compose.onNodeWithTag("reader_section_$title")
