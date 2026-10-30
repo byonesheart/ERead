@@ -9,6 +9,7 @@
         autoScrollRemainder = 0;
         autoScrollSpeed = Number.isFinite(speed) ? Math.max(0, Math.min(160, speed)) : 0;
         if (!autoScrollSpeed) return;
+        loaded.forEach((item, index) => commandChild(index, {type:'resetReflowAnchor'}));
         function tick(now) {
             if (document.hidden || manual) { setAutoScroll(0); return; }
             const elapsed = autoScrollTime ? Math.min(50, now - autoScrollTime) / 1000 : 0;
@@ -39,6 +40,7 @@
     }
     function beginManual() {
         setAutoScroll(0); pending = null;
+        loaded.forEach((item, index) => commandChild(index, {type:'resetReflowAnchor'}));
         if (!manual) { manual = true; send('manualStart'); }
         clearTimeout(endTimer);
         endTimer = setTimeout(() => { manual = false; send('manualEnd'); schedule(); }, 140);

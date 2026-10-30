@@ -100,10 +100,12 @@ class ReaderSliderCommitTest {
         compose.setContent {
             MaterialTheme { ReaderCompactSettings(settings, false, ::commit, {}, { imageImports++ }) }
         }
+        compose.onNodeWithTag("reader_section_文字与排版").performScrollTo().performClick()
         compose.onNodeWithText("宋体").performScrollTo().performClick()
         compose.runOnIdle { assertEquals("系统宋体", settings.fontName); assertEquals(1, commits) }
         compose.onNodeWithText("加粗").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(settings.bold) }
+        compose.onNodeWithTag("reader_section_纸张").performScrollTo().performClick()
         compose.onNodeWithText("导入图片").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(1, imageImports) }
     }
@@ -138,6 +140,11 @@ class ReaderSliderCommitTest {
     private fun commit(value: ReaderSettings) { commits++; settings = value }
 
     private fun beginDrag(description: String): SemanticsNodeInteraction {
+        compose.onNodeWithTag("reader_section_文字与排版").let {
+            if (it.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription] == "已收起") it.performScrollTo().performClick()
+        }
+        val title = if (description.contains("行间距")) "行距" else "字距"
+        compose.onNodeWithTag("reader_section_$title").performScrollTo().performClick()
         val slider = compose.onNodeWithContentDescription(description).assertIsDisplayed()
         slider.performTouchInput {
             down(Offset(width * .3f, center.y))

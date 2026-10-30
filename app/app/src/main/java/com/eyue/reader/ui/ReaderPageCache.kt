@@ -161,6 +161,7 @@ internal fun readerLayoutCacheKey(
     text(settings.fontName); file(settings.fontPath); text(settings.chineseConversion.name)
     integer(settings.fontSize.toBits()); integer(if (settings.bold) 1 else 0)
     integer(settings.lineHeight.toBits()); integer(settings.letterSpacing.toBits()); integer(settings.paragraphSpacing.toBits())
+    integer(settings.paragraphIndent.toBits())
     integer(settings.marginLeft.toBits()); integer(settings.marginRight.toBits())
     integer(settings.marginTop.toBits()); integer(settings.marginBottom.toBits())
     integer(if (settings.useSourceCss) 1 else 0)

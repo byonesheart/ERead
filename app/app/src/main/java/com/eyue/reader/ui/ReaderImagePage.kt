@@ -82,7 +82,7 @@ internal fun ReaderImagePage(
     pdfCrop: PdfCrop = PdfCrop(), onPageTap: ((Float, Float) -> Unit)? = null
 ) {
     val context = LocalContext.current
-    val crop = if (pdfCrop.enabled) pdfCrop.normalized() else PdfCrop()
+    val crop = pdfCrop.normalized()
     val cacheKey = "${source.path}:${source.pdfPage}:${targetWidth.coerceAtMost(1600)}:$crop"
     var bitmap by remember(cacheKey) { mutableStateOf<Bitmap?>(null) }
     var failure by remember(cacheKey) { mutableStateOf<String?>(null) }
@@ -184,7 +184,7 @@ internal fun ReaderImagePage(
 }
 
 internal fun decodeReaderPage(context: Context, source: PageSource, targetWidth: Int, pdfCrop: PdfCrop = PdfCrop()): Bitmap {
-    val crop = if (pdfCrop.enabled) pdfCrop.normalized() else PdfCrop()
+    val crop = pdfCrop.normalized()
     if (source.pdfPage >= 0) {
         return withDocumentDescriptor(context, source.path) { descriptor ->
             PdfRenderer(descriptor).use { renderer ->

@@ -20,7 +20,7 @@ git push -u origin main
 后续修改的正常提交方式：
 
 ```powershell
-git add -- README.md .gitignore app release
+git add -- AGENTS.md README.md .gitignore app release
 git commit -m "Describe the change"
 git push
 ```
@@ -28,6 +28,16 @@ git push
 推送前检查 `git status` 和暂存差异，确认未包含自己的文件及凭据。安装包使用 Releases 发布，无需提交到 Git 历史。
 
 ## 发布可检查的 Android 新版本
+
+### 默认先发布测试版
+
+后续每次 Android 更新都先发布 GitHub 测试版。普通的“发布／上传更新”按测试版处理；只有明确要求发布正式版，才更新正式渠道与网盘。测试版使用带 `beta` 的版本名，`versionCode` 全局递增；GitHub Release 必须设置 `prerelease: true`、`make_latest: "false"`，APK 与源码附件核验完成后再公开。
+
+测试版**不上传百度、夸克或其他网盘**，不改 README 的正式下载链接、不改 `update.json` 与 `release/update.json`。测试渠道独立使用根目录 `update-preview.json`，沿用正式清单的版本号、版本名、下载地址、Release 地址及更新说明字段，并设置 `prerelease: true`、`mirrors: []`。它只在相应 GitHub 测试版和安装包已公开、摘要和大小验证通过后更新；未发布前不要生成宣告新版本的清单。测试 APK 同样使用原签名、不可调试的 Release 构建。
+
+正式版发布前确认对应更新已经发布过测试版。正式包必须再增加 `versionCode`，使已安装测试版的设备也能升级；保留已有测试标签及附件。下文的网站与网盘步骤仅适用于正式版。
+
+### 正式版更新与发布
 
 从 1.11.22 起，Android 软件优先从作者网站检查版本；网络、HTTP 或清单校验失败时才回退到 GitHub：
 
@@ -41,12 +51,12 @@ https://raw.githubusercontent.com/byonesheart/ERead/main/update.json
 
 1. 在仓库根目录下的 `app/app/build.gradle.kts` 增加 `versionCode`，设置 `versionName`。
 2. 从 `app/` 工程目录执行 `scripts/build.ps1 -Tasks @('assembleRelease','lintRelease')`（仓库根路径为 `app/scripts/build.ps1`），使用原签名密钥为 `app/build/outputs/apk/release/app-release-unsigned.apk` 签名，汇总为仓库 `release/android/ERead-版本-release.apk` 并核验不可调试属性及签名；发布源码包也存放于 `release/android/`，设备测试包保留在 Android 模块的构建目录。
-3. 打开 [创建 Release](https://github.com/byonesheart/ERead/releases/new)，填写标签（例如 `v1.9.5`）、名称及核心更新日志，上传对应 APK 后发布，同时更新网盘内的安装包。
+3. 明确要求发布正式版后，打开 [创建 Release](https://github.com/byonesheart/ERead/releases/new)，填写正式标签、名称及核心更新日志，上传对应 APK 后发布，同时更新网盘内的安装包。
 4. 更新共用目录中的 `release/update.json`，同步根目录 `update.json` 兼容副本和 `release/docs/releases/update-版本.json` 版本记录；同时更新 `release/README.md`、`release/CHANGELOG.md` 及 Release 说明，再提交并推送。清单中的版本、Release 页面、APK 下载链接和 `mirrors` 网盘链接及提取码必须与实际发布内容一致。
 
-当前 `1.11.22` 正式版使用 versionCode **66**，对应标签为 `v1.11.22`，附件名为 `ERead-1.11.22-release.apk`；源码附件为 `ERead-1.11.22-release-source.zip`。此前的正式版和测试构建保留，不改写旧标签或附件。
+当前 `1.11.23` 正式版使用 versionCode **69**，对应标签为 `v1.11.23`，附件名为 `ERead-1.11.23-release.apk`；源码附件为 `ERead-1.11.23-release-source.zip`。此前的正式版和测试构建保留，不改写旧标签或附件。
 
-本版清单见 [update-1.11.22.json](releases/update-1.11.22.json)，[共用更新清单](../update.json) 与 [根目录兼容清单](../../update.json) 在安装包公开后同步。发布时先上传安装包、源码包并发布 Release，确认附件完整后，再推送主分支的新清单，避免提前宣告尚未发布的安装包。GitHub 登录授权有效时，可自动完成这套流程。网盘使用已授权的上传分享工具，将 APK 存入百度和夸克的 `/项目/E阅`，百度提取码为 `READ`，校验实际分享结果后同步根目录 `README.md` 的下载表、Release 和更新清单。
+本版清单见 [update-1.11.23.json](releases/update-1.11.23.json)，[共用更新清单](../update.json) 与 [根目录兼容清单](../../update.json) 在安装包公开后同步。发布时先上传安装包、源码包并发布 Release，确认附件完整后，再推送主分支的新清单，避免提前宣告尚未发布的安装包。GitHub 登录授权有效时，可自动完成这套流程。网盘使用已授权的上传分享工具，将 APK 存入百度和夸克的 `/项目/E阅`，百度提取码为 `READ`，校验实际分享结果后同步根目录 `README.md` 的下载表、Release 和更新清单。
 
 文档与许可证副本位于 `release/docs/`，共用图片位于 `release/assets/`，宣传原始素材位于 `release/marketing/`。Windows 安装包使用 `release/windows/`，并需另行设计平台与架构明确的更新清单；不要将 Android 清单中的 APK 链接替换为 Windows 产物。
 

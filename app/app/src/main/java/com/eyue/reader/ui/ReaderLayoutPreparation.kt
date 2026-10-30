@@ -59,6 +59,7 @@ internal fun readerLayoutSpec(settings: ReaderSettings, density: Density, direct
         textStyle = TextStyle(fontFamily = family, fontSize = (settings.fontSize * calibration.sizeScale).sp,
             lineHeight = (settings.fontSize * settings.lineHeight).sp,
             letterSpacing = (settings.letterSpacing + settings.fontSize * calibration.trackingEm).sp,
+            textIndent = androidx.compose.ui.text.style.TextIndent((settings.fontSize * settings.paragraphIndent).sp, 0.sp),
             lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Proportional, LineHeightStyle.Trim.None),
             fontWeight = if (settings.bold) FontWeight.Bold else FontWeight.Normal),
         textWidth = (bodyViewport.width - with(workerDensity) {

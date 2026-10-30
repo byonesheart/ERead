@@ -1,0 +1,25 @@
+{
+  "versionCode": 69,
+  "versionName": "1.11.23",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.23",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.23/ERead-1.11.23-release.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1gyxNAMlxrMVfn5CH-KmWxg?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/446a8d070ec9",
+      "extractionCode": "WriB"
+    }
+  ],
+  "changelog": [
+    "翻页支持从纸张边缘拖动，松手完成翻页或回弹。",
+    "优化排版设置响应，修复反复调整间距后阅读位置偏移。",
+    "界面设置默认收起，支持独立重置、首行缩进和隐藏系统状态栏，翻页方式随配置保存。",
+    "亮度调节移至工具栏上方左侧；纸张选择与全局日夜模式独立。",
+    "更多功能请自行体验。"
+  ]
+}

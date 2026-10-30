@@ -52,11 +52,15 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
     SideEffect { vm.updateSystemTheme(systemDark) }
     val dark = vm.state.themeMode.isDark(systemDark)
     EReadTheme(dark = dark, eink = vm.state.einkMode, style = vm.state.appTheme) {
-        LaunchedEffect(updateSession) { updateSession.checkOnStartup() }
         val state = vm.state.withResolvedTheme(systemDark)
         val settings = vm.readerSettings.copy(nightMode = dark)
         val density = LocalDensity.current
         val context = LocalContext.current
+        val developerPreferences = remember(context) { DeveloperModePreferences(context) }
+        LaunchedEffect(updateSession, developerPreferences) {
+            updateSession.configureDeveloperMode(developerPreferences.enabled)
+            updateSession.checkOnStartup()
+        }
         val ebookSession = remember(context) { EbookReaderSession(context) }
         DisposableEffect(ebookSession) { onDispose { ebookSession.close() } }
         val direction = LocalLayoutDirection.current
@@ -325,7 +329,16 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                     onEinkMode = vm::setEinkMode, onTabletDualPage = vm::setTabletDualPage,
                                     restoreProgress = vm.cloudRestoreProgress,
                                     onAppTheme = vm::setAppTheme, availableUpdate = updateSession.availableUpdate,
-                                    onCheckUpdate = updateSession::checkNow, onShowRecentReading = vm::setShowRecentReading)
+                                    onCheckUpdate = updateSession::checkNow, onShowRecentReading = vm::setShowRecentReading,
+                                    developerMode = updateSession.developerMode, onEnableDeveloperMode = {
+                                        runCatching { developerPreferences.enable() }.onSuccess {
+                                            updateSession.configureDeveloperMode(true)
+                                            updateSession.checkOnStartup()
+                                        }.onFailure { error ->
+                                            android.widget.Toast.makeText(context, error.message ?: "设置保存失败，请重试",
+                                                android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    })
                             }
                         }
                     }

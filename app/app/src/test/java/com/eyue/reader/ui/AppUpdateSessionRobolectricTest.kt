@@ -6,6 +6,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
@@ -120,5 +122,44 @@ class AppUpdateSessionRobolectricTest {
         session.checkNow()
         assertFalse(session.hasUnreadUpdate)
         assertNull(session.availableUpdate)
+    }
+
+    @Test fun unlockingInvalidatesTheStableRequestAndChecksTheTestChannelWithoutAStaleResult() = runBlocking {
+        var stableChecks = 0
+        var previewChecks = 0
+        val pending = CompletableDeferred<AppUpdateResult>()
+        val session = AppUpdateSession({ stableChecks++; withContext(NonCancellable) { pending.await() } }, Dispatchers.Unconfined,
+            { previewChecks++; update(100).copy(prerelease = true) }).also { store.put("updates", it) }
+        session.checkOnStartup()
+        assertEquals(1, stableChecks)
+        session.configureDeveloperMode(true)
+        assertTrue(session.developerMode)
+        session.checkOnStartup()
+        assertEquals(1, previewChecks)
+        pending.complete(update(99))
+        assertEquals(100, session.availableUpdate!!.versionCode)
+        assertTrue(session.availableUpdate!!.prerelease)
+        assertTrue(session.hasUnreadUpdate)
+        session.checkOnStartup()
+        assertEquals(1, previewChecks)
+        session.setSettingsVisible(true)
+        assertFalse(session.hasUnreadUpdate)
+    }
+
+    @Test fun restoringTheEnabledPreferenceUsesOnlyTheOptedInChecker() = runBlocking {
+        var normal = 0
+        var preview = 0
+        val session = AppUpdateSession({ normal++; update() }, Dispatchers.Unconfined,
+            { preview++; update(100).copy(prerelease = true) }).also { store.put("updates", it) }
+        session.configureDeveloperMode(true)
+        session.checkOnStartup()
+        assertEquals(0, normal); assertEquals(1, preview)
+        session.checkNow()
+        assertEquals(2, preview)
+        session.configureDeveloperMode(false)
+        assertNull(session.availableUpdate)
+        assertFalse(session.hasUnreadUpdate)
+        session.checkOnStartup()
+        assertEquals(1, normal)
     }
 }

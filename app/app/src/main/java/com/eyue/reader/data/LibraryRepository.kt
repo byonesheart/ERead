@@ -316,12 +316,19 @@ class LibraryRepository(private val context: Context) {
             chapterRule = selected.pattern,
             fonts = json.array("fonts").objects().map { ImportedFont(it.getString("name"), it.getString("path")) },
             chapterRules = presets, activeChapterRuleId = selected.id,
-            appearanceProfiles = readReaderThemeProfiles(json.optJSONArray("appearanceProfiles"), defaults.appearanceSnapshot()),
+            appearanceProfiles = readReaderThemeProfiles(json.optJSONArray("appearanceProfiles"), defaults.appearanceSnapshot().copy(
+                readingMode = enumValue(json.optString("readingMode"), defaults.readingMode),
+                pageTurnStyle = enumValue(json.optString("pageTurnStyle"), defaults.pageTurnStyle),
+                tapPaging = enumValue(json.optString("tapPaging"), defaults.tapPaging),
+                continuousEbookScroll = json.optBoolean("continuousEbookScroll", defaults.continuousEbookScroll))),
             activeAppearanceProfileId = json.nullableString("activeAppearanceProfileId"),
             hierarchicalContents = json.optBoolean("hierarchicalContents", defaults.hierarchicalContents),
             useSourceCss = json.optBoolean("useSourceCss", defaults.useSourceCss),
             continuousEbookScroll = json.optBoolean("continuousEbookScroll", defaults.continuousEbookScroll),
             verticalText = json.optBoolean("verticalText", defaults.verticalText),
+            paragraphIndent = json.optDouble("paragraphIndent", defaults.paragraphIndent.toDouble()).toFloat()
+                .let { if (it.isFinite()) it.coerceIn(0f, 4f) else defaults.paragraphIndent },
+            hideStatusBar = json.optBoolean("hideStatusBar", defaults.hideStatusBar),
             tapPaging = enumValue(json.optString("tapPaging"), defaults.tapPaging),
             autoScrollSpeed = json.optDouble("autoScrollSpeed", defaults.autoScrollSpeed.toDouble()).toFloat()
                 .let { if (it.isFinite()) it.coerceIn(8f, 160f) else defaults.autoScrollSpeed },
@@ -363,6 +370,7 @@ class LibraryRepository(private val context: Context) {
         .put("useSourceCss", settings.useSourceCss)
         .put("continuousEbookScroll", settings.continuousEbookScroll)
         .put("verticalText", settings.verticalText)
+        .put("paragraphIndent", settings.paragraphIndent.toDouble()).put("hideStatusBar", settings.hideStatusBar)
         .put("marginLeft", settings.marginLeft.toDouble()).put("marginRight", settings.marginRight.toDouble())
         .put("marginTop", settings.marginTop.toDouble()).put("marginBottom", settings.marginBottom.toDouble())
         .put("chapterRules", JSONArray(presets.map {

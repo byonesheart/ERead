@@ -3,7 +3,7 @@
     let canonical = '', entries = [], characters = [], images = [], config = {}, decorations = {};
     let initialized = false, started = false, manual = false, automatic = false, lastViewport = '', noteTargets = new Set();
     let frame = 0, endTimer = 0, resizeTimer = 0, touch = null, selectionTimer = 0, overlay;
-    let navigationAnchor = null;
+    let navigationAnchor = null, reflowAnchor = null;
     let sourceNotes = [];
     let suppressClickUntil = 0;
     let autoScrollFrame = 0, autoScrollSpeed = 0, autoScrollTime = 0, autoScrollRemainder = 0;
@@ -13,6 +13,7 @@
         autoScrollRemainder = 0;
         autoScrollSpeed = Number.isFinite(speed) && config.mode === 'SCROLL' ? Math.max(0, Math.min(160, speed)) : 0;
         if (!autoScrollSpeed) return;
+        navigationAnchor = null; reflowAnchor = null;
         function tick(now) {
             if (document.hidden || manual || touch) { setAutoScroll(0); return; }
             const elapsed = autoScrollTime ? Math.min(50, now - autoScrollTime) / 1000 : 0;
@@ -329,7 +330,7 @@
             atStart: position <= 1, atEnd: position + (horizontal ? innerWidth : view.height) >= extent - 1};
     }
     function report(force) {
-        if (!started || pageAnimation || pageTransition) return;
+        if (!started || pageAnimation || pageTransition || touch?.dragging) return;
         const now = performance.now();
         if (!force && now - lastBridgeReport < 80) { drawDecorations(); return; }
         lastBridgeReport = now;
@@ -342,7 +343,7 @@
         if (!frame) frame = requestAnimationFrame(function () { frame = 0; report(false); });
     }
     function beginManual() {
-        navigationAnchor = null;
+        navigationAnchor = null; reflowAnchor = null;
         if (!manual) { manual = true; send('manualStart'); }
         clearTimeout(endTimer);
     }
@@ -358,7 +359,8 @@
         scrollTo(pageHorizontal() ? target : 0, pageHorizontal() ? 0 : target);
         requestAnimationFrame(function () { automatic = false; report(true); });
     }
-    function navigate(command) {
+    function navigate(command, reflow) {
+        if (!reflow) reflowAnchor = null;
         finishPageAnimation();
         const targetImage = command.image && images.find(image => image.path === command.image);
         const range = targetImage ? null : rangeFor(command.offset || 0, Math.min(canonical.length, (command.offset || 0) + 1));
@@ -404,18 +406,19 @@
             const previous = pageTransition; pageTransition = null;
             previous.animations.forEach(animation => animation.cancel());
             previous.transition.skipTransition(); automatic = false;
+            if (previous.drag && previous.commit !== true) scrollTo(previous.origin * pageStride(), 0);
         }
         if (!pageAnimation) return;
         const previous = pageAnimation; pageAnimation = null; previous.cancel();
         automatic = false;
         if (overlay) overlay.style.visibility = '';
     }
-    function transitionPage(page, direction) {
+    function transitionPage(page, direction, dragging) {
         finishPageAnimation();
         // Keep both snapshots in Chromium's compositor. Android software WebView
         // readback can still contain the previous GPU frame, even after a visual callback.
         if (!document.startViewTransition) { animatePage(page); return; }
-        const state = {page:page, transition:null, animations:[]};
+        const state = {page:page, origin:pageIndex(), transition:null, animations:[], drag:!!dragging, progress:0, commit:null};
         pageTransition = state; automatic = true;
         state.transition = document.startViewTransition(function () {
             if (pageTransition !== state) return;
@@ -424,6 +427,13 @@
         state.transition.ready.then(function () {
             if (pageTransition !== state) return;
             const curl = config.turn === 'CURL', forward = direction > 0;
+            if (dragging && config.turn === 'SLIDE') {
+                const sign = direction > 0 ? -1 : 1;
+                ['old', 'new'].forEach((kind, index) => state.animations.push(document.documentElement.animate([
+                    {transform:`translateX(${index ? -sign * 100 : 0}%)`},
+                    {transform:`translateX(${index ? 0 : sign * 100}%)`}
+                ], {duration:180, fill:'both', pseudoElement:'::view-transition-' + kind + '(root)'})));
+            } else {
             const moving = forward ? 'old' : 'new', fixed = forward ? 'new' : 'old';
             const movingPseudo = '::view-transition-' + moving + '(root)';
             const still = document.documentElement.animate([{zIndex:1},{zIndex:1}],
@@ -438,12 +448,57 @@
                 {duration:curl ? 280 : 180, easing:'cubic-bezier(.2,.65,.3,1)', fill:'both', pseudoElement:movingPseudo});
             animation.id = still.id = 'eread-page-turn';
             state.animations.push(animation, still);
+            }
+            if (dragging) {
+                state.animations.forEach(animation => { animation.pause(); animation.currentTime = state.progress * Number(animation.effect.getTiming().duration); });
+                if (state.commit !== null) settleEdgeTransition(state, state.commit);
+            }
         }).catch(function () { /* A resize or a newer navigation can skip a transition. */ });
         state.transition.finished.then(function () {
             state.animations.forEach(animation => animation.cancel());
             if (pageTransition !== state) return;
+            if (state.drag && !state.commit) scrollTo(state.origin * pageStride(), 0);
             pageTransition = null; automatic = false; report(true);
         });
+    }
+    function settleEdgeTransition(state, commit) {
+        state.commit = commit;
+        state.animations.forEach(animation => { animation.playbackRate = commit ? 1 : -1; animation.play(); });
+    }
+    function edgeDrag(point) {
+        if (!touch || !touch.edge || config.mode !== 'PAGED' || config.vertical || config.eink) return false;
+        const direction = touch.edge, delta = (touch.x - point.clientX) * direction;
+        const progress = Math.max(0, Math.min(.999, delta / innerWidth));
+        if (!touch.dragging && delta <= 10) return false;
+        if (!touch.dragging) {
+            touch.dragging = true; clearTimeout(selectionTimer); getSelection().removeAllRanges();
+            beginManual();
+            const span = config.dual ? 2 : 1, target = pageIndex() + direction * span;
+            touch.origin = pageIndex(); touch.target = target;
+            if (target >= 0 && target < pageCount() && document.startViewTransition) transitionPage(target, direction, true);
+        }
+        touch.progress = progress;
+        if (pageTransition?.drag) {
+            pageTransition.progress = progress;
+            pageTransition.animations.forEach(animation => { animation.currentTime = progress * Number(animation.effect.getTiming().duration); });
+        } else {
+            // Older WebViews still track the live column flow without snapshots.
+            document.body.style.transform = `translateX(${-direction * progress * innerWidth}px)`;
+        }
+        return true;
+    }
+    function releaseEdgeDrag(previous, cancel) {
+        suppressClickUntil = Date.now() + 300;
+        const commit = !cancel && previous.progress >= .22;
+        if (pageTransition?.drag) settleEdgeTransition(pageTransition, commit);
+        else {
+            document.body.style.transform = '';
+            if (commit) {
+                if (previous.target < 0 || previous.target >= pageCount()) send('chapterStep', {direction:previous.edge});
+                else moveToPage(previous.target);
+            }
+        }
+        if (manual) endManual();
     }
     function animatePage(page) {
         finishPageAnimation();
@@ -466,8 +521,8 @@
         };
     }
     async function configure(next, preserve, force) {
-        const generation = ++configurationGeneration;
         if (!force && started && JSON.stringify(next) === JSON.stringify(config)) return;
+        const generation = ++configurationGeneration;
         let font = null;
         if (next.font === 'eread-selected') {
             if (!loadedFonts.has(next.fontUrl)) {
@@ -478,9 +533,10 @@
             if (generation !== configurationGeneration) return;
         }
         finishPageAnimation();
-        const old = preserve && started ? viewport() : null;
-        const anchor = old && navigationAnchor && (navigationAnchor.image || Array.from(rangeFor(navigationAnchor.offset,
-            Math.min(canonical.length, navigationAnchor.offset + 1)).getClientRects()).some(visible)) ? navigationAnchor : old;
+        const old = preserve && started && (!continuousHost || continuousHost.isActive(frameChapter)) ? viewport() : null;
+        const anchor = reflowAnchor || ((old && navigationAnchor && (navigationAnchor.image || Array.from(rangeFor(navigationAnchor.offset,
+            Math.min(canonical.length, navigationAnchor.offset + 1)).getClientRects()).some(visible))) ? navigationAnchor : old);
+        if (anchor && !reflowAnchor) reflowAnchor = {...anchor};
         config = next;
         if (activeFont !== font) {
             if (activeFont) document.fonts.delete(activeFont);
@@ -503,7 +559,7 @@
             ${Array.from(sourceFontRatios).map(ratio => `[data-eread-scale="${ratio}"] { font-size:${config.fontSize * Number(ratio)}px!important; }`).join('\n')}
             [data-eread-body] { font-size:${config.fontSize}px!important; line-height:${config.lineHeight}px!important;
                 letter-spacing:${config.letterSpacing}px!important; font-weight:${config.bold ? 700 : 400}!important;
-                margin-top:0!important; margin-bottom:${config.paragraphGap}px!important; text-indent:2em!important; }
+                margin-top:0!important; margin-bottom:${config.paragraphGap}px!important; }
             ${vertical ? `[data-eread-body] { margin-block-start:0!important; margin-block-end:${config.paragraphGap}px!important; margin-inline:0!important; }` : ''}
             [data-eread-body-size] { font-size:inherit!important; line-height:inherit!important; letter-spacing:inherit!important; }
             [data-eread-body-weight] { font-weight:inherit!important; }
@@ -538,13 +594,23 @@
         document.querySelectorAll('[data-eread-paragraph]').forEach(node => {
             node.style.setProperty('margin-block-start', '0px', 'important');
             node.style.setProperty('margin-block-end', Math.max(0, Number(config.paragraphGap) || 0) + 'px', 'important');
+            node.style.setProperty('line-height', config.lineHeight + 'px', 'important');
+            node.style.setProperty('letter-spacing', config.letterSpacing + 'px', 'important');
+            node.style.setProperty('text-indent', (Number.isFinite(config.indent) ? config.indent : 2) + 'em', 'important');
+            // Inline publisher spans can otherwise retain their own !important metrics.
+            node.querySelectorAll('*:not(sup):not(sub):not(rt):not(ruby)').forEach(child => {
+                if (child.closest('sup,sub,ruby,rt,code,kbd')) return;
+                child.style.setProperty('line-height', 'inherit', 'important');
+                child.style.setProperty('letter-spacing', 'inherit', 'important');
+            });
         });
         applyPublicationAppearance();
         applyImageCrop();
         fitPageBoundary();
         measureChapter();
         if (anchor && (!continuousHost || continuousHost.isActive(frameChapter)))
-            navigate({offset: anchor.offset, image: anchor.image});
+            navigate({offset: anchor.offset, image: anchor.image}, true);
+        requestAnimationFrame(() => { if (generation === configurationGeneration) report(true); });
     }
     function rectsFor(start, end) {
         if (end <= start || start < 0 || !characters.length) return [];
@@ -659,7 +725,7 @@
         convertText();
     }
     function convertText() {
-        const anchor = started ? navigationAnchor || viewport() : null;
+        const anchor = started ? reflowAnchor || navigationAnchor || viewport() : null;
         const all = entries.map(entry => entry.original).join('');
         const converted = JSON.parse(bridge.convert(all));
         const forward = converted.forward;
@@ -679,7 +745,7 @@
         rangeGeometry.clear();
         if (started) {
             fitPageBoundary(); measureChapter();
-            if (anchor && (!continuousHost || continuousHost.isActive(frameChapter))) navigate(anchor);
+            if (anchor && (!continuousHost || continuousHost.isActive(frameChapter))) navigate(anchor, true);
             report(true);
         }
     }
@@ -728,7 +794,7 @@
                 applyImageCrop();
                 if (continuousHost) { measureChapter(); report(true); return; }
                 fitPageBoundary();
-                navigate(navigationAnchor || {offset:stableOffset});
+                navigate(reflowAnchor || navigationAnchor || {offset:stableOffset}, true);
             };
             nodes.forEach(node => node.addEventListener('load', resourceReady));
             document.fonts.addEventListener('loadingdone', resourceReady);
@@ -768,6 +834,7 @@
             else if (value.type === 'autoScroll') setAutoScroll(value.speed);
             else if (value.type === 'page') moveToPage(value.page);
             else if (value.type === 'clearSelection') getSelection().removeAllRanges();
+            else if (value.type === 'resetReflowAnchor') { navigationAnchor = null; reflowAnchor = null; }
             else if (value.type === 'configure') await configure(value.config, true);
             else if (value.type === 'convert') convertText();
             else if (value.type === 'decorate') { decorations = value.decorations; drawDecorations(); }
@@ -798,6 +865,8 @@
         finishPageAnimation();
         touch = {x:event.touches[0].clientX, y:event.touches[0].clientY, time:Date.now(), moved:false, image:event.target.closest('img,image,svg'),
             startAtStart: scrollY <= 1, startAtEnd: scrollY + innerHeight >= document.documentElement.scrollHeight - 1};
+        const edgeWidth = Math.max(24, Math.min(40, innerWidth * .08));
+        touch.edge = touch.x <= edgeWidth ? -1 : touch.x >= innerWidth - edgeWidth ? 1 : 0;
         clearTimeout(selectionTimer);
         if (touch.image) selectionTimer = setTimeout(function () {
             const image = images.find(image => image.node === touch.image || touch.image.contains(image.node));
@@ -807,12 +876,17 @@
     document.addEventListener('touchmove', function (event) {
         if (!touch) return;
         const point = event.touches[0];
+        if (event.touches.length !== 1) {
+            const previous = touch; touch = null; if (previous.dragging) releaseEdgeDrag(previous, true); return;
+        }
         if (Math.hypot(point.clientX - touch.x, point.clientY - touch.y) > 10) { touch.moved = true; clearTimeout(selectionTimer); beginManual(); }
+        if (edgeDrag(point)) { event.preventDefault(); return; }
         if (config.mode !== 'SCROLL' && getSelection().isCollapsed) event.preventDefault();
     }, {passive:false});
     document.addEventListener('touchend', function (event) {
         if (!touch) return;
         const previous = touch; touch = null; clearTimeout(selectionTimer);
+        if (previous.dragging) { releaseEdgeDrag(previous, false); return; }
         if (previous.moved && config.mode !== 'SCROLL' && getSelection().isCollapsed) {
             const point = event.changedTouches[0], delta = config.mode === 'PAGED' ? point.clientX - previous.x : point.clientY - previous.y;
             if (Math.abs(delta) > 24) step(delta < 0 ? 1 : -1);
@@ -824,7 +898,8 @@
         if (manual) endManual();
     }, {passive:true});
     document.addEventListener('touchcancel', function () {
-        touch = null;
+        const previous = touch; touch = null;
+        if (previous?.dragging) releaseEdgeDrag(previous, true);
         clearTimeout(selectionTimer);
         if (manual) endManual();
     }, {passive:true});

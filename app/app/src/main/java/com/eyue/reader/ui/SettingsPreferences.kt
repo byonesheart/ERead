@@ -71,7 +71,8 @@ private enum class SettingsPage(val title: String) {
     onEinkMode: (Boolean) -> Unit = {}, onTabletDualPage: (Boolean) -> Unit = {},
     onCheckUpdate: (suspend () -> AppUpdateResult)? = null,
     restoreProgress: CloudOperationProgress? = null, onAppTheme: (AppThemeStyle) -> Unit = {},
-    availableUpdate: AppUpdateResult? = null, onShowRecentReading: (Boolean) -> Unit = {}) {
+    availableUpdate: AppUpdateResult? = null, onShowRecentReading: (Boolean) -> Unit = {},
+    developerMode: Boolean = false, onEnableDeveloperMode: () -> Unit = {}) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
     val page = pages.lastOrNull()
@@ -185,7 +186,7 @@ private enum class SettingsPage(val title: String) {
                             { openAuthorLink(context, AUTHOR_PROJECTS) })
                     }
                 }
-                SettingsPage.AUTHOR -> AuthorContent()
+                SettingsPage.AUTHOR -> AuthorContent(developerMode, onEnableDeveloperMode)
                 SettingsPage.CONTRIBUTORS -> ContributorsContent()
                 SettingsPage.SUPPORT -> SupportContent()
                 SettingsPage.FEEDBACK -> FeedbackContent()

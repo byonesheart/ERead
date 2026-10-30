@@ -56,7 +56,7 @@ class ReaderImageCropRobolectricTest {
             waitForHeight(300f)
             compose.runOnIdle { crop = PdfCrop(true, .25f) }
             waitForHeight(400f)
-            compose.runOnIdle { crop = crop.copy(enabled = false) }
+            compose.runOnIdle { crop = PdfCrop() }
             waitForHeight(300f)
         } finally { file.delete() }
     }
@@ -71,7 +71,10 @@ class ReaderImageCropRobolectricTest {
             assertEquals(.15, crop.getDouble("top"), .0001)
             settings = settings.copy(pdfCrop = PdfCrop())
         }
-        compose.runOnIdle { assertFalse(requireNotNull(config).getJSONObject("imageCrop").getBoolean("enabled")) }
+        compose.runOnIdle {
+            assertTrue(requireNotNull(config).getJSONObject("imageCrop").getBoolean("enabled"))
+            assertEquals(0.0, requireNotNull(config).getJSONObject("imageCrop").getDouble("left"), .0001)
+        }
     }
 
     @Test fun pngAndWebpCropAllFourSidesAndRestoreWithoutChangingTheSource() {
@@ -84,7 +87,7 @@ class ReaderImageCropRobolectricTest {
                 val original = file.readBytes()
                 val crop = PdfCrop(true, .1f, .2f, .1f, .2f)
                 val image = decodeReaderPage(context, PageSource(file.path), 400, crop)
-                val restored = decodeReaderPage(context, PageSource(file.path), 400, crop.copy(enabled = false))
+                val restored = decodeReaderPage(context, PageSource(file.path), 400, PdfCrop())
                 try {
                     assertEquals(280, image.width); assertEquals(420, image.height)
                     assertGreen(image.getPixel(2, 2)); assertGreen(image.getPixel(277, 417))

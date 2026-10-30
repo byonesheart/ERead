@@ -259,7 +259,13 @@ internal fun EbookReaderSurface(
         JSONObject().put("start", it.start).put("end", it.end).put("label", it.label).put("content", it.content)
     }) }
     val latestSourceNotes by rememberUpdatedState(sourceNotes)
-    LaunchedEffect(config.toString(), ready) { if (ready) { webView?.appliedConfig = config.toString(); invoke(JSONObject().put("type", "configure").put("config", config)) } }
+    LaunchedEffect(config.toString(), ready) { if (ready) {
+        delay(100)
+        if (webView?.appliedConfig != config.toString()) {
+            webView?.appliedConfig = config.toString()
+            invoke(JSONObject().put("type", "configure").put("config", config))
+        }
+    } }
     LaunchedEffect(chineseConverter, ready) { if (ready) {
         invoke(JSONObject().put("type", "convert")); controller.consumePending()
     } }
@@ -468,6 +474,7 @@ internal fun rememberEbookConfig(settings: ReaderSettings, foreground: Color, du
             .put("lineHeight", settings.fontSize * settings.lineHeight * fontScale)
             .put("letterSpacing", (settings.letterSpacing + settings.fontSize * calibration.trackingEm) * fontScale)
             .put("paragraphGap", settings.fontSize * settings.paragraphSpacing * fontScale)
+            .put("indent", settings.paragraphIndent)
             .put("bold", settings.bold).put("night", settings.nightMode)
             .put("color", "#%06x".format(foreground.toArgb() and 0xffffff))
             .put("overrideInk", palette.overridePublisherColors).put("paper", "#%06x".format(paper.toArgb() and 0xffffff))

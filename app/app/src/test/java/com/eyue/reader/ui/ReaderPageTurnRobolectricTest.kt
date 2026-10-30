@@ -46,6 +46,37 @@ class ReaderPageTurnRobolectricTest {
     @Test fun coverKeepsTheNextSheetStationaryAndSupportsRepeatedForwardAndBackTurns() = assertSheetTurns(PageTurnStyle.COVER)
     @Test fun slideMovesBothSheetsAndSupportsRepeatedForwardAndBackTurns() = assertSheetTurns(PageTurnStyle.SLIDE)
 
+    @Test fun draggingPaperRevealsTheTargetAndDoesNotRecomposeTextForEveryPointerMove() {
+        val view = AtomicReference<View>()
+        val calls = AtomicInteger()
+        val style = mutableStateOf(PageTurnStyle.COVER)
+        val drag = ReaderPaperDrag(ReaderPageLocation(0, 0), ReaderPageLocation(0, 1), 1, .4f)
+        compose.setContent { view.set(LocalView.current)
+            MaterialTheme { Box(Modifier.size(300.dp, 400.dp)) {
+                ReaderPageTurnFrame(drag.origin, false, listOf(2), style.value, false, false, Color.White, drag = drag) { _, page, _ ->
+                    calls.incrementAndGet()
+                    Box(Modifier.fillMaxSize().background(pageColor(page)))
+                }
+            } }
+        }
+        for (effect in PageTurnStyle.entries) {
+            compose.runOnIdle { style.value = effect; drag.fraction = .4f }
+            compose.waitForIdle()
+            val initialCalls = calls.get()
+            val drawn = captureDrawnPage(view.get(), effect, "reader_paper_drag")
+            try {
+                val pixels = drawn.asImageBitmap().toPixelMap()
+                assertTrue(sameColor(pixels[5, pixels.height / 2], Color.Red))
+                assertTrue(sameColor(pixels[pixels.width - 6, pixels.height / 2], Color.Blue))
+            } finally { drawn.recycle() }
+            repeat(4) { index ->
+                compose.runOnIdle { drag.fraction = .4f + index * .03f }
+                captureDrawnPage(view.get(), effect, "reader_paper_drag").recycle()
+            }
+            assertEquals("Pointer movement must only redraw the paper layer", initialCalls, calls.get())
+        }
+    }
+
     @OptIn(androidx.compose.runtime.ExperimentalComposeApi::class)
     @Test fun curlAnimationRedrawsWithoutRecomposingItsPageContentsOnEveryFrame() {
         val anchor = mutableStateOf(ReaderPageLocation(0, 0))
@@ -180,8 +211,8 @@ class ReaderPageTurnRobolectricTest {
 
     /** PixelCopy waits for a real vsync, which a paused Robolectric looper does not produce.
      * Drawing the actual Compose host into a native Canvas keeps the fold's clipping/gradient pixel assertions. */
-    private fun captureDrawnPage(view: View, style: PageTurnStyle): Bitmap {
-        val bounds = compose.onNodeWithTag("reader_animation_${style.name.lowercase()}").fetchSemanticsNode().boundsInRoot
+    private fun captureDrawnPage(view: View, style: PageTurnStyle, tag: String = "reader_animation_${style.name.lowercase()}"): Bitmap {
+        val bounds = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
         return compose.runOnIdle {
             val full = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
             view.draw(Canvas(full))

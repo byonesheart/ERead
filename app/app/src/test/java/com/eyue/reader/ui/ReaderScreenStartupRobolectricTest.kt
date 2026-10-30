@@ -129,6 +129,7 @@ class ReaderScreenStartupRobolectricTest {
         compose.waitUntil(15_000) { position.get() != null }
         revealToolbar()
         compose.onNodeWithContentDescription("界面设置").performClick()
+        compose.onNodeWithTag("reader_section_翻页方式").performScrollTo().performClick()
         compose.onNodeWithTag("reader_tap_horizontal").performScrollTo().performClick()
         compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(width * .5f, height * .2f)) }
         compose.onNodeWithTag("reader_settings_sheet").assertDoesNotExist()
@@ -286,6 +287,7 @@ class ReaderScreenStartupRobolectricTest {
         sheet.assertIsDisplayed()
         assertTrue(windowHeight > 0)
         assertTrue(sheet.fetchSemanticsNode().boundsInRoot.height <= windowHeight / 2f + 1f)
+        compose.onNodeWithTag("reader_section_文字与排版").performScrollTo().performClick()
         compose.onNodeWithText("行距").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("字距").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("黑体").performScrollTo().performClick()
@@ -318,6 +320,7 @@ class ReaderScreenStartupRobolectricTest {
         revealToolbar()
         compose.onNodeWithContentDescription("界面设置").performClick()
         compose.onNodeWithText("配置1", substring = false).performTouchInput { longClick() }
+        compose.onNodeWithTag("reader_section_文字与排版").performScrollTo().performClick()
         compose.onNodeWithText("字体", substring = false).performScrollTo()
         compose.onNodeWithTag("reader_more_fonts").performScrollTo().assertIsDisplayed().performClick()
         compose.onNodeWithText("等宽字体", substring = false).performClick()
@@ -342,6 +345,9 @@ class ReaderScreenStartupRobolectricTest {
         }
         compose.waitUntil(10_000) { speech.playing.value }
         compose.onNodeWithTag("reader_speech_bar").assertIsDisplayed()
+        val brightnessBounds = compose.onNodeWithTag("reader_brightness").fetchSemanticsNode().boundsInRoot
+        val speechBounds = compose.onNodeWithTag("reader_speech_bar").fetchSemanticsNode().boundsInRoot
+        assertTrue("Brightness stays to the left and above floating narration controls", brightnessBounds.bottom <= speechBounds.top)
         val speedSlider = compose.onNodeWithContentDescription("悬浮栏朗读语速")
         speedSlider.performTouchInput {
             down(Offset(width / 3f, height / 2f))
@@ -386,6 +392,43 @@ class ReaderScreenStartupRobolectricTest {
             Chapter(title = "第 ${index + 1} 章", textPath = File(root, "$index.txt").apply { writeText(text) }.absolutePath,
                 characterCount = text.length)
         })
+
+    @Test fun repeatedInterfaceSpacingChangesKeepTheOriginalMidChapterReadingPosition() {
+        val text = "ANCHOR_TEXT_START\n" + "This paragraph has enough text to wrap into many pages and stay readable.\n".repeat(200)
+        val book = textBook(BookFormat.TXT, text).copy(characterOffset = 4000, progress = .3f)
+        showReader(book, ReadingMode.PAGED, { SilentSpeech() })
+        awaitChapter(0)
+        val original = position.get()!!.offset
+        assertTrue(original > 2000)
+        revealToolbar(); compose.onNodeWithContentDescription("界面设置").performClick()
+        compose.onNodeWithTag("reader_section_文字与排版").performScrollTo().performClick()
+        compose.onNodeWithTag("reader_section_行距").performScrollTo().performClick()
+        compose.onNodeWithTag("reader_section_字距").performScrollTo().performClick()
+        repeat(8) { index ->
+            compose.onNodeWithContentDescription("阅读行间距").performScrollTo()
+                .performSemanticsAction(SemanticsActions.SetProgress) { it(if (index % 2 == 0) 2.2f else 1.85f) }
+            compose.waitUntil(15_000) { compose.onAllNodesWithTag("reader_loading").fetchSemanticsNodes().isEmpty() }
+            compose.onNodeWithContentDescription("阅读字间距").performScrollTo()
+                .performSemanticsAction(SemanticsActions.SetProgress) { it(if (index % 2 == 0) 1.5f else .5f) }
+            compose.waitUntil(15_000) { compose.onAllNodesWithTag("reader_loading").fetchSemanticsNodes().isEmpty() }
+            compose.runOnIdle { assertEquals("Spacing change $index drifted toward chapter start", original, position.get()!!.offset) }
+        }
+    }
+
+    @Test fun paperEdgeDragPreviewsTheNextNativePageAndCommitsOnlyOnRelease() {
+        showReader(textBook(BookFormat.TXT, "PAPER_DRAG_BODY\n" + "A long paragraph for dragging across physical book pages.\n".repeat(150)),
+            ReadingMode.PAGED, { SilentSpeech() })
+        awaitText("PAPER_DRAG_BODY")
+        val original = position.get()!!.offset
+        val body = compose.onNodeWithTag("reader_body")
+        body.performTouchInput { down(Offset(width - 2f, center.y)); moveBy(Offset(-width * .4f, 0f)) }
+        compose.onNodeWithTag("reader_paper_drag").assertExists()
+        compose.runOnIdle { assertEquals(original, position.get()!!.offset) }
+        body.performTouchInput { up() }
+        compose.waitUntil(15_000) { position.get()!!.offset > original }
+        compose.onNodeWithTag("reader_paper_drag").assertDoesNotExist()
+        compose.onNodeWithTag("reader_toolbar").assertDoesNotExist()
+    }
 
     private fun showReader(book: Book, mode: ReadingMode, factory: ((Context) -> ReaderSpeechController)? = null,
         saveProgress: com.eyue.reader.data.BookSaveProgress? = null,

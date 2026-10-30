@@ -31,6 +31,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.platform.testTag
@@ -109,6 +111,7 @@ internal fun ReaderPageTurnFrame(
     anchor: ReaderPageLocation, dualPage: Boolean, chapterPageCounts: List<Int>, style: PageTurnStyle,
     vertical: Boolean, einkMode: Boolean, paper: Color,
     backgroundContent: @Composable () -> Unit = {},
+    drag: ReaderPaperDrag? = null,
     content: @Composable (chapter: Int, page: Int, interactive: Boolean) -> Unit
 ) {
     val spread: @Composable (ReaderPageLocation, Boolean) -> Unit = { location, interactive ->
@@ -125,6 +128,23 @@ internal fun ReaderPageTurnFrame(
             }
         }
         }
+    }
+    if (drag != null) {
+        val forward = drag.direction > 0
+        val visibility = remember(drag) { derivedStateOf { if (forward) 1f - drag.fraction else drag.fraction } }
+        Box(Modifier.fillMaxSize().clipToBounds().testTag("reader_paper_drag")) {
+            if (style == PageTurnStyle.SLIDE) {
+                Box(Modifier.fillMaxSize().graphicsLayer { translationX = -drag.direction * drag.fraction * size.width }) { spread(drag.origin, false) }
+                Box(Modifier.fillMaxSize().graphicsLayer { translationX = drag.direction * (1f - drag.fraction) * size.width }) { spread(drag.target, false) }
+            } else {
+                spread(if (forward) drag.target else drag.origin, false)
+                Box(Modifier.fillMaxSize().then(if (style == PageTurnStyle.CURL) Modifier.readerPaperFold(visibility, false, paper)
+                    else Modifier.graphicsLayer { translationX = -visibility.let { 1f - it.value } * size.width })) {
+                    spread(if (forward) drag.origin else drag.target, false)
+                }
+            }
+        }
+        return
     }
     if (einkMode || vertical) {
         spread(anchor, true)

@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.BrightnessAuto
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material.icons.outlined.UnfoldMore
@@ -29,6 +28,7 @@ import com.eyue.reader.data.TapPagingMode
 import com.eyue.reader.data.PdfCrop
 import com.eyue.reader.data.autosaveAppearanceProfile
 import com.eyue.reader.data.saveAppearanceProfile
+import com.eyue.reader.data.resetInterface
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -47,8 +47,12 @@ internal fun ReaderCompactSettings(
     val editingProfile = themedSettings.appearanceProfiles.firstOrNull { it.id == editingProfileId }
     val updateSettings: (ReaderSettings) -> Unit = { onSettings(it.autosaveAppearanceProfile()) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)) {
-        ReaderSettingsHeading(if (editingProfile == null) "界面" else "界面 · ${editingProfile.name}",
-            "调整会自动保存到当前配置", Modifier.testTag("reader_interface_title"))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { ReaderSettingsHeading(if (editingProfile == null) "界面" else "界面 · ${editingProfile.name}",
+                "调整会自动保存到当前配置", Modifier.testTag("reader_interface_title")) }
+            TextButton(onClick = { updateSettings(themedSettings.resetInterface(raster)) },
+                modifier = Modifier.testTag("reader_interface_reset")) { Text("重置") }
+        }
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             ReaderThemeProfiles(themedSettings, updateSettings, editingProfileId, { editingProfileId = it }, onNewProfile = {
                 editingProfileId = null
@@ -75,7 +79,7 @@ internal fun ReaderPreferencesPanel(settings: ReaderSettings, onSettings: (Reade
 private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, onSettings: (ReaderSettings) -> Unit,
     onImportBackground: () -> Unit, onFonts: () -> Unit, sourceCssAvailable: Boolean, pdf: Boolean) {
     val colors = MaterialTheme.colorScheme
-    ReaderSettingSection("翻页方式") {
+    ReaderCollapsibleSection("翻页方式", readerPagingSummary(settings)) {
         ReaderSettingOptions("模式") {
             listOf(Triple(ReadingMode.SCROLL, "滚动", Icons.Outlined.UnfoldMore),
                 Triple(ReadingMode.PAGED, "翻页", Icons.Outlined.SwapHoriz),
@@ -107,26 +111,20 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
         if (settings.tapPaging != TapPagingMode.OFF) Text("两侧区域翻页，中央区域开关工具栏。翻页模式下按住可连续翻页，松开停止。",
             style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
     }
-    if (pdf || raster || sourceCssAvailable) ReaderSettingSection("图片／PDF 裁边", trailing = {
-        TextButton(onClick = { onSettings(settings.copy(pdfCrop = PdfCrop())) }, modifier = Modifier.testTag("reader_pdf_crop_reset")) { Text("重置") }
-    }) {
-        ReaderToggle("裁去页面边缘", settings.pdfCrop.enabled, Modifier.testTag("reader_pdf_crop_enabled")) {
-            onSettings(settings.copy(pdfCrop = settings.pdfCrop.copy(enabled = it)))
+    if (pdf || raster || sourceCssAvailable) ReaderCollapsibleSection("图片／PDF 裁边",
+        onReset = { onSettings(settings.copy(pdfCrop = PdfCrop())) }) {
+        val crop = settings.pdfCrop.normalized()
+        listOf("左" to crop.left, "右" to crop.right, "上" to crop.top, "下" to crop.bottom).forEach { (label, value) ->
+            ReaderInterfaceSlider("${label}边", "图片${label}侧裁边", value, 0f..0.4f, .01f, 0f, { amount ->
+                val changed = when (label) { "左" -> crop.copy(left = amount); "右" -> crop.copy(right = amount)
+                    "上" -> crop.copy(top = amount); else -> crop.copy(bottom = amount) }
+                onSettings(settings.copy(pdfCrop = changed))
+            }, { "${(it * 100).roundToInt()}%" })
         }
-        if (settings.pdfCrop.enabled) {
-            val crop = settings.pdfCrop
-            listOf("左" to crop.left, "右" to crop.right, "上" to crop.top, "下" to crop.bottom).forEach { (label, value) ->
-                ReaderAdjustableSlider("${label}边", "图片${label}侧裁边", value, 0f..0.4f, .01f, { amount ->
-                    val changed = when (label) { "左" -> crop.copy(left = amount); "右" -> crop.copy(right = amount)
-                        "上" -> crop.copy(top = amount); else -> crop.copy(bottom = amount) }
-                    onSettings(settings.copy(pdfCrop = changed))
-                }, { "${(it * 100).roundToInt()}%" })
-            }
-            Text("适用于漫画页面和正文插图，仅调整显示，不修改原文件。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-        }
+        Text("始终启用，0% 保留完整页面；仅调整显示，不修改原文件。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
     }
-    if (!raster) ReaderSettingSection("文字与排版") {
-        ReaderAdjustableSlider("字号", "阅读字号", settings.fontSize, 12f..36f, 1f,
+    if (!raster) ReaderCollapsibleSection("文字与排版", readerTypographySummary(settings)) {
+        ReaderInterfaceSlider("字号", "阅读字号", settings.fontSize, 12f..36f, 1f, 19f,
             { onSettings(settings.copy(fontSize = it)) }, { it.roundToInt().toString() })
         ReaderSettingRow("字体") {
             listOf("跟随系统" to "系统", "系统宋体" to "宋体", "系统黑体" to "黑体").forEach { (name, label) ->
@@ -148,12 +146,14 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
                     { onSettings(settings.copy(verticalText = vertical)) }, Modifier.weight(1f).testTag("reader_vertical_text_$vertical"))
             }
         }
-        ReaderAdjustableSlider("行距", "阅读行间距", settings.lineHeight, 1.2f..2.4f, .05f,
+        ReaderInterfaceSlider("行距", "阅读行间距", settings.lineHeight, 1.2f..2.4f, .05f, 1.85f,
             { onSettings(settings.copy(lineHeight = it)) }, { String.format(Locale.getDefault(), "%.2f", it) })
-        ReaderAdjustableSlider("段距", "阅读段间距", settings.paragraphSpacing, 0f..2f, .1f,
+        ReaderInterfaceSlider("段距", "阅读段间距", settings.paragraphSpacing, 0f..2f, .1f, .8f,
             { onSettings(settings.copy(paragraphSpacing = it)) }, { String.format(Locale.getDefault(), "%.1f", it) })
-        ReaderAdjustableSlider("字距", "阅读字间距", settings.letterSpacing, -.2f..3f, .1f,
+        ReaderInterfaceSlider("字距", "阅读字间距", settings.letterSpacing, -.2f..3f, .1f, .5f,
             { onSettings(settings.copy(letterSpacing = it)) }, { String.format(Locale.getDefault(), "%.1f", it) })
+        ReaderInterfaceSlider("缩进", "首行缩进", settings.paragraphIndent, 0f..4f, .5f, 2f,
+            { onSettings(settings.copy(paragraphIndent = it)) }, { "${it}字" })
         if (sourceCssAvailable) {
             ReaderToggle("使用原书 CSS", settings.useSourceCss, Modifier.testTag("reader_use_source_css")) {
                 onSettings(settings.copy(useSourceCss = it))
@@ -161,19 +161,14 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
             Text("保留原书文字排版，字体与段距使用当前设置。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
         }
     }
-    ReaderSettingSection("纸张与亮度", trailing = {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("夜间", style = MaterialTheme.typography.bodySmall)
-            Switch(settings.nightMode, { onSettings(settings.copy(nightMode = it)) }, Modifier.testTag("reader_night_mode"))
-        }
-    }) {
+    ReaderCollapsibleSection("纸张", ReaderBackgroundChoices.firstOrNull { it.first == settings.background }?.second
+        ?: if (settings.background == ReaderBackground.IMAGE) "图片" else null) {
         if (raster) Text("保持原页排版，双指可缩放", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
         ReaderBackgroundChoices.chunked(3).forEachIndexed { index, choices -> ReaderSettingOptions(if (index == 0) "背景" else "") {
             choices.forEach { (value, name) ->
-                val night = value == ReaderBackground.DARK
-                val preview = readerPalette(value, night, colors)
-                ReaderSettingChoice(name, if (night) settings.nightMode else !settings.nightMode && settings.background == value,
-                    { onSettings(if (night) settings.copy(nightMode = true) else settings.copy(background = value, nightMode = false)) },
+                val preview = readerPalette(value, false, colors)
+                ReaderSettingChoice(name, settings.background == value,
+                    { onSettings(settings.copy(background = value)) },
                     Modifier.weight(1f).testTag("reader_background_${value.name.lowercase()}"), leading = {
                         Box(Modifier.size(16.dp).clip(appShape(3.dp)).background(preview.background)
                             .border(.5.dp, colors.outlineVariant, appShape(3.dp)))
@@ -186,22 +181,45 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
                 { onSettings(settings.copy(background = ReaderBackground.IMAGE)) })
             ReaderSettingChoice("导入图片", false, onImportBackground, role = Role.Button)
         }
-        ReaderAdjustableSlider("亮度", "阅读亮度", if (settings.brightness < 0f) .5f else settings.brightness, .01f..1f, .01f,
-            { onSettings(settings.copy(brightness = it)) },
-            { if (settings.brightness < 0f && it == .5f) "自动" else "${(it * 100).roundToInt()}%" }, trailing = {
-                IconButton(onClick = { onSettings(settings.copy(brightness = -1f)) }, Modifier.size(30.dp)) {
-                    Icon(Icons.Outlined.BrightnessAuto, "亮度跟随系统", Modifier.size(18.dp))
-                }
-            })
     }
-    ReaderSettingSection("页边距") {
-        ReaderAdjustableSlider("左距", "阅读左边距", settings.marginLeft, 0f..64f, 1f,
+    ReaderCollapsibleSection("页边距") {
+        ReaderInterfaceSlider("左距", "阅读左边距", settings.marginLeft, 0f..64f, 1f, if (raster) 0f else 24f,
             { onSettings(settings.copy(marginLeft = it)) }, { "${it.roundToInt()}dp" })
-        ReaderAdjustableSlider("右距", "阅读右边距", settings.marginRight, 0f..64f, 1f,
+        ReaderInterfaceSlider("右距", "阅读右边距", settings.marginRight, 0f..64f, 1f, if (raster) 0f else 24f,
             { onSettings(settings.copy(marginRight = it)) }, { "${it.roundToInt()}dp" })
-        ReaderAdjustableSlider("上距", "阅读上边距", settings.marginTop, 0f..64f, 1f,
+        ReaderInterfaceSlider("上距", "阅读上边距", settings.marginTop, 0f..64f, 1f, if (raster) 0f else 18f,
             { onSettings(settings.copy(marginTop = it)) }, { "${it.roundToInt()}dp" })
-        ReaderAdjustableSlider("下距", "阅读下边距", settings.marginBottom, 0f..64f, 1f,
+        ReaderInterfaceSlider("下距", "阅读下边距", settings.marginBottom, 0f..64f, 1f, if (raster) 0f else 18f,
             { onSettings(settings.copy(marginBottom = it)) }, { "${it.roundToInt()}dp" })
+    }
+}
+
+internal fun readerPagingSummary(settings: ReaderSettings): String {
+    val mode = when (settings.readingMode) {
+        ReadingMode.SCROLL -> if (settings.continuousEbookScroll) "连贯滚动" else "滚动"
+        ReadingMode.VERTICAL_PAGED -> "上下"
+        ReadingMode.PAGED -> when (settings.pageTurnStyle) {
+            PageTurnStyle.COVER -> "覆盖"; PageTurnStyle.SLIDE -> "滑动"; PageTurnStyle.CURL -> "仿真"
+        }
+    }
+    val tap = when (settings.tapPaging) {
+        TapPagingMode.OFF -> "关闭点击"; TapPagingMode.HORIZONTAL -> "左右点击"; TapPagingMode.VERTICAL -> "上下点击"
+    }
+    return "$mode | $tap"
+}
+
+internal fun readerTypographySummary(settings: ReaderSettings): String {
+    val font = when (settings.fontName) { "跟随系统" -> "系统"; "系统宋体" -> "宋体"; "系统黑体" -> "黑体"; else -> settings.fontName }
+    val language = when (settings.chineseConversion) {
+        ChineseConversion.ORIGINAL -> "原文"; ChineseConversion.SIMPLIFIED -> "简体"; ChineseConversion.TRADITIONAL -> "繁体"
+    }
+    return "$font | $language | ${if (settings.verticalText) "竖排" else "横排"}"
+}
+
+@Composable private fun ReaderInterfaceSlider(label: String, description: String, value: Float,
+    range: ClosedFloatingPointRange<Float>, step: Float, default: Float, onCommit: (Float) -> Unit,
+    display: (Float) -> String) {
+    ReaderCollapsibleSection(label, onReset = { onCommit(default) }) {
+        ReaderAdjustableSlider(label, description, value, range, step, onCommit, display)
     }
 }

@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -15,6 +15,12 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 
 @Composable internal fun ReaderSettingsHeading(title: String, subtitle: String, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth().padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -32,6 +38,39 @@ import androidx.compose.ui.unit.dp
         }
         content()
         HorizontalDivider(Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
+@Composable internal fun ReaderCollapsibleSection(title: String, summary: String? = null,
+    onReset: (() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val style = MaterialTheme.typography.bodySmall
+    Column(Modifier.fillMaxWidth()) {
+        BoxWithConstraints(Modifier.fillMaxWidth().clip(appShape(6.dp))
+            .clickable { expanded = !expanded }.semantics { stateDescription = if (expanded) "已展开" else "已收起" }
+            .testTag("reader_section_$title")) {
+            val available = with(density) { maxWidth.roundToPx() - 44.dp.roundToPx() } -
+                measurer.measure(title, style = MaterialTheme.typography.titleSmall).size.width
+            val fits = !summary.isNullOrBlank() && available > 0 && !measurer.measure(summary, style = style,
+                maxLines = 1, softWrap = false, constraints = Constraints(maxWidth = available)).hasVisualOverflow
+            Row(Modifier.fillMaxWidth().height(42.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, maxLines = 1)
+                if (!expanded && fits) Text(summary, style = style, maxLines = 1,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (expanded) "⌃" else "⌄", style = style)
+            }
+        }
+        if (expanded) {
+            if (onReset != null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onReset, modifier = Modifier.height(30.dp).testTag("reader_reset_$title"),
+                    contentPadding = PaddingValues(horizontal = 8.dp)) { Text("重置", style = style) }
+            }
+            content()
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     }
 }
 

@@ -4,7 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
-/** Appearance only: applying a theme never changes navigation, speech, chapter rules or global theme mode. */
+/** Interface profiles include pagination, but never speech, chapter rules or the global day/night mode. */
 data class ReaderAppearance(
     val fontSize: Float = 19f,
     val lineHeight: Float = 1.85f,
@@ -23,7 +23,12 @@ data class ReaderAppearance(
     val marginRight: Float = 24f,
     val marginTop: Float = 18f,
     val marginBottom: Float = 18f,
-    val verticalText: Boolean = false
+    val verticalText: Boolean = false,
+    val readingMode: ReadingMode = ReadingMode.SCROLL,
+    val pageTurnStyle: PageTurnStyle = PageTurnStyle.SLIDE,
+    val tapPaging: TapPagingMode = TapPagingMode.OFF,
+    val continuousEbookScroll: Boolean = true,
+    val paragraphIndent: Float = 2f
 ) {
     fun mapPaths(path: (String?) -> String?): ReaderAppearance = copy(fontPath = path(fontPath),
         backgroundImagePath = path(backgroundImagePath))
@@ -38,6 +43,8 @@ data class ReaderAppearance(
         .put("marginLeft", marginLeft.toDouble()).put("marginRight", marginRight.toDouble())
         .put("marginTop", marginTop.toDouble()).put("marginBottom", marginBottom.toDouble())
         .put("verticalText", verticalText)
+        .put("readingMode", readingMode.name).put("pageTurnStyle", pageTurnStyle.name).put("tapPaging", tapPaging.name)
+        .put("continuousEbookScroll", continuousEbookScroll).put("paragraphIndent", paragraphIndent.toDouble())
 
     companion object {
         internal fun fromJson(json: JSONObject, defaults: ReaderAppearance = ReaderAppearance()): ReaderAppearance {
@@ -61,7 +68,12 @@ data class ReaderAppearance(
                 marginRight = number("marginRight", defaults.marginRight, 0f..64f),
                 marginTop = number("marginTop", defaults.marginTop, 0f..64f),
                 marginBottom = number("marginBottom", defaults.marginBottom, 0f..64f),
-                verticalText = json.optBoolean("verticalText", defaults.verticalText))
+                verticalText = json.optBoolean("verticalText", defaults.verticalText),
+                readingMode = enumValues<ReadingMode>().firstOrNull { it.name == json.optString("readingMode") } ?: defaults.readingMode,
+                pageTurnStyle = enumValues<PageTurnStyle>().firstOrNull { it.name == json.optString("pageTurnStyle") } ?: defaults.pageTurnStyle,
+                tapPaging = enumValues<TapPagingMode>().firstOrNull { it.name == json.optString("tapPaging") } ?: defaults.tapPaging,
+                continuousEbookScroll = json.optBoolean("continuousEbookScroll", defaults.continuousEbookScroll),
+                paragraphIndent = number("paragraphIndent", defaults.paragraphIndent, 0f..4f))
         }
     }
 }
@@ -82,7 +94,8 @@ internal fun readReaderThemeProfiles(array: JSONArray?, defaults: ReaderAppearan
 
 fun ReaderSettings.appearanceSnapshot(): ReaderAppearance = ReaderAppearance(fontSize, lineHeight, paragraphSpacing,
     letterSpacing, fontName, fontPath, bold, background, backgroundImagePath, brightness, showTime, showBattery, showChapter,
-    marginLeft, marginRight, marginTop, marginBottom, verticalText)
+    marginLeft, marginRight, marginTop, marginBottom, verticalText, readingMode, pageTurnStyle, tapPaging,
+    continuousEbookScroll, paragraphIndent)
 
 fun ReaderSettings.applyAppearanceProfile(profile: ReaderThemeProfile): ReaderSettings = with(profile.appearance) {
     this@applyAppearanceProfile.copy(fontSize = fontSize, lineHeight = lineHeight, paragraphSpacing = paragraphSpacing,
@@ -90,7 +103,18 @@ fun ReaderSettings.applyAppearanceProfile(profile: ReaderThemeProfile): ReaderSe
         backgroundImagePath = backgroundImagePath, brightness = brightness, showTime = showTime,
         showBattery = showBattery, showChapter = showChapter, activeAppearanceProfileId = profile.id,
         marginLeft = marginLeft, marginRight = marginRight, marginTop = marginTop, marginBottom = marginBottom,
-        verticalText = verticalText)
+        verticalText = verticalText, readingMode = readingMode, pageTurnStyle = pageTurnStyle, tapPaging = tapPaging,
+        continuousEbookScroll = continuousEbookScroll, paragraphIndent = paragraphIndent)
+}
+
+/** Reset only controls on the Interface panel; leave speech, status, rules and other profiles alone. */
+fun ReaderSettings.resetInterface(raster: Boolean = false): ReaderSettings {
+    val defaults = ReaderAppearance().let { if (raster) it.copy(marginLeft = 0f, marginRight = 0f,
+        marginTop = 0f, marginBottom = 0f) else it }.copy(showTime = showTime, showBattery = showBattery, showChapter = showChapter)
+    val selected = ensureActiveAppearanceProfile()
+    return selected.applyAppearanceProfile(ReaderThemeProfile(selected.activeAppearanceProfileId!!, "", defaults))
+        .copy(chineseConversion = ChineseConversion.ORIGINAL, useSourceCss = false, pdfCrop = PdfCrop())
+        .autosaveAppearanceProfile()
 }
 
 fun ReaderSettings.saveAppearanceProfile(profileId: String? = null): ReaderSettings {

@@ -71,6 +71,7 @@ import com.eyue.reader.data.DeferredEbookContent
 import com.eyue.reader.data.indexEbookChapters
 import com.eyue.reader.data.txtSourceFootnotes
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -187,8 +188,7 @@ internal fun ReaderScreen(
         if (sourceEbook) EbookSourceStore(context, importedBook) else null
     }
     DisposableEffect(ebookStore) { onDispose { ebookStore?.close() } }
-    val ebookController = remember(importedBook.id, ebookStore, settings.continuousEbookScroll,
-        settings.readingMode == ReadingMode.SCROLL) { EbookReaderController() }
+    val ebookController = remember(importedBook.id, ebookStore) { EbookReaderController() }
     var ebookViewport by remember(importedBook.id) { mutableStateOf(EbookViewportState()) }
     var ebookNavigationChapter by remember(importedBook.id) { mutableStateOf<Int?>(null) }
     var ebookPageCounts by remember(importedBook.id, importedBook.chapters.size) { mutableStateOf(List(importedBook.chapters.size) { 1 }) }
@@ -256,6 +256,7 @@ internal fun ReaderScreen(
     var autoPaused by remember(book.id) { mutableStateOf(false) }
     var autoControlsVisible by remember(book.id) { mutableStateOf(false) }
     var floatingActionsHeight by remember(book.id) { mutableIntStateOf(0) }
+    var autoControlsHeight by remember(book.id) { mutableIntStateOf(0) }
     fun pauseAutoReading() { if (autoReading) autoPaused = true }
     var progressDraft by remember(book.id) { mutableStateOf<Float?>(null) }
     var seekPreviewPage by remember(book.id) { mutableStateOf<ReaderSeekPage?>(null) }
@@ -265,6 +266,7 @@ internal fun ReaderScreen(
     var toolbarHeight by remember { mutableIntStateOf(0) }
     var speechBarHeight by remember { mutableIntStateOf(0) }
     var panel by remember(book.id) { mutableStateOf<ReaderPanel?>(if (resumeSearch != null) ReaderPanel.SEARCH else null) }
+    var interfaceLayoutAnchor by remember(book.id) { mutableStateOf<Pair<Int, Int>?>(null) }
     var selectedPassage by remember(book.id) { mutableStateOf<ReaderSelectedPassage?>(null) }
     var txtSelection by remember(book.id) { mutableStateOf<ReaderSelectedPassage?>(null) }
     var tappedNoteIds by remember(book.id) { mutableStateOf<List<String>>(emptyList()) }
@@ -276,6 +278,9 @@ internal fun ReaderScreen(
     var noteTapHandled by remember(book.id) { mutableStateOf(false) }
     var selectionReset by remember(book.id) { mutableIntStateOf(0) }
     var holdPagingActive by remember(book.id) { mutableStateOf(false) }
+    var paperDrag by remember(book.id) { mutableStateOf<ReaderPaperDrag?>(null) }
+    var paperDragSettle by remember(book.id) { mutableStateOf<Job?>(null) }
+    var paperDragDirection by remember(book.id) { mutableIntStateOf(0) }
     var editorKind by remember { mutableStateOf(AnnotationKind.NOTE) }
     var noteDraft by remember { mutableStateOf("") }
     var markColor by remember { mutableStateOf(ReaderMarkColors.first().second) }
@@ -294,12 +299,12 @@ internal fun ReaderScreen(
     val listState = rememberLazyListState()
     val scrolling by remember(sourceEbook) { derivedStateOf { if (sourceEbook) ebookViewport.scrolling else listState.isScrollInProgress } }
     val textLayouts = remember(chapterStore, book.id, importedBook.contentVersion, settings.fontSize, settings.fontPath, settings.fontName,
-        settings.bold, settings.lineHeight, settings.letterSpacing, settings.paragraphSpacing, chineseConverter, pageViewport, settings.readingMode,
+        settings.bold, settings.lineHeight, settings.letterSpacing, settings.paragraphSpacing, settings.paragraphIndent, chineseConverter, pageViewport, settings.readingMode,
         density, layoutDirection, settings.useSourceCss, settings.marginLeft, settings.marginRight, settings.marginTop,
         settings.marginBottom) { linkedMapOf<Pair<Int, Int>, ReaderTextLayout>() }
     val measurer = rememberTextMeasurer(cacheSize = 0)
     val layoutSpec = remember(settings.fontPath, settings.fontName, settings.fontSize, settings.bold,
-        settings.lineHeight, settings.letterSpacing, density, layoutDirection, pageViewport,
+        settings.lineHeight, settings.letterSpacing, settings.paragraphIndent, density, layoutDirection, pageViewport,
         settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom) {
         readerLayoutSpec(settings, density, layoutDirection, pageViewport, context)
     }
@@ -319,7 +324,7 @@ internal fun ReaderScreen(
     val textHeight = layoutSpec.textHeight
     fun layoutKey(mode: ReadingMode, spec: ReaderLayoutSpec): List<Any?> = listOf(importedBook.id,
         importedBook.contentVersion, importedBook.chapters, spec.textWidth, spec.textHeight, settings.fontSize,
-        settings.lineHeight, settings.letterSpacing, settings.paragraphSpacing, settings.fontPath, settings.fontName,
+        settings.lineHeight, settings.letterSpacing, settings.paragraphSpacing, settings.paragraphIndent, settings.fontPath, settings.fontName,
         settings.bold, density, layoutDirection, mode, settings.chineseConversion, chineseConverter, settings.useSourceCss,
         settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom, settings.verticalText)
     val currentLayoutKey = layoutKey(settings.readingMode, layoutSpec)
@@ -617,6 +622,7 @@ internal fun ReaderScreen(
         pauseAutoReading()
         dismissAnnotationBubble()
         if (value == ReaderPanel.CONTENTS) scope.launch { listState.stopScroll() }
+        if (value == ReaderPanel.INTERFACE) interfaceLayoutAnchor = chapterIndex to characterOffset
         panel = value; chromeVisible = false
     }
     fun tapPage() {
@@ -984,6 +990,13 @@ internal fun ReaderScreen(
         view.keepScreenOn = settings.keepScreenOn
         onDispose { view.keepScreenOn = previous }
     }
+    DisposableEffect(activity, settings.hideStatusBar) {
+        val controller = activity?.let { WindowCompat.getInsetsController(it.window, it.window.decorView) }
+        if (settings.hideStatusBar) controller?.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        else controller?.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        controller?.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        onDispose { controller?.show(androidx.core.view.WindowInsetsCompat.Type.statusBars()) }
+    }
     DisposableEffect(activity, settings.nightMode) {
         val controller = activity?.let { WindowCompat.getInsetsController(it.window, it.window.decorView) }
         controller?.isAppearanceLightStatusBars = !settings.nightMode
@@ -1091,15 +1104,15 @@ internal fun ReaderScreen(
     }
     LaunchedEffect(currentLayoutKey) {
         if (layoutState.key == currentLayoutKey) return@LaunchedEffect
-        val sourceWasReady = ebookViewport.ready
         layoutState.begin(currentLayoutKey, prepared = raster || sourceEbook)
         if (sourceEbook) {
-            ebookViewport = ebookViewport.copy(ready = false)
-            if (sourceWasReady) ebookController.checkpoint(characterOffset, positionImagePath, expectedChapterIndex = chapterIndex)
-            else ebookController.navigate(characterOffset, positionImagePath, expectedChapterIndex = chapterIndex)
+            // The live DOM preserves one stable reflow anchor. A native checkpoint here
+            // would replace it with each newly paginated page's earlier first glyph.
             return@LaunchedEffect
         }
         if (raster) return@LaunchedEffect
+        if (panel == ReaderPanel.INTERFACE || panel == ReaderPanel.FONTS) interfaceLayoutAnchor
+            ?.takeIf { it.first == chapterIndex }?.let { characterOffset = it.second }
         layoutImageHint = textPages.getOrNull(chapterIndex)?.getOrNull(pageIndex)?.imageIndex?.takeIf { it >= 0 }
         textPages = if (directScroll) document?.scrollBlocks ?: List(book.chapters.size) { emptyList() }
             else List(book.chapters.size) { emptyList() }
@@ -1362,7 +1375,36 @@ internal fun ReaderScreen(
                 !chromeVisible && panel == null && selectedPassage == null && txtSelection == null,
                 onHolding = { holding -> holdPagingActive = holding; if (holding && sourceEbook) ebookController.cancelTouch() }) { direction ->
                 pauseAutoReading(); noteTapHandled = true; selectionReset++; move(direction)
-            }.then(if (sourceEbook) Modifier else tapObserver)) {
+            }.readerPaperDrag(!sourceEbook && !einkMode && settings.readingMode == ReadingMode.PAGED &&
+                !chromeVisible && panel == null && !layoutState.preparing && !layoutState.restoring,
+                onDrag = { direction, fraction ->
+                    if (paperDragSettle?.isActive != true) {
+                        if (paperDragDirection == 0) { pauseAutoReading(); pauseSpeechForNavigation(); selectionReset++; manualDrag = true }
+                        paperDragDirection = direction
+                        val origin = ReaderPageLocation(chapterIndex, readerSpreadStart(pageIndex, dualPage))
+                        val target = readerAdjacentPage(origin.chapter, origin.page, pageCounts, direction, dualPage)
+                        if (target != null && (raster || target.chapter in paginatedChapters)) {
+                            val current = paperDrag?.takeIf { it.origin == origin && it.target == target && it.direction == direction }
+                                ?: ReaderPaperDrag(origin, target, direction, fraction).also { paperDrag = it }
+                            current.fraction = fraction
+                        }
+                    }
+                }, onRelease = release@{ commit ->
+                    if (paperDragSettle?.isActive == true) return@release
+                    val direction = paperDragDirection
+                    paperDragDirection = 0
+                    paperDrag?.let { released ->
+                        paperDragSettle = scope.launch {
+                            try {
+                                androidx.compose.animation.core.animate(released.fraction, if (commit) 1f else 0f,
+                                    animationSpec = androidx.compose.animation.core.tween(140)) { value, _ ->
+                                    released.fraction = value
+                                }
+                                if (commit) move(released.direction)
+                            } finally { paperDrag = null; manualDrag = false }
+                        }
+                    } ?: run { if (commit && direction != 0) move(direction); manualDrag = false }
+                }).then(if (sourceEbook) Modifier else tapObserver)) {
             when {
                 book.chapters.isEmpty() -> Text("这本书没有可阅读的章节", Modifier.align(Alignment.Center), color = muted)
                 layoutState.error != null || documentReadError != null || renderDocument == null || (!raster && (!conversionReady || !sourceEbook && chapterIndex !in renderDocument.readyChapters ||
@@ -1504,7 +1546,7 @@ internal fun ReaderScreen(
                     val latestPageTurn by rememberUpdatedState { direction: Int -> move(direction) }
                     Box(Modifier.fillMaxSize().pointerInput(book.id, settings.readingMode, speech) {
                         readerPageDragGestures(settings.readingMode == ReadingMode.VERTICAL_PAGED,
-                            onStart = { latestDragStart() }, onTurn = { latestPageTurn(it) }, onFinish = { manualDrag = false })
+                            onStart = { latestDragStart() }, onTurn = { latestPageTurn(it) }, onFinish = { if (paperDrag == null) manualDrag = false })
                     }) {
                         ReaderPageTurnFrame(ReaderPageLocation(chapterIndex, readerSpreadStart(pageIndex, dualPage)),
                             dualPage, pageCounts, settings.pageTurnStyle, settings.readingMode == ReadingMode.VERTICAL_PAGED,
@@ -1513,7 +1555,7 @@ internal fun ReaderScreen(
                                     Image(bitmap, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                                     Box(Modifier.fillMaxSize().background(if (settings.nightMode) Color.Black.copy(alpha = .72f) else Color.White.copy(alpha = .72f)))
                                 }
-                            }) { sourceChapter, sourcePage, interactive ->
+                            }, drag = paperDrag) { sourceChapter, sourcePage, interactive ->
                         val sourceText = renderDocument.text.getOrNull(sourceChapter).orEmpty()
                         if (raster) renderChapters.getOrNull(sourceChapter)?.pages?.getOrNull(sourcePage)?.let { source ->
                             val color = annotations.lastOrNull { it.bookId == book.id && it.chapterIndex == sourceChapter && it.pageIndex == sourcePage && it.kind != AnnotationKind.BOOKMARK && it.color != null }?.color?.let(::Color)
@@ -1627,6 +1669,13 @@ internal fun ReaderScreen(
             }
         }
         if (chromeVisible && panel == null && selectedPassage == null && txtSelection == null) {
+            ReaderBrightnessControl(requestedSettings.brightness, { onSettings(requestedSettings.copy(brightness = it)) },
+                Modifier.align(Alignment.BottomStart).padding(start = 8.dp,
+                    bottom = with(density) { (toolbarHeight + when {
+                        autoControlsVisible -> autoControlsHeight + floatingActionsHeight
+                        speechSession.active -> speechBarHeight + floatingActionsHeight
+                        else -> 0
+                    }).toDp() } + if (autoControlsVisible || speechSession.active) 24.dp else 12.dp))
             ReaderFloatingActions(autoReading, speechSession.active, onAuto = { autoControlsVisible = !autoControlsVisible },
                 onSpeech = { autoControlsVisible = false; if (speechSession.active) stopSpeech() else startSpeech() },
                 modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = with(density) { toolbarHeight.toDp() } + 8.dp)
@@ -1636,7 +1685,7 @@ internal fun ReaderScreen(
             Surface(shape = appShape(16.dp), color = colors.surfaceContainerHigh, contentColor = colors.onSurface,
                 shadowElevation = 4.dp, modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp)
                     .padding(bottom = with(density) { (toolbarHeight + floatingActionsHeight).toDp() } + 16.dp)
-                    .testTag("reader_auto_bar")) {
+                    .testTag("reader_auto_bar").onSizeChanged { autoControlsHeight = it.height }) {
                 ReaderAutoControls(requestedSettings, onSettings, autoReading, onStart = {
                     stopSpeech(); autoReading = true; autoPaused = false; autoControlsVisible = false; chromeVisible = false
                 }, onStop = { autoReading = false; autoControlsVisible = false }, onDismiss = { autoControlsVisible = false })

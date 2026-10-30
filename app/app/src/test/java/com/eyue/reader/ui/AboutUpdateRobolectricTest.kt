@@ -57,4 +57,14 @@ class AboutUpdateRobolectricTest {
         compose.runOnIdle { result = update() }
         compose.onNodeWithTag("update_github_download").performScrollTo().assertIsDisplayed()
     }
+
+    @Test fun previewResultsAreClearlyLabelledAndProvideTheirGithubDownload() {
+        val preview = update().copy(versionName = "next-beta.1", prerelease = true)
+        compose.setContent { MaterialTheme {
+            Column(Modifier.verticalScroll(rememberScrollState())) { AboutIntro(availableUpdate = preview) }
+        } }
+        compose.onNodeWithText("发现测试版本 next-beta.1").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("update_github_download").assertExists()
+        compose.onNodeWithTag("update_mirror_0").assertDoesNotExist()
+    }
 }

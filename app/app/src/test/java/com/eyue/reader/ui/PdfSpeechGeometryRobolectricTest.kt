@@ -28,7 +28,7 @@ class PdfSpeechGeometryRobolectricTest {
         assertEquals(0f, partial.left, .0001f); assertEquals(0f, partial.top, .0001f)
         assertEquals(.5f, partial.right, .0001f); assertEquals(.5f, partial.bottom, .0001f)
         val original = Rect(.1f, .2f, .4f, .6f)
-        assertEquals(original, cropPdfSpeechRect(original, crop.copy(enabled = false)))
+        assertEquals(original, cropPdfSpeechRect(original, com.eyue.reader.data.PdfCrop()))
     }
 
     @Test fun realPdfTextCoordinatesKeepParagraphsSeparateAndHandlePageRotation() {

@@ -44,7 +44,7 @@ class ReaderThemeProfilesRobolectricTest {
         } finally { root.deleteRecursively() }
     }
 
-    @Test fun applyingAnAppearanceNeverRestoresSpeechNavigationRulesOrLanguage() {
+    @Test fun applyingAnAppearanceRestoresPagingButNeverSpeechRulesOrGlobalNightMode() {
         val first = ReaderSettings(fontSize = 30f, fontName = "自选", fontPath = "/font.otf", bold = true,
             lineHeight = 2.2f, paragraphSpacing = 1.4f, letterSpacing = 1.1f,
             background = ReaderBackground.IMAGE, backgroundImagePath = "/background.png", brightness = .7f).saveAppearanceProfile()
@@ -57,7 +57,8 @@ class ReaderThemeProfilesRobolectricTest {
             letterSpacing = applied.letterSpacing, fontName = applied.fontName, fontPath = applied.fontPath, bold = applied.bold,
             background = applied.background, backgroundImagePath = applied.backgroundImagePath, brightness = applied.brightness,
             showTime = applied.showTime, showBattery = applied.showBattery, showChapter = applied.showChapter,
-            activeAppearanceProfileId = first.activeAppearanceProfileId), applied)
+            activeAppearanceProfileId = first.activeAppearanceProfileId, readingMode = applied.readingMode,
+            pageTurnStyle = applied.pageTurnStyle, tapPaging = applied.tapPaging), applied)
     }
 
     @Test fun resettingAppearanceKeepsTheActiveThemeAndAutosavesDefaultsWithoutChangingTheOtherMode() {

@@ -37,6 +37,7 @@ import com.eyue.reader.BuildConfig
 import com.eyue.reader.R
 import com.eyue.reader.data.AppUpdateClient
 import com.eyue.reader.data.AppUpdateResult
+import com.eyue.reader.data.DeveloperModePreferences
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -66,11 +67,22 @@ internal fun openAuthorLink(context: Context, url: String) {
     }
 }
 
-@Composable internal fun AuthorContent() {
+@Composable internal fun AuthorContent(developerMode: Boolean = false, onEnableDeveloperMode: () -> Unit = {}) {
+    var taps by remember { mutableIntStateOf(0) }
+    var lastTap by remember { mutableLongStateOf(0L) }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Image(painterResource(R.drawable.author_avatar), "作者头像", Modifier.size(112.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+        Image(painterResource(R.drawable.author_avatar), "作者头像", Modifier.size(112.dp).clip(CircleShape).clickable {
+            if (!developerMode) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                taps = if (taps > 0 && now - lastTap <= 1500L) taps + 1 else 1
+                lastTap = now
+                if (taps == 10) { taps = 0; onEnableDeveloperMode() }
+            }
+        }.testTag("author_avatar"), contentScale = ContentScale.Crop)
         Text("byonesheart", style = MaterialTheme.typography.titleLarge)
+        if (developerMode) Text("开发者模式已开启", style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary, modifier = Modifier.testTag("developer_mode_enabled"))
         BrowserLink("GitHub · ERead", AUTHOR_REPOSITORY, "author_repository")
         BrowserLink("B站 · ByOnesHeart", AUTHOR_BILIBILI, "author_bilibili")
     }
@@ -135,7 +147,7 @@ internal fun openAuthorLink(context: Context, url: String) {
             TextButton(onClick = {
                 checking = true; result = null; error = null
                 scope.launch {
-                    try { result = onCheckUpdate?.invoke() ?: client.check(BuildConfig.VERSION_CODE) }
+                    try { result = onCheckUpdate?.invoke() ?: client.check(BuildConfig.VERSION_CODE, DeveloperModePreferences(context).enabled) }
                     catch (cancelled: CancellationException) { throw cancelled }
                     catch (failure: Exception) { error = failure.message ?: "无法连接更新服务器，请稍后重试" }
                     finally { checking = false }
@@ -150,7 +162,8 @@ internal fun openAuthorLink(context: Context, url: String) {
             Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.fillMaxWidth().testTag("settings_update_result")) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(when { !update.published -> "尚未发布更新信息"; update.available -> "发现新版本 ${update.versionName}"; else -> "✓ 当前已是最新版本" }, style = MaterialTheme.typography.titleSmall)
+                    Text(when { !update.published -> "尚未发布更新信息"; update.available && update.prerelease -> "发现测试版本 ${update.versionName}"
+                        update.available -> "发现新版本 ${update.versionName}"; else -> "✓ 当前已是最新版本" }, style = MaterialTheme.typography.titleSmall)
                     if (!update.published) {
                         Text(update.changelog, style = MaterialTheme.typography.bodySmall)
                         TextButton(onClick = { openAuthorLink(context, update.releaseUrl) }) { Text("查看 GitHub 仓库") }
@@ -158,7 +171,7 @@ internal fun openAuthorLink(context: Context, url: String) {
                     if (update.available) {
                         if (update.changelog.isNotBlank()) Text(update.changelog, style = MaterialTheme.typography.bodySmall)
                         BrowserLink("GitHub Releases · 下载", update.downloadUrl ?: update.releaseUrl, "update_github_download")
-                        update.mirrors.forEachIndexed { index, mirror ->
+                        if (!update.prerelease) update.mirrors.forEachIndexed { index, mirror ->
                             BrowserLink(mirror.name + if (mirror.extractionCode.isBlank()) "" else " · 提取码 ${mirror.extractionCode}",
                                 mirror.url, "update_mirror_$index")
                         }
@@ -174,7 +187,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent(onHistory: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 优化 EPUB／MOBI 导入与全书缓存，阅读操作优先。\n• 新增 PDF 裁边、点击翻页，扩展实体翻页键支持。\n• 支持配置重命名与历史更新日志，修复书架菜单定位、段距及云端状态检测。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 支持从纸张边缘拖动翻页，松手完成翻页或回弹。\n• 优化排版设置响应，修复反复调整间距后的阅读位置偏移。\n• 界面设置默认收起，支持独立重置、首行缩进和隐藏系统状态栏，翻页方式随配置保存。\n• 亮度调节移至左侧，纸张选择与日夜模式独立。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton(onClick = onHistory, modifier = Modifier.testTag("settings_history_changelog")) { Text("历史更新日志") }
     }

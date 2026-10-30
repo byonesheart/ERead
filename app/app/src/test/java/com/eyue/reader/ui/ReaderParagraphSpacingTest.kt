@@ -17,6 +17,17 @@ import org.junit.Test
 class ReaderParagraphSpacingTest {
     private val style = TextStyle(fontSize = 20.sp, lineHeight = 32.sp)
 
+    @Test fun indentationOnlyAffectsParagraphStartsAndNeverChangesPersistedOffsets() {
+        val indented = style.copy(textIndent = androidx.compose.ui.text.style.TextIndent(40.sp, 0.sp))
+        val source = "第一段完整文字\n第二段完整文字"
+        val whole = readerParagraphText(AnnotatedString(source), indented, context = source)
+        assertTrue(whole.text.paragraphStyles.none { it.item.textIndent != null })
+        val continuation = readerParagraphText(AnnotatedString(source.substring(3, 7)), indented,
+            context = source, sourceStart = 3)
+        assertEquals(0.sp, continuation.text.paragraphStyles.single().item.textIndent!!.firstLine)
+        source.indices.forEach { assertEquals(it, whole.offsetMapping.transformedToOriginal(it)) }
+    }
+
     @Test fun singleParagraphBoundariesGetSmallDisplayOnlyGaps() {
         val source = AnnotatedString("第一段\n第二段\n第三段")
         val transformed = readerParagraphText(source, style)

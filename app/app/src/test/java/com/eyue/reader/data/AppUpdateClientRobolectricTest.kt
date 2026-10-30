@@ -15,6 +15,70 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class AppUpdateClientRobolectricTest {
+    private fun preview(code: Int = 32) = """{"versionCode":$code,"versionName":"next-beta.1","prerelease":true,
+        "releaseUrl":"https://github.com/byonesheart/ERead/releases/tag/v-next-beta.1",
+        "downloadUrl":"https://github.com/byonesheart/ERead/releases/download/v-next-beta.1/ERead.apk"}"""
+
+    private fun responses(stable: String, preview: String?, requests: MutableList<String>) = OkHttpClient.Builder().addInterceptor { chain ->
+        val url = chain.request().url.toString()
+        requests += url
+        assertNull(chain.request().header("Authorization")); assertNull(chain.request().header("Cookie"))
+        val body = if (url == GITHUB_PREVIEW_MANIFEST_URL) preview else stable
+        Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+            .code(if (body == null) 404 else 200).message("test").body(body.orEmpty().toResponseBody()).build()
+    }.build()
+
+    @Test fun normalChecksNeverRequestThePreviewChannel() = runBlocking {
+        val requests = mutableListOf<String>()
+        val result = AppUpdateClient(responses(manifest(30), preview(40), requests)).check(29)
+        assertEquals(30, result.versionCode); assertFalse(result.prerelease)
+        assertEquals(listOf(UPDATE_MANIFEST_URL), requests)
+    }
+
+    @Test fun optedInChecksSelectTheNewestCodeAndPreferStableOnATie() = runBlocking {
+        for ((stable, beta) in listOf(30 to 32, 34 to 32, 32 to 32)) {
+            val requests = mutableListOf<String>()
+            val result = AppUpdateClient(responses(manifest(stable), preview(beta), requests)).check(29, true)
+            assertEquals(maxOf(stable, beta), result.versionCode)
+            assertEquals(beta > stable, result.prerelease)
+            assertTrue(result.available)
+            assertEquals(listOf(UPDATE_MANIFEST_URL, GITHUB_PREVIEW_MANIFEST_URL), requests)
+            assertTrue(result.mirrors.isEmpty())
+        }
+    }
+
+    @Test fun missingInvalidAndUnavailablePreviewChannelsDoNotHideAValidStableUpdate() = runBlocking {
+        for (body in listOf(null, "<html>not found</html>", manifest(99))) {
+            val result = AppUpdateClient(responses(manifest(30), body, mutableListOf())).check(29, true)
+            assertEquals(30, result.versionCode); assertFalse(result.prerelease)
+        }
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            if (chain.request().url.toString() == GITHUB_PREVIEW_MANIFEST_URL) throw java.io.IOException("offline")
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(manifest().toResponseBody()).build()
+        }.build()
+        assertEquals(30, AppUpdateClient(client).check(29, true).versionCode)
+    }
+
+    @Test fun validPreviewStillWorksIfBothStableSourcesFailAndNeverOffersADowngrade() = runBlocking {
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val isPreview = chain.request().url.toString() == GITHUB_PREVIEW_MANIFEST_URL
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(if (isPreview) 200 else 503)
+                .message("test").body((if (isPreview) preview(32) else "unavailable").toResponseBody()).build()
+        }.build()
+        val newer = AppUpdateClient(client).check(29, true)
+        assertTrue(newer.available); assertTrue(newer.prerelease)
+        assertFalse(AppUpdateClient(client).check(35, true).available)
+    }
+
+    @Test fun previewsCannotLeakIntoTheNormalChannelOrExposeNetdiskLinks() = runBlocking {
+        try { AppUpdateClient(responses(preview(40), null, mutableListOf())).check(29); fail("Stable checks must reject preview manifests") }
+        catch (_: java.io.IOException) { }
+        val json = org.json.JSONObject(preview()).put("mirrors", org.json.JSONArray("""[
+            {"name":"百度网盘","url":"https://pan.baidu.com/s/example","extractionCode":"READ"}]"""))
+        assertTrue(parseAppUpdate(json.toString(), 29).mirrors.isEmpty())
+    }
+
     @Test fun includesValidatedCloudMirrorsAndExtractionCodes() {
         val update = parseAppUpdate("""{"versionCode":31,"versionName":"next","mirrors":[
             {"name":"百度网盘","url":"https://pan.baidu.com/s/example?pwd=READ","extractionCode":"READ"},

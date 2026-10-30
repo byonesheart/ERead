@@ -18,6 +18,7 @@ internal fun readerPalette(background: ReaderBackground, night: Boolean, colors:
         if (night) Color.White else Color.Black, if (night) Color.White else Color.Black, true)
     if (night) return ReaderPalette(Color(0xFF333333), Color(0xFFB4ADA3), Color(0xFFA49D93), true)
     return when (background) {
+        ReaderBackground.DARK -> ReaderPalette(Color(0xFF333333), Color(0xFFB4ADA3), Color(0xFFA49D93), true)
         ReaderBackground.PARCHMENT -> ReaderPalette(Color(0xFFECE1CB), Color(0xFF625135), Color(0xFF6E5B3F), true)
         ReaderBackground.MIST_GREEN -> ReaderPalette(Color(0xFFD8E2D0), Color(0xFF3C4839), Color(0xFF56614F), true)
         ReaderBackground.GRAY -> ReaderPalette(Color(0xFFDCDCDC), Color(0xFF404040), Color(0xFF5B5B5B), true)

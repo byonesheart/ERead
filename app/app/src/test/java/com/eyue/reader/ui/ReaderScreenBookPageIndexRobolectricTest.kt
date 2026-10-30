@@ -538,6 +538,7 @@ class ReaderScreenBookPageIndexRobolectricTest {
     private fun openPreferences() {
         compose.onNodeWithTag("reader_body").performTouchInput { click(Offset(width / 2f, height * .1f)) }
         compose.onNodeWithContentDescription("界面设置").performClick()
+        compose.onNodeWithTag("reader_section_文字与排版").performScrollTo().performClick()
         if (compose.onAllNodesWithTag("reader_use_source_css").fetchSemanticsNodes().isNotEmpty())
             compose.onNodeWithTag("reader_use_source_css").performScrollTo()
     }

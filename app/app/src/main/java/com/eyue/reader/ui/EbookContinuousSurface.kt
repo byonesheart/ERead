@@ -210,7 +210,12 @@ internal fun EbookContinuousSurface(
         if (!ready && error == null) { delay(180); loadingVisible = true }
     }
     LaunchedEffect(config.toString(), ready) { if (ready) {
-        browser?.appliedConfig = config.toString(); invoke(JSONObject().put("type", "configure").put("config", config)); controller.consumePending()
+        delay(100)
+        if (browser?.appliedConfig != config.toString()) {
+            browser?.appliedConfig = config.toString()
+            invoke(JSONObject().put("type", "configure").put("config", config))
+        }
+        controller.consumePending()
     } }
     LaunchedEffect(converter, ready) { if (ready) {
         invoke(JSONObject().put("type", "convert")); controller.consumePending()

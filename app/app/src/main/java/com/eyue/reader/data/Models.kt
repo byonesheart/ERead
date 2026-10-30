@@ -88,11 +88,11 @@ data class ImportedFont(val name: String, val path: String)
 data class ChapterRulePreset(val id: String = UUID.randomUUID().toString(), val name: String, val pattern: String)
 
 // Shared by reader images and PDF pages; retain the legacy name/key for existing backups.
-data class PdfCrop(val enabled: Boolean = false, val left: Float = 0f, val right: Float = 0f,
+data class PdfCrop(val enabled: Boolean = true, val left: Float = 0f, val right: Float = 0f,
                    val top: Float = 0f, val bottom: Float = 0f) {
     fun normalized(): PdfCrop {
         fun margin(value: Float) = if (value.isFinite()) value.coerceIn(0f, .4f) else 0f
-        return copy(left = margin(left), right = margin(right), top = margin(top), bottom = margin(bottom))
+        return copy(enabled = true, left = margin(left), right = margin(right), top = margin(top), bottom = margin(bottom))
     }
 }
 
@@ -135,7 +135,9 @@ data class ReaderSettings(
     val tapPaging: TapPagingMode = TapPagingMode.OFF,
     val autoScrollSpeed: Float = 32f,
     val autoPageSeconds: Float = 10f,
-    val pdfCrop: PdfCrop = PdfCrop()
+    val pdfCrop: PdfCrop = PdfCrop(),
+    val paragraphIndent: Float = 2f,
+    val hideStatusBar: Boolean = false
 )
 
 internal const val LEGACY_DEFAULT_CHAPTER_RULE = "^\\s*(第[零〇一二三四五六七八九十百千万两0-9]+[章节卷回部篇].*|[Cc][Hh][Aa][Pp][Tt][Ee][Rr]\\s+\\d+.*|序章.*|序言.*|前言.*|楔子.*|尾声.*|后记.*)\\s*$"

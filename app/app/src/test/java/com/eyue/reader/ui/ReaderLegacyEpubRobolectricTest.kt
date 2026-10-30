@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.webkit.WebView
 import android.webkit.WebResourceRequest
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -19,6 +20,7 @@ import com.eyue.reader.data.ReaderSettings
 import com.eyue.reader.data.ReadingMode
 import com.eyue.reader.data.readChapterText
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Rule
@@ -36,6 +38,44 @@ import java.util.concurrent.atomic.AtomicReference
 @Config(sdk = [28])
 class ReaderLegacyEpubRobolectricTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun changingSingleChapterReadingModesKeepsTheLivePagingControllerConnected() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val root = File(context.cacheDir, "reader-mode-controller-${UUID.randomUUID()}").apply { mkdirs() }
+        val source = EpubFixtures.create(context, root, "mode-controller", paragraphs = 15)
+        val book = EpubTestImporter(context).import(source, File(root, "book").apply { mkdirs() }, UUID.randomUUID().toString(), "modes")
+        val settings = mutableStateOf(ReaderSettings(readingMode = ReadingMode.PAGED, continuousEbookScroll = false, volumePaging = true))
+        val keys = MutableSharedFlow<Int>(extraBufferCapacity = 4)
+        val session = EbookReaderSession(context)
+        val view = AtomicReference<View>()
+        fun browser(): EbookWebView? {
+            fun find(node: View?): EbookWebView? = if (node is EbookWebView) node else (node as? ViewGroup)?.let { group ->
+                (0 until group.childCount).firstNotNullOfOrNull { find(group.getChildAt(it)) }
+            }
+            return find(view.get())
+        }
+        fun send(target: EbookWebView, json: String) = compose.runOnIdle {
+            val bridge = shadowOf(target).getJavascriptInterface("__ERead")
+            bridge.javaClass.getMethod("event", String::class.java).apply { isAccessible = true }.invoke(bridge, json)
+        }
+        try {
+            compose.setContent { view.set(LocalView.current.rootView)
+                MaterialTheme { ReaderScreen(book, settings.value, emptyList(), {}, { _, _, _, _, _ -> },
+                    { settings.value = it }, {}, {}, {}, keys, ebookSession = session) }
+            }
+            compose.waitUntil(15_000) { compose.runOnIdle { browser()?.onBridgeEvent != null } }
+            val first = requireNotNull(browser())
+            send(first, """{"type":"ready"}""")
+            send(first, """{"type":"viewport","offset":120,"endOffset":180,"pages":8}""")
+            for (mode in listOf(ReadingMode.PAGED, ReadingMode.SCROLL, ReadingMode.PAGED, ReadingMode.VERTICAL_PAGED)) {
+                compose.runOnIdle { settings.value = settings.value.copy(readingMode = mode) }
+                compose.waitUntil(5_000) { compose.runOnIdle { first.appliedConfig.orEmpty().contains("\"mode\":\"${mode.name}\"") } }
+                send(first, """{"type":"viewport","offset":120,"endOffset":180,"pages":8}""")
+                compose.runOnIdle { assertSame(first, browser()); keys.tryEmit(1) }
+                compose.waitUntil(5_000) { compose.runOnIdle { shadowOf(first).lastEvaluatedJavascript.contains("\"type\":\"move\"") } }
+            }
+        } finally { compose.runOnIdle { session.close() }; root.deleteRecursively() }
+    }
 
     @Test fun pagedReaderPreparesANeighborsDomBeforeItIsFirstOpened() {
         val context = ApplicationProvider.getApplicationContext<Context>()

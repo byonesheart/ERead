@@ -119,6 +119,9 @@ internal fun ReaderPreferenceSettings(settings: ReaderSettings, onSettings: (Rea
         ReaderToggle("时间", settings.showTime) { onSettings(settings.copy(showTime = it)) }
         ReaderToggle("电量", settings.showBattery) { onSettings(settings.copy(showBattery = it)) }
         ReaderToggle("章节名称", settings.showChapter) { onSettings(settings.copy(showChapter = it)) }
+        ReaderToggle("隐藏系统状态栏", settings.hideStatusBar, Modifier.testTag("reader_hide_status_bar")) {
+            onSettings(settings.copy(hideStatusBar = it))
+        }
         ReaderToggle("音量键与实体键翻页", settings.volumePaging) { onSettings(settings.copy(volumePaging = it)) }
         ReaderToggle("阅读时保持亮屏", settings.keepScreenOn) { onSettings(settings.copy(keepScreenOn = it)) }
         HorizontalDivider()

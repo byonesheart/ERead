@@ -46,6 +46,7 @@ class EReadAppStartupRobolectricTest {
 
     @Before fun setUp() {
         val base = RuntimeEnvironment.getApplication()
+        base.getSharedPreferences("app_updates", 0).edit().clear().commit()
         runCatching { WorkManager.getInstance(base) }.getOrElse {
             WorkManager.initialize(base, Configuration.Builder().build())
             WorkManager.getInstance(base)
@@ -61,6 +62,7 @@ class EReadAppStartupRobolectricTest {
     }
 
     @After fun tearDown() {
+        RuntimeEnvironment.getApplication().getSharedPreferences("app_updates", 0).edit().clear().commit()
         if (::vm.isInitialized) {
             val job = vm.viewModelScope.coroutineContext[Job]!!
             // Cancel first even if an earlier Compose assertion left the UI test scope unhealthy.
@@ -68,6 +70,25 @@ class EReadAppStartupRobolectricTest {
             awaitState(10_000) { job.isCompleted }
         }
         root.deleteRecursively()
+    }
+
+    @Test fun enabledDevicePreferenceSelectsPreviewCheckerBeforeTheFirstStartupCheck() {
+        com.eyue.reader.data.DeveloperModePreferences(RuntimeEnvironment.getApplication()).enable()
+        compose.runOnIdle { vm = ReaderViewModel(application); store.put("reader", vm) }
+        var normal = 0
+        var preview = 0
+        val updates = AppUpdateSession(checker = {
+            normal++; com.eyue.reader.data.AppUpdateResult(false, "stable", 1, "", null, "https://github.com/byonesheart/ERead/releases")
+        }, previewChecker = {
+            preview++; com.eyue.reader.data.AppUpdateResult(true, "next-beta.1", com.eyue.reader.BuildConfig.VERSION_CODE + 1,
+                "核心更新", null, "https://github.com/byonesheart/ERead/releases", prerelease = true)
+        })
+        store.put("updates", updates)
+        compose.setContent { EReadApp(vm, emptyFlow(), updates) }
+        awaitState(30_000) { !vm.loading && preview == 1 }
+        compose.runOnIdle { assertEquals(0, normal); assertTrue(updates.developerMode) }
+        compose.onNodeWithTag("settings_update_badge", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("开发者模式已开启").assertDoesNotExist()
     }
 
     @Test fun shelfDemoBookOpensUpdatesRealStateAndClosesBackToShelfWithDefaultStatusSettings() {

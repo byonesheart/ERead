@@ -28,7 +28,6 @@ internal fun rotatePdfSpeechRect(rect: Rect, rotation: Int): Rect = when (((rota
 }
 
 internal fun cropPdfSpeechRect(rect: Rect, settings: PdfCrop): Rect? {
-    if (!settings.enabled) return rect
     val crop = settings.normalized()
     val visible = Rect(crop.left, crop.top, 1f - crop.right, 1f - crop.bottom)
     val clipped = rect.intersect(visible)

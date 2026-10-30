@@ -292,7 +292,8 @@ try {
         if (anchor === 'offset') assert.ok(state.offset <= target + 2 && state.endOffset > target,
           'The restored canonical anchor must be in the first reported viewport');
         if (anchor === 'last-page') {
-          assert.equal(state.atEnd, true); assert.equal(state.page, state.pages - 1);
+          assert.equal(state.atEnd, true);
+          assert.equal(state.page, mode === 'SCROLL' ? await page.evaluate(() => Math.round(scrollY / innerHeight)) : state.pages - 1);
         }
         if (anchor === 'image') assert.ok(state.images.includes(imageIdentity), 'The restored illustration must be visible');
         await page.evaluate(() => window.ERead.init(window.readerInitOptions));
@@ -1043,6 +1044,62 @@ try {
     await page.waitForTimeout(600);
     assert.deepEqual(await page.evaluate(() => window.events.filter(event => event.type === 'selection')), []);
     return { cancelledManual: true, cancelledImageSelection: true };
+  });
+
+  await test('repeated-typography-changes-keep-the-same-reading-anchor-and-override-inline-metrics', async () => {
+    const evidence = [];
+    for (const authorCss of [false, true]) {
+      await open({ mode:'PAGED', authorCss });
+      const offset = canonical.indexOf(lines[23]) + 15;
+      await command({type:'navigate', offset});
+      const initial = await viewport();
+      await page.evaluate(() => { const p = document.getElementById('paragraph-23');
+        p.style.setProperty('line-height', '7px', 'important'); p.style.setProperty('letter-spacing', '-2px', 'important'); });
+      for (let i = 0; i < 20; i++) {
+        const alternate = i % 2 === 0;
+        await command({type:'configure', config:{...baseConfig, mode:'PAGED', authorCss,
+          lineHeight:alternate ? 42 : baseConfig.lineHeight, letterSpacing:alternate ? 2 : baseConfig.letterSpacing,
+          indent:alternate ? 3 : 2}});
+        const state = await viewport();
+        assert.ok(state.offset <= offset && state.endOffset > offset, `Lost the reflow anchor at ${i}: ${JSON.stringify(state)}`);
+      }
+      const final = await viewport();
+      assert.equal(final.offset, initial.offset, 'Restoring identical typography must restore the same page without drift');
+      const metrics = await page.evaluate(() => { const s = getComputedStyle(document.getElementById('paragraph-23'));
+        return {line:parseFloat(s.lineHeight), tracking:parseFloat(s.letterSpacing), indent:parseFloat(s.textIndent)}; });
+      assert.equal(metrics.line, baseConfig.lineHeight); assert.equal(metrics.tracking, baseConfig.letterSpacing);
+      assert.ok(metrics.indent > 0);
+      evidence.push({authorCss, initial:initial.offset, final:final.offset, metrics});
+    }
+    return evidence;
+  });
+
+  await test('paper-edge-drag-tracks-the-finger-commits-and-cancels-without-extra-turns', async () => {
+    const evidence = [];
+    for (const turn of ['SLIDE','COVER','CURL']) {
+      await open({mode:'PAGED', turn, authorCss:false});
+      await command({type:'page', page:3});
+      const session = await page.context().newCDPSession(page);
+      const touch = (type, x) => session.send('Input.dispatchTouchEvent', {type,
+        touchPoints:x === undefined ? [] : [{x, y:380}]});
+      await touch('touchStart', 386); await touch('touchMove', 235);
+      await page.waitForFunction(() => document.getAnimations().some(a => a.playState === 'paused'));
+      const beforeRelease = await page.evaluate(() => document.getAnimations().filter(a => a.playState === 'paused')
+        .map(a => Number(a.currentTime) / Number(a.effect.getTiming().duration)));
+      assert.ok(beforeRelease.some(progress => progress > .25 && progress < .6), 'The paper must remain at the finger position');
+      await touch('touchEnd'); await page.evaluate(() => Promise.all(window.pageTransitions));
+      assert.equal((await viewport()).page, 4);
+      await touch('touchStart', 6); await touch('touchMove', 42); await touch('touchEnd');
+      await page.evaluate(() => Promise.all(window.pageTransitions));
+      assert.equal((await viewport()).page, 4, 'A short drag must spring back');
+      await touch('touchStart', 6); await touch('touchMove', 170); await touch('touchCancel');
+      await page.evaluate(() => Promise.all(window.pageTransitions));
+      assert.equal((await viewport()).page, 4, 'A cancelled grab must retain the original page');
+      assert.deepEqual(await page.evaluate(() => window.events.filter(e => e.type === 'tap')), []);
+      evidence.push({turn, beforeRelease, finalPage:4});
+      await session.detach();
+    }
+    return evidence;
   });
 
   if (startupManifest) await test('provided-actual-import-trusted-document-startup', async () => {

@@ -248,6 +248,30 @@ try{
    await page.screenshot({path:path.join(output,'publication-continuous-1.png')});
    assert.ok(await page.evaluate(()=>document.querySelectorAll('iframe').length<=3));return {independentCanvases:true};
  });
+ await test('repeated-spacing-reflow-preserves-the-active-chapter-and-rebases-after-manual-scroll',async()=>{
+   publicationFixture=false;cropFixture=false;
+   await page.goto('https://eread.local/root.html');await ready(0);
+   const offset=chapters[3].canonical.indexOf(chapters[3].paragraphs[10]);
+   await jump(3,offset);
+   const initial=await page.evaluate(()=>events.filter(e=>e.type==='viewport').at(-1));
+   for(let i=0;i<12;i++){
+     await page.evaluate(next=>ERead.command({type:'configure',config:next}),{...config,lineHeight:i%2?35:43,letterSpacing:i%2?.5:2});
+     await page.waitForTimeout(170);
+     const state=await page.evaluate(()=>events.filter(e=>e.type==='viewport').at(-1));
+     assert.equal(state.chapter,3);assert.ok(state.offset<=offset&&state.endOffset>offset,JSON.stringify(state));
+   }
+   const final=await page.evaluate(()=>events.filter(e=>e.type==='viewport').at(-1));
+   assert.equal(final.offset,initial.offset);
+   await page.mouse.move(200,380);await page.mouse.wheel(0,450);await page.waitForTimeout(400);
+   const moved=await page.evaluate(()=>events.filter(e=>e.type==='viewport').at(-1));
+   assert.ok(moved.offset>initial.offset);
+   await page.evaluate(next=>ERead.command({type:'configure',config:next}),{...config,lineHeight:40,letterSpacing:1.5});
+   await page.waitForTimeout(250);
+   const after=await page.evaluate(()=>events.filter(e=>e.type==='viewport').at(-1));
+   assert.equal(after.chapter,3);assert.ok(after.offset<=moved.offset&&after.endOffset>moved.offset);
+   assert.ok(await page.evaluate(()=>document.querySelectorAll('iframe').length<=3));
+   return {initial:initial.offset,final:final.offset,moved:moved.offset,after:after.offset};
+ });
 }catch(error){
  console.log(JSON.stringify(await page.evaluate(()=>({events:window.events,scroll:scrollY,frames:Array.from(document.querySelectorAll('iframe')).map(f=>({src:f.src,height:f.offsetHeight,ready:f.contentDocument?.readyState,reader:!!f.contentWindow?.ERead,text:f.contentDocument?.body?.textContent.slice(-180)}))})),null,2));
  throw error;

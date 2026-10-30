@@ -22,7 +22,8 @@ data class AppUpdateResult(
     val downloadUrl: String?,
     val releaseUrl: String,
     val published: Boolean = true,
-    val mirrors: List<AppUpdateMirror> = emptyList()
+    val mirrors: List<AppUpdateMirror> = emptyList(),
+    val prerelease: Boolean = false
 )
 
 data class AppUpdateMirror(val name: String, val url: String, val extractionCode: String = "")
@@ -31,7 +32,21 @@ data class AppUpdateMirror(val name: String, val url: String, val extractionCode
 class AppUpdateClient(private val client: OkHttpClient = OkHttpClient.Builder()
     .connectTimeout(6, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS)
     .callTimeout(10, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()) {
-    suspend fun check(currentVersionCode: Int): AppUpdateResult = try {
+    suspend fun check(currentVersionCode: Int, includePrereleases: Boolean = false): AppUpdateResult {
+        if (!includePrereleases) return checkStable(currentVersionCode)
+        var stableError: Exception? = null
+        val stable = try { checkStable(currentVersionCode) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { stableError = failure; null }
+        val preview = try { fetch(GITHUB_PREVIEW_MANIFEST_URL, currentVersionCode).takeIf { it.published } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { if (stableError == null) stableError = failure; null }
+        return listOfNotNull(stable, preview).maxWithOrNull(
+            compareBy<AppUpdateResult> { it.versionCode }.thenBy { !it.prerelease })
+            ?: throw (stableError ?: IOException("无法读取更新信息"))
+    }
+
+    private suspend fun checkStable(currentVersionCode: Int): AppUpdateResult = try {
         fetch(UPDATE_MANIFEST_URL, currentVersionCode)
     } catch (cancelled: CancellationException) {
         throw cancelled
@@ -53,7 +68,7 @@ class AppUpdateClient(private val client: OkHttpClient = OkHttpClient.Builder()
             override fun onResponse(call: Call, response: Response) {
                 try {
                     val result = response.use {
-                        if (it.code == 404 && url == GITHUB_UPDATE_MANIFEST_URL) AppUpdateResult(false, BuildConfig.VERSION_NAME, currentVersionCode,
+                        if (it.code == 404 && url in setOf(GITHUB_UPDATE_MANIFEST_URL, GITHUB_PREVIEW_MANIFEST_URL)) AppUpdateResult(false, BuildConfig.VERSION_NAME, currentVersionCode,
                             "仓库尚未发布更新文件，可前往 GitHub 查看。", null, APP_RELEASES_URL, published = false)
                         else {
                             if (!it.isSuccessful) throw IOException(when (it.code) {
@@ -63,7 +78,9 @@ class AppUpdateClient(private val client: OkHttpClient = OkHttpClient.Builder()
                             val body = it.body ?: throw IOException("更新文件为空")
                             if (body.contentLength() > MAX_UPDATE_BYTES) throw IOException("更新文件过大")
                             val bytes = body.byteStream().use { input -> input.readBytesBounded() }
-                            parseAppUpdate(bytes.toString(Charsets.UTF_8), currentVersionCode)
+                            parseAppUpdate(bytes.toString(Charsets.UTF_8), currentVersionCode).also { result ->
+                                require(result.prerelease == (url == GITHUB_PREVIEW_MANIFEST_URL)) { "更新渠道不匹配" }
+                            }
                         }
                     }
                     if (continuation.isActive) continuation.resume(result)
@@ -78,6 +95,7 @@ class AppUpdateClient(private val client: OkHttpClient = OkHttpClient.Builder()
 
 internal const val UPDATE_MANIFEST_URL = "https://byonesheart.beer/api/update/eyue"
 internal const val GITHUB_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/byonesheart/ERead/main/update.json"
+internal const val GITHUB_PREVIEW_MANIFEST_URL = "https://raw.githubusercontent.com/byonesheart/ERead/main/update-preview.json"
 internal const val APP_RELEASES_URL = "https://github.com/byonesheart/ERead/releases"
 private const val MAX_UPDATE_BYTES = 512 * 1024
 
@@ -85,6 +103,7 @@ internal fun parseAppUpdate(text: String, currentVersionCode: Int): AppUpdateRes
     val json = JSONObject(text)
     val code = json.getInt("versionCode")
     val name = json.getString("versionName").trim()
+    val prerelease = json.optBoolean("prerelease", false)
     require(code > 0 && name.isNotBlank() && name.length <= 80) { "更新版本号无效" }
     val release = json.optString("releaseUrl", APP_RELEASES_URL).let {
         require(safeUpdateLink(it, download = false)) { "更新页面地址无效" }; it
@@ -107,7 +126,8 @@ internal fun parseAppUpdate(text: String, currentVersionCode: Int): AppUpdateRes
             AppUpdateMirror(title, url, password)
         }
     }.orEmpty()
-    return AppUpdateResult(code > currentVersionCode, name, code, notes, download, release, mirrors = mirrors)
+    return AppUpdateResult(code > currentVersionCode, name, code, notes, download, release,
+        mirrors = if (prerelease) emptyList() else mirrors, prerelease = prerelease)
 }
 
 private fun safeMirrorLink(value: String): Boolean = runCatching {

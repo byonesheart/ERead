@@ -18,16 +18,29 @@ import kotlinx.coroutines.launch
 /** Keeps one startup check and its read state across recompositions and activity recreation. */
 class AppUpdateSession(
     private val checker: suspend () -> AppUpdateResult = { AppUpdateClient().check(BuildConfig.VERSION_CODE) },
-    private val dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate
+    private val dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    private val previewChecker: suspend () -> AppUpdateResult = { AppUpdateClient().check(BuildConfig.VERSION_CODE, includePrereleases = true) }
 ) : ViewModel() {
     var availableUpdate by mutableStateOf<AppUpdateResult?>(null)
         private set
     var hasUnreadUpdate by mutableStateOf(false)
         private set
+    var developerMode by mutableStateOf(false)
+        private set
     private var startupChecked = false
     private var settingsVisible = false
     private var acknowledgedVersion: Int? = null
     private var request: Deferred<AppUpdateResult>? = null
+    private var requestGeneration = 0
+
+    fun configureDeveloperMode(enabled: Boolean) {
+        if (developerMode == enabled) return
+        developerMode = enabled
+        requestGeneration++
+        request?.cancel(); request = null
+        startupChecked = false
+        availableUpdate = null; hasUnreadUpdate = false
+    }
 
     fun setSettingsVisible(visible: Boolean) {
         settingsVisible = visible
@@ -48,8 +61,12 @@ class AppUpdateSession(
     }
 
     suspend fun checkNow(): AppUpdateResult {
+        val generation = requestGeneration
+        val preview = developerMode
         val pending = request?.takeUnless { it.isCompleted }
-            ?: viewModelScope.async(dispatcher) { checker().also(::acceptResult) }.also { request = it }
+            ?: viewModelScope.async(dispatcher) {
+                (if (preview) previewChecker() else checker()).also { if (generation == requestGeneration) acceptResult(it) }
+            }.also { request = it }
         return pending.await()
     }
 
