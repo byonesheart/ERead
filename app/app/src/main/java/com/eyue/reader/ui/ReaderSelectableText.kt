@@ -240,7 +240,12 @@ internal fun ReaderSelectableText(
                         toolbarHandedOff = true; hideSelectionMenu()
                         latestEdit?.invoke(passage)
                     }
-                } else null) + ReaderCompactAction("copy", "复制") {
+                } else null) + ReaderCompactAction("translate", "系统翻译") {
+                    selectedPassage()?.let { passage ->
+                        hideSelectionMenu(); value = value.copy(selection = TextRange(value.selection.max))
+                        focus.clearFocus(); openReaderTranslation(view.context, passage.quote)
+                    }
+                } + ReaderCompactAction("copy", "复制") {
                     copyAction?.invoke() ?: clipboard.setText(AnnotatedString(value.annotatedString.text.substring(value.selection.min, value.selection.max)))
                     hideSelectionMenu()
                     value = value.copy(selection = TextRange(value.selection.max))

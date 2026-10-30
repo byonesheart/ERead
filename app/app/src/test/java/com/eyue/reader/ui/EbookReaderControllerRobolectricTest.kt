@@ -10,6 +10,30 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
 class EbookReaderControllerRobolectricTest {
+    @Test fun retiredModeCannotDisconnectOrConsumeTheNewModesChapterAndProgressJumps() {
+        val controller = EbookReaderController()
+        val old = Any(); val current = Any()
+        controller.bind(0, owner = old) {}
+        controller.loaded(owner = old)
+        val commands = mutableListOf<JSONObject>()
+        controller.bind(0, continuous = true, owner = current) { commands += it }
+        controller.navigate(120, expectedChapterIndex = 1)
+        controller.loaded(owner = old)
+        controller.unbind(old)
+        assertTrue(commands.isEmpty())
+        controller.loaded(owner = current)
+        assertEquals(1, commands.single().getInt("chapter"))
+        commands.clear()
+        controller.navigate(450, expectedChapterIndex = 2)
+        assertEquals(450, commands.single().getInt("offset"))
+        val paged = Any()
+        controller.bind(2, owner = paged) { commands += it }
+        controller.unbind(current)
+        controller.loaded(owner = paged)
+        commands.clear()
+        controller.navigate(220, expectedChapterIndex = 2)
+        assertEquals(220, commands.single().getInt("offset"))
+    }
     @Test fun holdPagingCancelsTheCurrentNativeGestureWithoutQueuingAnotherPageTurn() {
         val controller = EbookReaderController()
         val commands = mutableListOf<JSONObject>()

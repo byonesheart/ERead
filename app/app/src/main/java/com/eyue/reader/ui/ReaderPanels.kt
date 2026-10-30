@@ -96,7 +96,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import java.util.Locale
 
 internal val ReaderMarkColors = listOf(
     "黄色" to 0xFFFFD76CL, "绿色" to 0xFFA6DCA4L,
@@ -124,10 +123,6 @@ internal fun ReaderPreferenceSettings(settings: ReaderSettings, onSettings: (Rea
         }
         ReaderToggle("音量键与实体键翻页", settings.volumePaging) { onSettings(settings.copy(volumePaging = it)) }
         ReaderToggle("阅读时保持亮屏", settings.keepScreenOn) { onSettings(settings.copy(keepScreenOn = it)) }
-        HorizontalDivider()
-        ReaderAdjustableSlider("语速", "系统朗读语速", settings.ttsSpeed, .5f..2f, .1f,
-            { onSettings(settings.copy(ttsSpeed = it)) }, { String.format(Locale.getDefault(), "%.1f×", it) })
-        ReaderToggle("朗读与阅读页面同步", settings.ttsFollowPage) { onSettings(settings.copy(ttsFollowPage = it)) }
         HorizontalDivider()
         TextButton(onClick = { confirmReset = true }, modifier = Modifier.testTag("reader_reset_defaults")) { Text("恢复本模式默认设置") }
     }

@@ -72,6 +72,7 @@ internal class EbookReaderController {
     private var autoScrollSpeed = 0f
     private var dispatch: ((JSONObject) -> Unit)? = null
     private var pending: Pair<Int?, JSONObject>? = null
+    private var bindingOwner: Any? = null
 
     fun navigate(offset: Int, imagePath: String? = null, lastPage: Boolean = false,
         ensureVisible: Boolean = false, expectedChapterIndex: Int? = null) {
@@ -104,16 +105,18 @@ internal class EbookReaderController {
     fun clearSelection() { dispatch?.invoke(JSONObject().put("type", "clearSelection")) }
     fun cancelTouch() { dispatch?.invoke(JSONObject().put("type", "cancelTouch")) }
 
-    internal fun bind(chapterIndex: Int, continuous: Boolean = false, callback: (JSONObject) -> Unit) {
+    internal fun bind(chapterIndex: Int, continuous: Boolean = false, owner: Any = Any(), callback: (JSONObject) -> Unit) {
         autoScroll(0f)
         autoScrollSpeed = 0f
         chapter = chapterIndex; dispatch = callback; ready = false; acceptsChapterChanges = continuous
+        bindingOwner = owner
     }
 
     internal fun initialNavigation(chapterIndex: Int): JSONObject? =
         pending?.takeIf { it.first == null || it.first == chapterIndex }?.second?.takeIf { it.optString("type") == "navigate" }
 
-    internal fun loaded(applied: JSONObject? = null) {
+    internal fun loaded(applied: JSONObject? = null, owner: Any? = null) {
+        if (owner != null && bindingOwner !== owner) return
         ready = true
         if (applied != null && pending?.second === applied) pending = null
         if (!consumePending()) dispatch?.invoke(JSONObject().put("type", "report"))
@@ -127,7 +130,10 @@ internal class EbookReaderController {
         return true
     }
 
-    internal fun unbind() { autoScroll(0f); dispatch = null; ready = false; acceptsChapterChanges = false }
+    internal fun unbind(owner: Any? = null) {
+        if (owner != null && bindingOwner !== owner) return
+        autoScroll(0f); dispatch = null; ready = false; acceptsChapterChanges = false; bindingOwner = null
+    }
 }
 
 @SuppressLint("SetJavaScriptEnabled")
@@ -207,6 +213,7 @@ internal fun EbookReaderSurface(
     val latestFootnote by rememberUpdatedState(onFootnote)
     val latestChapter by rememberUpdatedState(chapter)
     val latestMenuEnabled by rememberUpdatedState(selectionMenuEnabled)
+    val bindingOwner = remember(controller) { Any() }
     val script = remember(context) { context.assets.open("reader/ebook-reader.js").bufferedReader().use { it.readText() } }
     val generation = remember(store, chapterIndex, canonicalText, contentReady) { UUID.randomUUID().toString() }
     val latestGeneration by rememberUpdatedState(generation)
@@ -224,7 +231,7 @@ internal fun EbookReaderSurface(
     }
     LaunchedEffect(generation) {
         selected = null; ready = false; latestViewport(EbookViewportState())
-        controller.bind(chapterIndex) { invoke(it) }
+        controller.bind(chapterIndex, owner = bindingOwner) { invoke(it) }
         if (!contentReady) return@LaunchedEffect
         try { document = generation to store.load(chapterIndex, canonicalText) }
         catch (error: CancellationException) { throw error }
@@ -246,7 +253,7 @@ internal fun EbookReaderSurface(
     LaunchedEffect(selectionReset, selectionMenuEnabled) {
         selected = null; controller.clearSelection(); latestSelectionActive(false)
     }
-    DisposableEffect(controller) { onDispose { controller.unbind(); latestSelectionActive(false) } }
+    DisposableEffect(controller) { onDispose { controller.unbind(bindingOwner); latestSelectionActive(false) } }
     val decorations = remember(annotations, chapterIndex, searchQuery, spokenRange) {
         JSONObject().put("annotations", JSONArray(annotations.filter { it.chapterIndex == chapterIndex }.map {
             JSONObject().put("id", it.id).put("start", it.characterOffset).put("end", it.endOffset)
@@ -333,7 +340,7 @@ internal fun EbookReaderSurface(
                             origin[1] + event.optDouble("bottom").toFloat() * scale)
                     }
                     when (event.optString("type")) {
-                        "ready" -> { browser.loadedKey = browserKey; browser.pageReady = true; ready = true; controller.loaded(navigation) }
+                        "ready" -> { browser.loadedKey = browserKey; browser.pageReady = true; ready = true; controller.loaded(navigation, bindingOwner) }
                         "error" -> fail(event.optString("message", "原书排版失败"))
                         "viewport" -> {
                             // A prefetched/reused WebView may still have queued reports
@@ -431,7 +438,9 @@ internal fun EbookReaderSurface(
                 selected = null; controller.clearSelection(); callback(passage)
             } }, onEdit?.takeIf { passage.imagePath == null }?.let { callback -> ReaderCompactAction("edit", "编辑") {
                 selected = null; controller.clearSelection(); callback(passage)
-            } }) + ReaderCompactAction("copy", "复制") {
+            } }) + ReaderCompactAction("translate", "系统翻译") {
+                selected = null; controller.clearSelection(); openReaderTranslation(context, passage.quote)
+            } + ReaderCompactAction("copy", "复制") {
                 clipboard.setText(AnnotatedString(passage.quote)); selected = null; controller.clearSelection()
             })
         }

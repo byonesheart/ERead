@@ -40,6 +40,14 @@ import kotlin.math.roundToInt
 class ReaderCompactSettingsRobolectricTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun readingPreferencesDoNotDuplicateNarrationSettings() {
+        val settings = ReaderSettings(ttsSpeed = 1.7f, ttsFollowPage = true)
+        compose.setContent { MaterialTheme { ReaderPreferencesPanel(settings, {}) } }
+        compose.onNodeWithText("朗读与阅读页面同步").assertDoesNotExist()
+        compose.onNodeWithContentDescription("系统朗读语速").assertDoesNotExist()
+        compose.onNodeWithText("时间").assertExists()
+    }
+
     private fun expand(vararg titles: String) {
         titles.forEach { title ->
             val header = compose.onNodeWithTag("reader_section_$title")

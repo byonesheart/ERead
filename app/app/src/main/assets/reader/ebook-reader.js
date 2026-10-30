@@ -340,7 +340,7 @@
         drawDecorations();
     }
     function schedule() {
-        if (!frame) frame = requestAnimationFrame(function () { frame = 0; report(false); });
+        if (!frame) frame = requestAnimationFrame(function () { frame = 0; if (!getSelection().isCollapsed) alignPagedSelection(); report(false); });
     }
     function beginManual() {
         navigationAnchor = null; reflowAnchor = null;
@@ -449,8 +449,13 @@
         });
     }
     function edgeDrag(point) {
-        if (!touch || !touch.edge || config.mode !== 'PAGED' || config.vertical || config.eink) return false;
-        const direction = touch.edge, delta = (touch.x - point.clientX) * direction;
+        if (!touch || touch.selecting || (!touch.dragging && Date.now() - touch.time >= 500) || config.mode !== 'PAGED' || config.vertical || config.eink) return false;
+        if (!touch.dragging && !getSelection().isCollapsed) { touch.selecting = true; return false; }
+        const dx = touch.x - point.clientX;
+        if (!touch.dragging && (Math.abs(dx) <= 10 || Math.abs(point.clientY - touch.y) > Math.abs(dx))) return false;
+        const direction = touch.dragging ? touch.edge : dx > 0 ? 1 : -1;
+        touch.edge = direction;
+        const delta = dx * direction;
         const progress = Math.max(0, Math.min(.999, delta / innerWidth));
         if (!touch.dragging && delta <= 10) return false;
         if (!touch.dragging) {
@@ -660,9 +665,17 @@
             }
         }
     }
+    function alignPagedSelection() {
+        if (config.mode !== 'PAGED' || config.vertical || continuousHost || pageAnimation || pageTransition || touch?.dragging) return;
+        const span = config.dual ? 2 : 1;
+        const page = Math.max(0, Math.min(pageCount() - 1, Math.round(scrollX / (pageStride() * span)) * span));
+        const target = page * pageStride();
+        if (Math.abs(scrollX - target) > .5 || scrollY !== 0) scrollTo(target, 0);
+    }
     function selection() {
         clearTimeout(selectionTimer);
         selectionTimer = setTimeout(function () {
+            alignPagedSelection();
             const selected = getSelection();
             if (!selected || selected.isCollapsed || !selected.rangeCount) { send('selection', {start:0, end:0}); return; }
             const range = selected.getRangeAt(0), start = canonicalPoint(range.startContainer, range.startOffset, false);
@@ -825,7 +838,7 @@
             else if (value.type === 'move') step(value.direction);
             else if (value.type === 'autoScroll') setAutoScroll(value.speed);
             else if (value.type === 'page') moveToPage(value.page);
-            else if (value.type === 'clearSelection') getSelection().removeAllRanges();
+            else if (value.type === 'clearSelection') { getSelection().removeAllRanges(); alignPagedSelection(); }
             else if (value.type === 'resetReflowAnchor') { navigationAnchor = null; reflowAnchor = null; }
             else if (value.type === 'configure') await configure(value.config, true);
             else if (value.type === 'convert') convertText();
@@ -857,8 +870,7 @@
         finishPageAnimation();
         touch = {x:event.touches[0].clientX, y:event.touches[0].clientY, time:Date.now(), moved:false, image:event.target.closest('img,image,svg'),
             startAtStart: scrollY <= 1, startAtEnd: scrollY + innerHeight >= document.documentElement.scrollHeight - 1};
-        const edgeWidth = Math.max(24, Math.min(40, innerWidth * .08));
-        touch.edge = touch.x <= edgeWidth ? -1 : touch.x >= innerWidth - edgeWidth ? 1 : 0;
+        touch.selecting = !getSelection().isCollapsed;
         clearTimeout(selectionTimer);
         if (touch.image) selectionTimer = setTimeout(function () {
             const image = images.find(image => image.node === touch.image || touch.image.contains(image.node));
@@ -879,7 +891,7 @@
         if (!touch) return;
         const previous = touch; touch = null; clearTimeout(selectionTimer);
         if (previous.dragging) { releaseEdgeDrag(previous, false); return; }
-        if (previous.moved && config.mode !== 'SCROLL' && getSelection().isCollapsed) {
+        if (previous.moved && !previous.selecting && Date.now() - previous.time < 500 && config.mode !== 'SCROLL' && getSelection().isCollapsed) {
             const point = event.changedTouches[0], delta = config.mode === 'PAGED' ? point.clientX - previous.x : point.clientY - previous.y;
             if (Math.abs(delta) > 24) step(delta < 0 ? 1 : -1);
         } else if (previous.moved && config.mode === 'SCROLL' && !continuousHost) {

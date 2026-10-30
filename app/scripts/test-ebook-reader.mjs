@@ -1112,6 +1112,40 @@ try {
     return evidence;
   });
 
+  await test('center-short-drag-and-long-press-have-distinct-behavior', async () => {
+    await open({mode:'PAGED', turn:'COVER'});
+    await command({type:'page', page:2});
+    const session = await page.context().newCDPSession(page);
+    const touch = (type,x) => session.send('Input.dispatchTouchEvent',{type,touchPoints:x===undefined?[]:[{x,y:380}]});
+    await touch('touchStart',260); await touch('touchMove',120);
+    assert.ok(Math.abs(await page.evaluate(()=>new DOMMatrix(getComputedStyle(document.body).transform).m41)+140)<2);
+    await touch('touchEnd'); await page.waitForFunction(()=>!document.getAnimations().length);
+    assert.equal((await viewport()).page,3);
+    await touch('touchStart',260); await page.waitForTimeout(550); await touch('touchMove',120); await touch('touchEnd');
+    await page.waitForTimeout(100);
+    assert.equal((await viewport()).page,3,'Long press must never become a page turn');
+    assert.equal(await page.evaluate(()=>document.body.style.transform),'');
+    await session.detach();
+  });
+
+  await test('cross-page-selection-snaps-native-auto-scroll-to-a-full-page', async () => {
+    for (const dual of [false,true]) {
+      await open({mode:'PAGED',turn:'COVER',dual});
+      const quote = await page.evaluate(()=>{
+        const paragraphs=[...document.querySelectorAll('p')].filter(p=>p.textContent.trim());
+        const range=document.createRange();range.setStart(paragraphs[0],0);range.setEndAfter(paragraphs.at(-1));
+        const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+        scrollTo(innerWidth*2.37,0); return selection.toString();
+      });
+      assert.ok(quote.length>0);
+      await page.waitForFunction(()=>Math.abs(scrollX/innerWidth-Math.round(scrollX/innerWidth))<.001);
+      assert.equal(await page.evaluate(()=>getSelection().toString()),quote,'Snapping must preserve selected text');
+      await command({type:'clearSelection'});
+      assert.equal(await page.evaluate(()=>document.body.style.transform),'');
+      assert.ok(await page.evaluate(()=>Math.abs(scrollX/innerWidth-Math.round(scrollX/innerWidth))<.001));
+    }
+  });
+
   if (startupManifest) await test('provided-actual-import-trusted-document-startup', async () => {
     const source = JSON.parse(await fs.readFile(startupManifest, 'utf8'));
     if (page) await page.close();

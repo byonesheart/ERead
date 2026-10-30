@@ -41,6 +41,10 @@ class ReaderPaperDragRobolectricTest {
         assertEquals(listOf(true, false, false), commits)
         val count = preview.size
         paper.performTouchInput { down(center); moveBy(Offset(-width * .4f, 0f)); up() }
-        assertEquals(count, preview.size)
+        assertTrue(preview.size > count)
+        assertEquals(listOf(true, false, false, true), commits)
+        val afterShortDrag = preview.size
+        paper.performTouchInput { down(center); advanceEventTime(600); moveBy(Offset(-width * .4f, 0f)); up() }
+        assertEquals(afterShortDrag, preview.size)
     }
 }

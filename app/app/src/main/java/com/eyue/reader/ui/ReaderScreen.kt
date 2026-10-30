@@ -1371,12 +1371,12 @@ internal fun ReaderScreen(
         }
         Box(Modifier.fillMaxSize().padding(top = ReaderBodyTopPadding, bottom = ReaderBodyBottomPadding).onSizeChanged { viewport = it }
             .onGloballyPositioned { bodyCoordinates = it }.testTag("reader_body")
-            .readerHoldPaging(book.id, settings.tapPaging, settings.readingMode != ReadingMode.SCROLL &&
+            .readerHoldPaging(book.id, settings.tapPaging, raster && settings.readingMode != ReadingMode.SCROLL &&
                 !chromeVisible && panel == null && selectedPassage == null && txtSelection == null,
                 onHolding = { holding -> holdPagingActive = holding; if (holding && sourceEbook) ebookController.cancelTouch() }) { direction ->
                 pauseAutoReading(); noteTapHandled = true; selectionReset++; move(direction)
             }.readerPaperDrag(!sourceEbook && !einkMode && settings.readingMode == ReadingMode.PAGED &&
-                !chromeVisible && panel == null && !layoutState.preparing && !layoutState.restoring,
+                !chromeVisible && panel == null && activeTextSelections.isEmpty() && !layoutState.preparing && !layoutState.restoring,
                 onDrag = { direction, fraction ->
                     if (paperDragSettle?.isActive != true) {
                         if (paperDragDirection == 0) { pauseAutoReading(); pauseSpeechForNavigation(); selectionReset++; manualDrag = true }

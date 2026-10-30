@@ -164,7 +164,7 @@ class ReaderScreenStartupRobolectricTest {
         compose.onNodeWithContentDescription("目录").assertIsDisplayed()
     }
 
-    @Test fun holdingTheActualReaderEdgeTurnsSeveralPagesAndReleaseKeepsTheToolbarClosed() {
+    @Test fun holdingTheTextReaderEdgeDoesNotStealLongPressForRepeatedPaging() {
         val text = "HOLD_PAGING_BODY\n" + "A paragraph fills another page without changing the canonical text.\n".repeat(200)
         showReader(textBook(BookFormat.TXT, text), ReadingMode.PAGED, { SilentSpeech() },
             initialSettings = ReaderSettings(tapPaging = TapPagingMode.HORIZONTAL))
@@ -174,7 +174,7 @@ class ReaderScreenStartupRobolectricTest {
         compose.onNodeWithTag("reader_body").performTouchInput { down(Offset(width * .9f, center.y)) }
         advanceHoldBy(1200)
         val stopped = position.get()!!.offset
-        compose.runOnIdle { assertTrue("offset=$stopped", stopped > 0) }
+        compose.runOnIdle { assertEquals("Long press belongs to text selection", 0, stopped) }
         compose.onNodeWithTag("reader_body").performTouchInput { up() }
         advanceHoldBy(1500)
         compose.runOnIdle { assertEquals(stopped, position.get()!!.offset) }

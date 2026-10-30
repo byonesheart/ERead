@@ -187,7 +187,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent(onHistory: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 拖拽翻页时纸张实时跟随手指，支持拖回、松手翻页或回弹。\n• 滑动条直接显示，仅一级设置分组保留折叠与重置。\n• 修复反复拖动滑动条时的断续与旧数值回写。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 阅读设置页移除重复的朗读设置。\n• 扩大拖拽翻页范围，短按后横向拖动翻页，长按选取文字。\n• 选字菜单支持调用系统翻译服务。\n• 修复跨页选字后页面停在两页之间、显示不完整的问题。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton(onClick = onHistory, modifier = Modifier.testTag("settings_history_changelog")) { Text("历史更新日志") }
     }

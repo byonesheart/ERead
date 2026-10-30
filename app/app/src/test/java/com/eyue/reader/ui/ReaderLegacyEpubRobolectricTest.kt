@@ -77,6 +77,50 @@ class ReaderLegacyEpubRobolectricTest {
         } finally { compose.runOnIdle { session.close() }; root.deleteRecursively() }
     }
 
+    @Test fun switchingBetweenPagedAndContinuousScrollKeepsTheLiveControllerConnected() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val root = File(context.cacheDir, "reader-mode-controller-${UUID.randomUUID()}").apply { mkdirs() }
+        val source = EpubFixtures.create(context, root, "mode-controller", paragraphs = 15)
+        val book = EpubTestImporter(context).import(source, File(root, "book").apply { mkdirs() }, UUID.randomUUID().toString(), "modes")
+        val settings = mutableStateOf(ReaderSettings(readingMode = ReadingMode.PAGED, continuousEbookScroll = true, volumePaging = true))
+        val keys = MutableSharedFlow<Int>(extraBufferCapacity = 4)
+        val session = EbookReaderSession(context)
+        val view = AtomicReference<View>()
+        fun browser(): EbookWebView? {
+            fun find(node: View?): EbookWebView? = if (node is EbookWebView) node else (node as? ViewGroup)?.let { group ->
+                (0 until group.childCount).firstNotNullOfOrNull { find(group.getChildAt(it)) }
+            }
+            return find(view.get())
+        }
+        fun send(target: EbookWebView, json: String) = compose.runOnIdle {
+            val bridge = shadowOf(target).getJavascriptInterface("__ERead")
+            bridge.javaClass.getMethod("event", String::class.java).apply { isAccessible = true }.invoke(bridge, json)
+        }
+        try {
+            compose.setContent { view.set(LocalView.current.rootView)
+                MaterialTheme { ReaderScreen(book, settings.value, emptyList(), {}, { _, _, _, _, _ -> },
+                    { settings.value = it }, {}, {}, {}, keys, ebookSession = session) }
+            }
+            compose.waitUntil(15_000) { compose.runOnIdle { browser()?.onBridgeEvent != null } }
+            val first = requireNotNull(browser())
+            send(first, """{"type":"ready"}""")
+            send(first, """{"type":"viewport","offset":120,"endOffset":180,"pages":8}""")
+            var current = first
+            for (mode in listOf(ReadingMode.SCROLL, ReadingMode.PAGED, ReadingMode.SCROLL, ReadingMode.PAGED)) {
+                val previous = current
+                compose.runOnIdle { settings.value = settings.value.copy(readingMode = mode) }
+                compose.waitUntil(15000) { compose.runOnIdle { browser()?.let {
+                    it !== previous && it.onBridgeEvent != null && it.appliedConfig.orEmpty().contains("\"mode\":\"${mode.name}\"")
+                } == true } }
+                current = requireNotNull(browser())
+                send(current, """{"type":"ready","chapter":0}""")
+                send(current, """{"type":"viewport","chapter":0,"offset":120,"endOffset":180,"pages":8}""")
+                compose.runOnIdle { keys.tryEmit(1) }
+                compose.waitUntil(5000) { compose.runOnIdle { shadowOf(current).lastEvaluatedJavascript.contains("\"type\":\"move\"") } }
+            }
+        } finally { compose.runOnIdle { session.close() }; root.deleteRecursively() }
+    }
+
     @Test fun pagedReaderPreparesANeighborsDomBeforeItIsFirstOpened() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val root = File(context.cacheDir, "reader-preload-${UUID.randomUUID()}").apply { mkdirs() }

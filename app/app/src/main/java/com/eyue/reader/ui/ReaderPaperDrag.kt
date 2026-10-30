@@ -7,7 +7,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 
 internal class ReaderPaperDrag(val origin: ReaderPageLocation, val target: ReaderPageLocation,
@@ -15,7 +14,7 @@ internal class ReaderPaperDrag(val origin: ReaderPageLocation, val target: Reade
     var fraction by mutableFloatStateOf(initialFraction)
 }
 
-/** Only the paper's outer edge is grabbed; middle drags retain selection and ordinary swipe behavior. */
+/** A short horizontal gesture grabs the paper; long presses remain available to text selection. */
 internal fun Modifier.readerPaperDrag(enabled: Boolean, onDrag: (Int, Float) -> Unit,
     onRelease: (Boolean) -> Unit): Modifier = composed {
     val latestDrag by rememberUpdatedState(onDrag)
@@ -24,9 +23,7 @@ internal fun Modifier.readerPaperDrag(enabled: Boolean, onDrag: (Int, Float) -> 
         if (!enabled) return@pointerInput
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            val edge = (size.width * .08f).coerceIn(24.dp.toPx(), 40.dp.toPx())
-            val direction = when { down.position.x <= edge -> -1; down.position.x >= size.width - edge -> 1; else -> 0 }
-            if (direction == 0) return@awaitEachGesture
+            var direction = 0
             var active = false
             var released = false
             var fraction = 0f
@@ -38,8 +35,11 @@ internal fun Modifier.readerPaperDrag(enabled: Boolean, onDrag: (Int, Float) -> 
                     // Compose represents ACTION_CANCEL as consumed pointer-up changes.
                     if (!change.pressed && change.isConsumed) break
                     val delta = change.position - down.position
+                    if (!active && change.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis) break
                     if (!active && abs(delta.y) > viewConfiguration.touchSlop && abs(delta.y) > abs(delta.x)) break
-                    if (!active && -delta.x * direction > viewConfiguration.touchSlop) active = true
+                    if (!active && abs(delta.x) > viewConfiguration.touchSlop) {
+                        active = true; direction = if (delta.x < 0) 1 else -1
+                    }
                     if (active) {
                         fraction = (-delta.x * direction / size.width).coerceIn(0f, 1f)
                         change.consume(); latestDrag(direction, fraction)

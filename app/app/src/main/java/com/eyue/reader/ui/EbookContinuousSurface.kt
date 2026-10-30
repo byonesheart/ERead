@@ -42,6 +42,7 @@ internal fun EbookContinuousSurface(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+    val bindingOwner = remember(controller) { Any() }
     val localSession = remember { if (session == null) EbookReaderSession(context) else null }
     val pool = session ?: requireNotNull(localSession)
     val config = rememberEbookConfig(settings, foreground, einkMode = eink)
@@ -133,7 +134,7 @@ internal fun EbookContinuousSurface(
         val options = JSONObject().put("config", latestConfig).put("initialNavigation", initial)
             .put("preserveViewport", preserve)
             .put("chapters", JSONArray(chapters.map { JSONObject().put("title", it.title).put("length", it.characterCount.coerceAtLeast(0)) }))
-        controller.bind(chapterIndex, continuous = true) { invoke(it) }
+        controller.bind(chapterIndex, continuous = true, owner = bindingOwner) { invoke(it) }
         view.alpha = if (preserve) 1f else 0f
         fun fail(message: String) {
             if (browser === view && view.documentGeneration == generation) {
@@ -164,7 +165,7 @@ internal fun EbookContinuousSurface(
                 "chapterDiscard" -> {
                     jobs.remove(index)?.second?.cancel(); documents.remove(index); urls.remove(index)?.let(html::remove)
                 }
-                "ready" -> { ready = true; view.loadedKey = key; view.pageReady = true; controller.loaded(initial) }
+                "ready" -> { ready = true; view.loadedKey = key; view.pageReady = true; controller.loaded(initial, bindingOwner) }
                 "error" -> fail(event.optString("message", "原书排版失败"))
                 "viewport" -> {
                     if (!ready) return@event
@@ -202,7 +203,7 @@ internal fun EbookContinuousSurface(
         if (reuse) invoke(JSONObject().put("type", "resume").put("options", options)) else view.loadUrl(store.continuousUrl)
     }
     DisposableEffect(store, key) { onDispose {
-        jobs.values.forEach { it.second.cancel() }; controller.unbind(); latestSelection(false); localSession?.close()
+        jobs.values.forEach { it.second.cancel() }; controller.unbind(bindingOwner); latestSelection(false); localSession?.close()
     } }
     LaunchedEffect(selectionReset, menuEnabled) { selected = null; controller.clearSelection(); latestSelection(false) }
     LaunchedEffect(key, ready, error) {
@@ -243,6 +244,7 @@ internal fun EbookContinuousSurface(
         }
         if (loadingVisible && !ready && error == null) CircularProgressIndicator(Modifier.align(Alignment.Center))
     }
+    val translationContext = androidx.compose.ui.platform.LocalContext.current
     val clipboard = LocalClipboardManager.current
     selected?.takeIf { menuEnabled }?.let { passage ->
         ReaderAnnotationPopup(passage.anchor ?: Rect.Zero, onDismiss = { selected = null }) {
@@ -255,7 +257,9 @@ internal fun EbookContinuousSurface(
                 selected = null; controller.clearSelection(); callback(passage)
             } }, onRole?.let { callback -> ReaderCompactAction("role", "角色") {
                 selected = null; controller.clearSelection(); callback(passage)
-            } }) + ReaderCompactAction("copy", "复制") {
+            } }) + ReaderCompactAction("translate", "系统翻译") {
+                selected = null; controller.clearSelection(); openReaderTranslation(translationContext, passage.quote)
+            } + ReaderCompactAction("copy", "复制") {
                 clipboard.setText(AnnotatedString(passage.quote)); selected = null; controller.clearSelection()
             })
         }
