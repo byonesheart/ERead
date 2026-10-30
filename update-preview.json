@@ -1,14 +1,16 @@
 {
-  "versionCode": 70,
-  "versionName": "1.11.24-beta.1",
+  "versionCode": 71,
+  "versionName": "1.11.24-beta.2",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.24-beta.1",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.24-beta.1/ERead-1.11.24-beta.1-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.24-beta.2",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.24-beta.2/ERead-1.11.24-beta.2-release.apk",
   "mirrors": [],
   "changelog": [
-    "拖拽翻页时纸张实时跟随手指，支持拖回、松手翻页或回弹。",
-    "滑动条直接显示，仅一级设置分组保留折叠与重置。",
-    "修复反复拖动滑动条时的断续与旧数值回写。",
+    "阅读设置页移除重复的朗读设置。",
+    "扩大拖拽翻页范围，短按后横向拖动翻页，长按选取文字。",
+    "选字菜单支持调用系统翻译服务。",
+    "修复跨页选字后页面停在两页之间、显示不完整的问题。",
+    "修复翻页切换滚动后目录和进度条跳转失效。",
     "更多功能请自行体验。"
   ]
 }
