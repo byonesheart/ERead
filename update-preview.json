@@ -1,0 +1,14 @@
+{
+  "versionCode": 70,
+  "versionName": "1.11.24-beta.1",
+  "prerelease": true,
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.24-beta.1",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.24-beta.1/ERead-1.11.24-beta.1-release.apk",
+  "mirrors": [],
+  "changelog": [
+    "拖拽翻页时纸张实时跟随手指，支持拖回、松手翻页或回弹。",
+    "滑动条直接显示，仅一级设置分组保留折叠与重置。",
+    "修复反复拖动滑动条时的断续与旧数值回写。",
+    "更多功能请自行体验。"
+  ]
+}
