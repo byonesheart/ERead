@@ -63,7 +63,7 @@ class ReaderCompactSettingsRobolectricTest {
             label == "字号" -> "文字与排版"
             label.endsWith("距") -> "页边距"
             else -> "图片／PDF 裁边"
-        }, label)
+        })
         return compose.onNodeWithContentDescription(description)
     }
 
@@ -72,16 +72,19 @@ class ReaderCompactSettingsRobolectricTest {
         return compose.onNodeWithTag(tag)
     }
 
-    @Test fun interfaceSectionsStartCollapsedAndEachSliderResetsIndependently() {
+    @Test fun interfaceSectionsStartCollapsedAndExpandedGroupsExposeAllSliders() {
         var settings by mutableStateOf(ReaderSettings(fontSize = 28f, lineHeight = 2.2f, nightMode = true,
             readingMode = ReadingMode.PAGED, pageTurnStyle = PageTurnStyle.CURL))
         compose.setContent { MaterialTheme { ReaderCompactSettings(settings, false, { settings = it }, {}, {}) } }
         compose.onNodeWithContentDescription("阅读字号").assertDoesNotExist()
         compose.onNodeWithTag("reader_more_fonts").assertDoesNotExist()
         compose.onNodeWithText("仿真 | 关闭点击").assertIsDisplayed()
-        expand("文字与排版", "字号")
-        compose.onNodeWithTag("reader_reset_字号").performScrollTo().performClick()
-        compose.runOnIdle { assertEquals(19f, settings.fontSize); assertEquals(2.2f, settings.lineHeight); assertTrue(settings.nightMode) }
+        expand("文字与排版")
+        compose.onNodeWithTag("reader_section_字号").assertDoesNotExist()
+        compose.onNodeWithContentDescription("阅读字号").assertExists()
+        compose.onNodeWithContentDescription("阅读行间距").assertExists()
+        compose.onNodeWithTag("reader_reset_文字与排版").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(19f, settings.fontSize); assertEquals(1.85f, settings.lineHeight); assertTrue(settings.nightMode) }
         expand("纸张")
         compose.onNodeWithTag("reader_background_white").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(settings.nightMode) }
@@ -367,6 +370,24 @@ class ReaderCompactSettingsRobolectricTest {
         compose.runOnIdle { assertEquals(0, resets) }
         compose.onNodeWithTag("reader_reset_defaults_confirm").performClick()
         compose.runOnIdle { assertEquals(1, resets) }
+    }
+
+    @Test fun repeatedDragsRetainLiveStateAcrossCommittedValues() {
+        var value by mutableStateOf(19f)
+        var commits = 0
+        compose.setContent { MaterialTheme { ReaderAdjustableSlider("字号", "阅读字号", value, 12f..36f, 1f,
+            { value = it; commits++ }, { it.toInt().toString() }) } }
+        val slider = compose.onNodeWithContentDescription("阅读字号")
+        repeat(3) {
+            val before = value
+            slider.performTouchInput { down(center); moveBy(Offset(width * .12f, 0f)) }
+            compose.runOnIdle { assertEquals(before, value); assertEquals(it, commits) }
+            slider.performTouchInput { moveBy(Offset(width * .06f, 0f)); up() }
+            compose.runOnIdle { assertTrue(value > before); assertEquals(it + 1, commits) }
+        }
+        val before = value
+        slider.performTouchInput { down(center); moveBy(Offset(-width * .25f, 0f)); up() }
+        compose.runOnIdle { assertTrue(value < before); assertEquals(4, commits) }
     }
 
     @Test fun tappingTheTrackDoesNothingAndButtonsProvideOneStepAdjustments() {

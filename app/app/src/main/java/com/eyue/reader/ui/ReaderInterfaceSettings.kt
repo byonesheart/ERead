@@ -115,7 +115,7 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
         onReset = { onSettings(settings.copy(pdfCrop = PdfCrop())) }) {
         val crop = settings.pdfCrop.normalized()
         listOf("左" to crop.left, "右" to crop.right, "上" to crop.top, "下" to crop.bottom).forEach { (label, value) ->
-            ReaderInterfaceSlider("${label}边", "图片${label}侧裁边", value, 0f..0.4f, .01f, 0f, { amount ->
+            ReaderInterfaceSlider("${label}边", "图片${label}侧裁边", value, 0f..0.4f, .01f, { amount ->
                 val changed = when (label) { "左" -> crop.copy(left = amount); "右" -> crop.copy(right = amount)
                     "上" -> crop.copy(top = amount); else -> crop.copy(bottom = amount) }
                 onSettings(settings.copy(pdfCrop = changed))
@@ -123,8 +123,14 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
         }
         Text("始终启用，0% 保留完整页面；仅调整显示，不修改原文件。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
     }
-    if (!raster) ReaderCollapsibleSection("文字与排版", readerTypographySummary(settings)) {
-        ReaderInterfaceSlider("字号", "阅读字号", settings.fontSize, 12f..36f, 1f, 19f,
+    if (!raster) ReaderCollapsibleSection("文字与排版", readerTypographySummary(settings), onReset = {
+        val defaults = ReaderSettings()
+        onSettings(settings.copy(fontSize = defaults.fontSize, fontName = defaults.fontName, fontPath = defaults.fontPath,
+            bold = defaults.bold, chineseConversion = defaults.chineseConversion, verticalText = defaults.verticalText,
+            lineHeight = defaults.lineHeight, paragraphSpacing = defaults.paragraphSpacing,
+            letterSpacing = defaults.letterSpacing, paragraphIndent = defaults.paragraphIndent, useSourceCss = defaults.useSourceCss))
+    }) {
+        ReaderInterfaceSlider("字号", "阅读字号", settings.fontSize, 12f..36f, 1f,
             { onSettings(settings.copy(fontSize = it)) }, { it.roundToInt().toString() })
         ReaderSettingRow("字体") {
             listOf("跟随系统" to "系统", "系统宋体" to "宋体", "系统黑体" to "黑体").forEach { (name, label) ->
@@ -146,13 +152,13 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
                     { onSettings(settings.copy(verticalText = vertical)) }, Modifier.weight(1f).testTag("reader_vertical_text_$vertical"))
             }
         }
-        ReaderInterfaceSlider("行距", "阅读行间距", settings.lineHeight, 1.2f..2.4f, .05f, 1.85f,
+        ReaderInterfaceSlider("行距", "阅读行间距", settings.lineHeight, 1.2f..2.4f, .05f,
             { onSettings(settings.copy(lineHeight = it)) }, { String.format(Locale.getDefault(), "%.2f", it) })
-        ReaderInterfaceSlider("段距", "阅读段间距", settings.paragraphSpacing, 0f..2f, .1f, .8f,
+        ReaderInterfaceSlider("段距", "阅读段间距", settings.paragraphSpacing, 0f..2f, .1f,
             { onSettings(settings.copy(paragraphSpacing = it)) }, { String.format(Locale.getDefault(), "%.1f", it) })
-        ReaderInterfaceSlider("字距", "阅读字间距", settings.letterSpacing, -.2f..3f, .1f, .5f,
+        ReaderInterfaceSlider("字距", "阅读字间距", settings.letterSpacing, -.2f..3f, .1f,
             { onSettings(settings.copy(letterSpacing = it)) }, { String.format(Locale.getDefault(), "%.1f", it) })
-        ReaderInterfaceSlider("缩进", "首行缩进", settings.paragraphIndent, 0f..4f, .5f, 2f,
+        ReaderInterfaceSlider("缩进", "首行缩进", settings.paragraphIndent, 0f..4f, .5f,
             { onSettings(settings.copy(paragraphIndent = it)) }, { "${it}字" })
         if (sourceCssAvailable) {
             ReaderToggle("使用原书 CSS", settings.useSourceCss, Modifier.testTag("reader_use_source_css")) {
@@ -182,14 +188,17 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
             ReaderSettingChoice("导入图片", false, onImportBackground, role = Role.Button)
         }
     }
-    ReaderCollapsibleSection("页边距") {
-        ReaderInterfaceSlider("左距", "阅读左边距", settings.marginLeft, 0f..64f, 1f, if (raster) 0f else 24f,
+    ReaderCollapsibleSection("页边距", onReset = {
+        onSettings(settings.copy(marginLeft = if (raster) 0f else 24f, marginRight = if (raster) 0f else 24f,
+            marginTop = if (raster) 0f else 18f, marginBottom = if (raster) 0f else 18f))
+    }) {
+        ReaderInterfaceSlider("左距", "阅读左边距", settings.marginLeft, 0f..64f, 1f,
             { onSettings(settings.copy(marginLeft = it)) }, { "${it.roundToInt()}dp" })
-        ReaderInterfaceSlider("右距", "阅读右边距", settings.marginRight, 0f..64f, 1f, if (raster) 0f else 24f,
+        ReaderInterfaceSlider("右距", "阅读右边距", settings.marginRight, 0f..64f, 1f,
             { onSettings(settings.copy(marginRight = it)) }, { "${it.roundToInt()}dp" })
-        ReaderInterfaceSlider("上距", "阅读上边距", settings.marginTop, 0f..64f, 1f, if (raster) 0f else 18f,
+        ReaderInterfaceSlider("上距", "阅读上边距", settings.marginTop, 0f..64f, 1f,
             { onSettings(settings.copy(marginTop = it)) }, { "${it.roundToInt()}dp" })
-        ReaderInterfaceSlider("下距", "阅读下边距", settings.marginBottom, 0f..64f, 1f, if (raster) 0f else 18f,
+        ReaderInterfaceSlider("下距", "阅读下边距", settings.marginBottom, 0f..64f, 1f,
             { onSettings(settings.copy(marginBottom = it)) }, { "${it.roundToInt()}dp" })
     }
 }
@@ -217,9 +226,7 @@ internal fun readerTypographySummary(settings: ReaderSettings): String {
 }
 
 @Composable private fun ReaderInterfaceSlider(label: String, description: String, value: Float,
-    range: ClosedFloatingPointRange<Float>, step: Float, default: Float, onCommit: (Float) -> Unit,
+    range: ClosedFloatingPointRange<Float>, step: Float, onCommit: (Float) -> Unit,
     display: (Float) -> String) {
-    ReaderCollapsibleSection(label, onReset = { onCommit(default) }) {
-        ReaderAdjustableSlider(label, description, value, range, step, onCommit, display)
-    }
+    ReaderAdjustableSlider(label, description, value, range, step, onCommit, display)
 }

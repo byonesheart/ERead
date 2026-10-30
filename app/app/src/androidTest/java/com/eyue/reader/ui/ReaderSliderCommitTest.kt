@@ -143,9 +143,7 @@ class ReaderSliderCommitTest {
         compose.onNodeWithTag("reader_section_文字与排版").let {
             if (it.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription] == "已收起") it.performScrollTo().performClick()
         }
-        val title = if (description.contains("行间距")) "行距" else "字距"
-        compose.onNodeWithTag("reader_section_$title").performScrollTo().performClick()
-        val slider = compose.onNodeWithContentDescription(description).assertIsDisplayed()
+        val slider = compose.onNodeWithContentDescription(description).performScrollTo().assertIsDisplayed()
         slider.performTouchInput {
             down(Offset(width * .3f, center.y))
             moveTo(Offset(width * .55f, center.y))

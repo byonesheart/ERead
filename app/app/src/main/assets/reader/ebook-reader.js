@@ -406,19 +406,18 @@
             const previous = pageTransition; pageTransition = null;
             previous.animations.forEach(animation => animation.cancel());
             previous.transition.skipTransition(); automatic = false;
-            if (previous.drag && previous.commit !== true) scrollTo(previous.origin * pageStride(), 0);
         }
         if (!pageAnimation) return;
         const previous = pageAnimation; pageAnimation = null; previous.cancel();
         automatic = false;
         if (overlay) overlay.style.visibility = '';
     }
-    function transitionPage(page, direction, dragging) {
+    function transitionPage(page, direction) {
         finishPageAnimation();
         // Keep both snapshots in Chromium's compositor. Android software WebView
         // readback can still contain the previous GPU frame, even after a visual callback.
         if (!document.startViewTransition) { animatePage(page); return; }
-        const state = {page:page, origin:pageIndex(), transition:null, animations:[], drag:!!dragging, progress:0, commit:null};
+        const state = {page:page, transition:null, animations:[]};
         pageTransition = state; automatic = true;
         state.transition = document.startViewTransition(function () {
             if (pageTransition !== state) return;
@@ -427,13 +426,6 @@
         state.transition.ready.then(function () {
             if (pageTransition !== state) return;
             const curl = config.turn === 'CURL', forward = direction > 0;
-            if (dragging && config.turn === 'SLIDE') {
-                const sign = direction > 0 ? -1 : 1;
-                ['old', 'new'].forEach((kind, index) => state.animations.push(document.documentElement.animate([
-                    {transform:`translateX(${index ? -sign * 100 : 0}%)`},
-                    {transform:`translateX(${index ? 0 : sign * 100}%)`}
-                ], {duration:180, fill:'both', pseudoElement:'::view-transition-' + kind + '(root)'})));
-            } else {
             const moving = forward ? 'old' : 'new', fixed = forward ? 'new' : 'old';
             const movingPseudo = '::view-transition-' + moving + '(root)';
             const still = document.documentElement.animate([{zIndex:1},{zIndex:1}],
@@ -448,22 +440,13 @@
                 {duration:curl ? 280 : 180, easing:'cubic-bezier(.2,.65,.3,1)', fill:'both', pseudoElement:movingPseudo});
             animation.id = still.id = 'eread-page-turn';
             state.animations.push(animation, still);
-            }
-            if (dragging) {
-                state.animations.forEach(animation => { animation.pause(); animation.currentTime = state.progress * Number(animation.effect.getTiming().duration); });
-                if (state.commit !== null) settleEdgeTransition(state, state.commit);
-            }
+
         }).catch(function () { /* A resize or a newer navigation can skip a transition. */ });
         state.transition.finished.then(function () {
             state.animations.forEach(animation => animation.cancel());
             if (pageTransition !== state) return;
-            if (state.drag && !state.commit) scrollTo(state.origin * pageStride(), 0);
             pageTransition = null; automatic = false; report(true);
         });
-    }
-    function settleEdgeTransition(state, commit) {
-        state.commit = commit;
-        state.animations.forEach(animation => { animation.playbackRate = commit ? 1 : -1; animation.play(); });
     }
     function edgeDrag(point) {
         if (!touch || !touch.edge || config.mode !== 'PAGED' || config.vertical || config.eink) return false;
@@ -475,28 +458,37 @@
             beginManual();
             const span = config.dual ? 2 : 1, target = pageIndex() + direction * span;
             touch.origin = pageIndex(); touch.target = target;
-            if (target >= 0 && target < pageCount() && document.startViewTransition) transitionPage(target, direction, true);
+
         }
         touch.progress = progress;
-        if (pageTransition?.drag) {
-            pageTransition.progress = progress;
-            pageTransition.animations.forEach(animation => { animation.currentTime = progress * Number(animation.effect.getTiming().duration); });
-        } else {
-            // Older WebViews still track the live column flow without snapshots.
-            document.body.style.transform = `translateX(${-direction * progress * innerWidth}px)`;
-        }
+        // Move the live paper, rather than a View Transition snapshot. The latter
+        // can suppress touch input while capturing and cannot track a held gesture.
+        document.body.style.transform = `translateX(${-direction * progress * innerWidth}px)`;
         return true;
     }
     function releaseEdgeDrag(previous, cancel) {
         suppressClickUntil = Date.now() + 300;
         const commit = !cancel && previous.progress >= .22;
-        if (pageTransition?.drag) settleEdgeTransition(pageTransition, commit);
+        const offset = -previous.edge * previous.progress * innerWidth;
+        document.body.style.transform = '';
+        const outside = previous.target < 0 || previous.target >= pageCount();
+        if (commit && outside) send('chapterStep', {direction:previous.edge});
         else {
-            document.body.style.transform = '';
-            if (commit) {
-                if (previous.target < 0 || previous.target >= pageCount()) send('chapterStep', {direction:previous.edge});
-                else moveToPage(previous.target);
-            }
+            const shift = commit ? (previous.target - previous.origin) * pageStride() : 0;
+            if (commit) scrollTo(previous.target * pageStride(), 0);
+            automatic = true;
+            const animation = document.body.animate([
+                {transform:`translateX(${offset + shift}px)`}, {transform:'translateX(0)'}
+            ], {duration:140, easing:'ease-out'});
+            animation.id = 'eread-page-turn';
+            pageAnimation = animation;
+            if (overlay) overlay.style.visibility = 'hidden';
+            animation.onfinish = function () {
+                if (pageAnimation !== animation) return;
+                pageAnimation = null; automatic = false;
+                if (overlay) overlay.style.visibility = '';
+                report(true);
+            };
         }
         if (manual) endManual();
     }

@@ -402,8 +402,6 @@ class ReaderScreenStartupRobolectricTest {
         assertTrue(original > 2000)
         revealToolbar(); compose.onNodeWithContentDescription("界面设置").performClick()
         compose.onNodeWithTag("reader_section_文字与排版").performScrollTo().performClick()
-        compose.onNodeWithTag("reader_section_行距").performScrollTo().performClick()
-        compose.onNodeWithTag("reader_section_字距").performScrollTo().performClick()
         repeat(8) { index ->
             compose.onNodeWithContentDescription("阅读行间距").performScrollTo()
                 .performSemanticsAction(SemanticsActions.SetProgress) { it(if (index % 2 == 0) 2.2f else 1.85f) }

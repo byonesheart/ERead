@@ -130,19 +130,9 @@ internal fun ReaderPageTurnFrame(
         }
     }
     if (drag != null) {
-        val forward = drag.direction > 0
-        val visibility = remember(drag) { derivedStateOf { if (forward) 1f - drag.fraction else drag.fraction } }
         Box(Modifier.fillMaxSize().clipToBounds().testTag("reader_paper_drag")) {
-            if (style == PageTurnStyle.SLIDE) {
-                Box(Modifier.fillMaxSize().graphicsLayer { translationX = -drag.direction * drag.fraction * size.width }) { spread(drag.origin, false) }
-                Box(Modifier.fillMaxSize().graphicsLayer { translationX = drag.direction * (1f - drag.fraction) * size.width }) { spread(drag.target, false) }
-            } else {
-                spread(if (forward) drag.target else drag.origin, false)
-                Box(Modifier.fillMaxSize().then(if (style == PageTurnStyle.CURL) Modifier.readerPaperFold(visibility, false, paper)
-                    else Modifier.graphicsLayer { translationX = -visibility.let { 1f - it.value } * size.width })) {
-                    spread(if (forward) drag.origin else drag.target, false)
-                }
-            }
+            Box(Modifier.fillMaxSize().graphicsLayer { translationX = -drag.direction * drag.fraction * size.width }) { spread(drag.origin, false) }
+            Box(Modifier.fillMaxSize().graphicsLayer { translationX = drag.direction * (1f - drag.fraction) * size.width }) { spread(drag.target, false) }
         }
         return
     }

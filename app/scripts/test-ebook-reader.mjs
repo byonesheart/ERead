@@ -1083,20 +1083,30 @@ try {
       const touch = (type, x) => session.send('Input.dispatchTouchEvent', {type,
         touchPoints:x === undefined ? [] : [{x, y:380}]});
       await touch('touchStart', 386); await touch('touchMove', 235);
-      await page.waitForFunction(() => document.getAnimations().some(a => a.playState === 'paused'));
-      const beforeRelease = await page.evaluate(() => document.getAnimations().filter(a => a.playState === 'paused')
-        .map(a => Number(a.currentTime) / Number(a.effect.getTiming().duration)));
-      assert.ok(beforeRelease.some(progress => progress > .25 && progress < .6), 'The paper must remain at the finger position');
-      await touch('touchEnd'); await page.evaluate(() => Promise.all(window.pageTransitions));
+      const offset = () => page.evaluate(() => new DOMMatrix(getComputedStyle(document.body).transform).m41);
+      const beforeRelease = await offset();
+      assert.ok(Math.abs(beforeRelease + 151) < 2, 'Live paper tracks the finger pixel for pixel');
+      await touch('touchMove', 190);
+      assert.ok(Math.abs((await offset()) + 196) < 2, 'Subsequent moves keep tracking');
+      await touch('touchMove', 270);
+      assert.ok(Math.abs((await offset()) + 116) < 2, 'Reversing the finger moves the same paper back');
+      assert.equal(await page.evaluate(() => document.getAnimations().length), 0, 'Held paper needs no frozen snapshots');
+      await touch('touchEnd');
+      await page.waitForFunction(() => !document.getAnimations().length);
       assert.equal((await viewport()).page, 4);
       await touch('touchStart', 6); await touch('touchMove', 42); await touch('touchEnd');
-      await page.evaluate(() => Promise.all(window.pageTransitions));
+      await page.waitForFunction(() => !document.getAnimations().length);
       assert.equal((await viewport()).page, 4, 'A short drag must spring back');
       await touch('touchStart', 6); await touch('touchMove', 170); await touch('touchCancel');
-      await page.evaluate(() => Promise.all(window.pageTransitions));
+      await page.waitForFunction(() => !document.getAnimations().length);
       assert.equal((await viewport()).page, 4, 'A cancelled grab must retain the original page');
+      await touch('touchStart', 6); await touch('touchMove', 170);
+      assert.ok(Math.abs((await offset()) - 164) < 2, 'The current paper also moves right when returning');
+      await touch('touchEnd');
+      await page.waitForFunction(() => !document.getAnimations().length);
+      assert.equal((await viewport()).page, 3, 'Dragging back must reveal the previous page');
       assert.deepEqual(await page.evaluate(() => window.events.filter(e => e.type === 'tap')), []);
-      evidence.push({turn, beforeRelease, finalPage:4});
+      evidence.push({turn, beforeRelease, finalPage:3});
       await session.detach();
     }
     return evidence;

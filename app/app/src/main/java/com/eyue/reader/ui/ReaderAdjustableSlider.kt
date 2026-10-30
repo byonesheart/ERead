@@ -12,6 +12,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -38,7 +40,9 @@ internal fun readerSliderValue(value: Float, range: ClosedFloatingPointRange<Flo
 internal fun ReaderAdjustableSlider(label: String, description: String, value: Float,
     range: ClosedFloatingPointRange<Float>, step: Float, onCommit: (Float) -> Unit,
     display: (Float) -> String, trailing: (@Composable () -> Unit)? = null) {
-    var draft by remember(value) { mutableFloatStateOf(value.coerceIn(range)) }
+    var draft by remember { mutableFloatStateOf(value.coerceIn(range)) }
+    var dragging by remember { mutableStateOf(false) }
+    LaunchedEffect(value) { if (!dragging) draft = value.coerceIn(range) }
     val latestValue by rememberUpdatedState(value.coerceIn(range))
     val latestCommit by rememberUpdatedState(onCommit)
     val color = MaterialTheme.colorScheme.primary
@@ -55,17 +59,20 @@ internal fun ReaderAdjustableSlider(label: String, description: String, value: F
             }.pointerInput(range, step) {
                 var moved = false
                 var unrounded = latestValue
-                detectHorizontalDragGestures(onDragStart = { moved = true; unrounded = latestValue },
+                detectHorizontalDragGestures(onDragStart = { moved = true; dragging = true; unrounded = latestValue },
                     onHorizontalDrag = { change, amount ->
                         change.consume()
                         val padding = 10.dp.toPx()
                         unrounded = (unrounded + amount / (size.width - 2 * padding).coerceAtLeast(1f) *
                             (range.endInclusive - range.start)).coerceIn(range)
-                        draft = readerSliderValue(unrounded, range, step)
+                        draft = unrounded
                     }, onDragEnd = {
-                        if (moved && draft != latestValue) latestCommit(draft)
+                        val committed = readerSliderValue(draft, range, step)
+                        if (moved && committed != latestValue) latestCommit(committed)
+                        draft = committed
+                        dragging = false
                         moved = false
-                    }, onDragCancel = { draft = latestValue; moved = false })
+                    }, onDragCancel = { draft = latestValue; moved = false; dragging = false })
             }) {
             val inset = 10.dp.toPx()
             val fraction = ((draft - range.start) / (range.endInclusive - range.start)).coerceIn(0f, 1f)
@@ -76,7 +83,7 @@ internal fun ReaderAdjustableSlider(label: String, description: String, value: F
         }
         IconButton(onClick = { onCommit(readerSliderValue(value + step, range, step)) },
             modifier = Modifier.size(30.dp, 40.dp).semantics { contentDescription = "$description 增大" }) { Text("+", fontSize = 17.sp) }
-        Text(display(draft), Modifier.width(if (trailing == null) 38.dp else 32.dp), fontSize = 11.sp, color = color,
+        Text(display(readerSliderValue(draft, range, step)), Modifier.width(if (trailing == null) 38.dp else 32.dp), fontSize = 11.sp, color = color,
             textAlign = TextAlign.End, fontWeight = FontWeight.SemiBold, maxLines = 1)
         trailing?.invoke()
     }
