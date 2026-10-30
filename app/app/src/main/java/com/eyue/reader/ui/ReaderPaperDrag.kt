@@ -7,6 +7,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 
 internal class ReaderPaperDrag(val origin: ReaderPageLocation, val target: ReaderPageLocation,
@@ -27,6 +28,7 @@ internal fun Modifier.readerPaperDrag(enabled: Boolean, onDrag: (Int, Float) -> 
             var active = false
             var released = false
             var fraction = 0f
+            var elapsed = 1L
             try {
                 while (true) {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -35,9 +37,10 @@ internal fun Modifier.readerPaperDrag(enabled: Boolean, onDrag: (Int, Float) -> 
                     // Compose represents ACTION_CANCEL as consumed pointer-up changes.
                     if (!change.pressed && change.isConsumed) break
                     val delta = change.position - down.position
+                    elapsed = (change.uptimeMillis - down.uptimeMillis).coerceAtLeast(1)
                     if (!active && change.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis) break
                     if (!active && abs(delta.y) > viewConfiguration.touchSlop && abs(delta.y) > abs(delta.x)) break
-                    if (!active && abs(delta.x) > viewConfiguration.touchSlop) {
+                    if (!active && abs(delta.x) > minOf(viewConfiguration.touchSlop, 8.dp.toPx())) {
                         active = true; direction = if (delta.x < 0) 1 else -1
                     }
                     if (active) {
@@ -46,7 +49,7 @@ internal fun Modifier.readerPaperDrag(enabled: Boolean, onDrag: (Int, Float) -> 
                     }
                     if (!change.pressed) { released = true; break }
                 }
-            } finally { if (active) latestRelease(released && fraction >= .22f) }
+            } finally { if (active) latestRelease(released && (fraction >= .10f || fraction * size.width >= 16.dp.toPx() && fraction * size.width / elapsed >= .35f * density)) }
         }
     }
 }

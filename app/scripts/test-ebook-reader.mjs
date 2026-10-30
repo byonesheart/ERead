@@ -1083,25 +1083,28 @@ try {
       const touch = (type, x) => session.send('Input.dispatchTouchEvent', {type,
         touchPoints:x === undefined ? [] : [{x, y:380}]});
       await touch('touchStart', 386); await touch('touchMove', 235);
-      const offset = () => page.evaluate(() => new DOMMatrix(getComputedStyle(document.body).transform).m41);
+      const offset = () => page.evaluate(() => { const a=document.getAnimations().find(a=>a.playState==='paused'); return a ? -Number(a.currentTime)/Number(a.effect.getTiming().duration)*innerWidth : new DOMMatrix(getComputedStyle(document.body).transform).m41; });
+      await page.waitForFunction(()=>document.getAnimations().some(a=>a.playState==='paused'));
       const beforeRelease = await offset();
       assert.ok(Math.abs(beforeRelease + 151) < 2, 'Live paper tracks the finger pixel for pixel');
       await touch('touchMove', 190);
       assert.ok(Math.abs((await offset()) + 196) < 2, 'Subsequent moves keep tracking');
       await touch('touchMove', 270);
       assert.ok(Math.abs((await offset()) + 116) < 2, 'Reversing the finger moves the same paper back');
-      assert.equal(await page.evaluate(() => document.getAnimations().length), 0, 'Held paper needs no frozen snapshots');
+      assert.ok(await page.evaluate(() => document.getAnimations().some(a=>a.playState==='paused')), 'The selected turn effect follows the held gesture');
+      await page.screenshot({path:path.join(outputDir, 'held-' + turn + '.png')});
       await touch('touchEnd');
       await page.waitForFunction(() => !document.getAnimations().length);
       assert.equal((await viewport()).page, 4);
-      await touch('touchStart', 6); await touch('touchMove', 42); await touch('touchEnd');
+      await touch('touchStart', 6); await touch('touchMove', 14); await touch('touchEnd');
       await page.waitForFunction(() => !document.getAnimations().length);
       assert.equal((await viewport()).page, 4, 'A short drag must spring back');
       await touch('touchStart', 6); await touch('touchMove', 170); await touch('touchCancel');
       await page.waitForFunction(() => !document.getAnimations().length);
       assert.equal((await viewport()).page, 4, 'A cancelled grab must retain the original page');
       await touch('touchStart', 6); await touch('touchMove', 170);
-      assert.ok(Math.abs((await offset()) - 164) < 2, 'The current paper also moves right when returning');
+      await page.waitForFunction(()=>document.getAnimations().some(a=>a.playState==='paused'));
+      assert.ok(Math.abs((await offset()) + 164) < 2, 'The current paper also moves right when returning');
       await touch('touchEnd');
       await page.waitForFunction(() => !document.getAnimations().length);
       assert.equal((await viewport()).page, 3, 'Dragging back must reveal the previous page');
@@ -1118,7 +1121,8 @@ try {
     const session = await page.context().newCDPSession(page);
     const touch = (type,x) => session.send('Input.dispatchTouchEvent',{type,touchPoints:x===undefined?[]:[{x,y:380}]});
     await touch('touchStart',260); await touch('touchMove',120);
-    assert.ok(Math.abs(await page.evaluate(()=>new DOMMatrix(getComputedStyle(document.body).transform).m41)+140)<2);
+    await page.waitForFunction(()=>document.getAnimations().some(a=>a.playState==='paused'));
+    assert.ok(await page.evaluate(()=>document.getAnimations().some(a=>a.playState==='paused' && Math.abs(Number(a.currentTime)/Number(a.effect.getTiming().duration)-140/innerWidth)<.02)));
     await touch('touchEnd'); await page.waitForFunction(()=>!document.getAnimations().length);
     assert.equal((await viewport()).page,3);
     await touch('touchStart',260); await page.waitForTimeout(550); await touch('touchMove',120); await touch('touchEnd');
@@ -1143,6 +1147,15 @@ try {
       await command({type:'clearSelection'});
       assert.equal(await page.evaluate(()=>document.body.style.transform),'');
       assert.ok(await page.evaluate(()=>Math.abs(scrollX/innerWidth-Math.round(scrollX/innerWidth))<.001));
+    }
+  });
+
+  await test('programmatic-auto-turns-do-not-emit-manual-interruption', async () => {
+    for (const mode of ['PAGED','VERTICAL_PAGED']) {
+      await open({mode,turn:'COVER'});
+      for(let i=0;i<3;i++) await command({type:'move',direction:1});
+      assert.equal((await viewport()).page,3);
+      assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='manualStart').length),0);
     }
   });
 

@@ -169,8 +169,8 @@
         else if (value.type === 'clearSelection') loaded.forEach(item => item.frame?.contentWindow?.getSelection()?.removeAllRanges());
         else if (value.type === 'autoScroll') setAutoScroll(value.speed);
         else if (value.type === 'move') {
-            manual = true; send('manualStart'); scrollBy(0, value.direction * innerHeight * .85);
-            clearTimeout(endTimer); endTimer = setTimeout(() => { manual = false; send('manualEnd'); schedule(); }, 140);
+            automatic++; scrollBy(0, value.direction * innerHeight * .85);
+            requestAnimationFrame(() => { automatic--; schedule(); });
         } else if (value.type === 'resume') {
             options = value.options;
             for (const [index, item] of loaded) send('chapterRequest', {chapter:index, token:item.token});

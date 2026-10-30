@@ -248,6 +248,7 @@ internal fun ReaderScreen(
     var chapterIndex by remember(book.id) { mutableIntStateOf(book.chapterIndex.coerceIn(0, (book.chapters.size - 1).coerceAtLeast(0))) }
     var pageIndex by remember(book.id) { mutableIntStateOf(book.pageIndex.coerceAtLeast(0)) }
     var characterOffset by remember(book.id) { mutableIntStateOf(book.characterOffset.coerceAtLeast(0)) }
+    var modeSwitchAnchor by remember(book.id) { mutableStateOf<Triple<Int, Int, String?>?>(null) }
     var positionImagePath by remember(book.id) { mutableStateOf(book.positionImagePath) }
     var initialPositionPending by remember(book.id) { mutableStateOf(true) }
     var pendingScrollAnchor by remember(book.id) { mutableStateOf<Triple<Int, Int, Int>?>(null) }
@@ -439,6 +440,7 @@ internal fun ReaderScreen(
         activeTextSelections = if (active) activeTextSelections + key else activeTextSelections - key
     }
     fun pauseSpeechForNavigation() {
+        modeSwitchAnchor = null
         dismissAnnotationBubble()
         searchReturnPosition = null
         manualNavigationVersion++
@@ -1053,6 +1055,8 @@ internal fun ReaderScreen(
     // Keep the currently readable mode on screen until the requested mode's current chapter is ready.
     LaunchedEffect(requestedLayoutKey, chapterStore, document != null, chapterIndex, layoutState.preparing, layoutState.restoring) {
         if (sourceEbook) {
+            if (activeReadingMode != requestedSettings.readingMode && modeSwitchAnchor == null)
+                modeSwitchAnchor = Triple(chapterIndex, characterOffset, positionImagePath)
             activeReadingMode = requestedSettings.readingMode
             return@LaunchedEffect
         }
@@ -1060,6 +1064,7 @@ internal fun ReaderScreen(
             requestedSpec.textWidth <= 1 || requestedSpec.textHeight <= 1) return@LaunchedEffect
         if (settings.readingMode == ReadingMode.SCROLL) latestSyncScrollPosition()
         val target = chapterIndex
+        if (modeSwitchAnchor == null) modeSwitchAnchor = Triple(target, characterOffset, positionImagePath)
         val owner = chapterStore
         try {
             val loaded = if (raster) null else owner.load(target)
@@ -1077,8 +1082,9 @@ internal fun ReaderScreen(
             currentCoroutineContext().ensureActive()
             if (latestChapterStore !== owner || chapterIndex != target || document == null) return@LaunchedEffect
             val imageHint = textPages.getOrNull(target)?.getOrNull(pageIndex)?.imageIndex?.takeIf { it >= 0 }
-            val offset = characterOffset
-            val imagePath = positionImagePath
+            val anchor = modeSwitchAnchor?.takeIf { it.first == target }
+            val offset = anchor?.second ?: characterOffset
+            val imagePath = if (anchor != null) anchor.third else positionImagePath
             if (loaded != null) publishChapter(target, loaded, owner)
             val loadedDocument = document ?: return@LaunchedEffect
             val nextPages = if (raster) textPages else if (requestedSettings.readingMode == ReadingMode.SCROLL)
@@ -1304,6 +1310,7 @@ internal fun ReaderScreen(
         volumeEvents.collect { if (settings.volumePaging) { pauseAutoReading(); move(it) } }
     }
 
+    LaunchedEffect(autoReading) { if (autoReading) modeSwitchAnchor = null }
     LaunchedEffect(speechSession.active) { if (speechSession.active) autoReading = false }
     val autoAtEnd = if (sourceEbook) ebookAtEnd else if (raster) totalPages > 0 && globalPage >= totalPages &&
         (settings.readingMode != ReadingMode.SCROLL || !listState.canScrollForward) else atScrollEnd || atPagedEnd
@@ -1432,7 +1439,8 @@ internal fun ReaderScreen(
                     EbookReaderSurface(requireNotNull(ebookStore), sourceChapter, renderChapters[sourceChapter], currentText,
                         settings, annotations, ebookController, Modifier.fillMaxSize().testTag("reader_ebook"),
                         session = ebookSession, contentReady = sourceChapter in renderDocument.readyChapters,
-                        initialOffset = characterOffset, initialImagePath = positionImagePath,
+                        initialOffset = modeSwitchAnchor?.takeIf { it.first == sourceChapter }?.second ?: characterOffset,
+                        initialImagePath = if (modeSwitchAnchor?.first == sourceChapter) modeSwitchAnchor?.third else positionImagePath,
                         continuousChapters = importedBook.chapters, readContinuousText = chapterStore::readText,
                         dualPage = dualPage, einkMode = einkMode, foreground = foreground, selectionReset = selectionReset,
                         selectionMenuEnabled = !holdPagingActive && selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() &&

@@ -64,6 +64,33 @@ class ReaderScreenStartupRobolectricTest {
     private var windowHeight = 0
     private var audioService: ServiceController<ReaderAudioService>? = null
 
+    @Test fun repeatedModeChangesKeepTheSameLogicalReadingPosition() {
+        val text = "MODE_ANCHOR\n" + "这是一段反复切换阅读模式时应保持位置不变的文字，用于验证分页与滚动定位。\n".repeat(250)
+        val book = textBook(BookFormat.TXT, text).copy(characterOffset = 4000)
+        val settings = mutableStateOf(ReaderSettings(readingMode = ReadingMode.PAGED))
+        val changes = java.util.concurrent.atomic.AtomicInteger()
+        compose.setContent { MaterialTheme {
+            CompositionLocalProvider(LocalReaderSpeechFactory provides { SilentSpeech() }) {
+                ReaderScreen(book, settings.value, emptyList(), {}, { chapter, _, offset, progress, _ ->
+                    position.set(Position(chapter, offset, progress)); changes.incrementAndGet() }, { settings.value = it }, {}, {}, {}, emptyFlow())
+            }
+        } }
+        awaitChapter(0)
+        compose.waitUntil(15000) { position.get() != null }
+        val original = position.get()!!.offset
+        assertTrue(original > 2000)
+        repeat(8) { index ->
+            val before = changes.get()
+            compose.runOnIdle { settings.value = settings.value.copy(readingMode = if (index % 2 == 0) ReadingMode.SCROLL else ReadingMode.PAGED) }
+            compose.waitUntil(15000) {
+                compose.onAllNodesWithTag(if (index % 2 == 0) "reader_scroll" else "reader_single_page").fetchSemanticsNodes().isNotEmpty() &&
+                    changes.get() > before && compose.onAllNodesWithTag("reader_loading").fetchSemanticsNodes().isEmpty()
+            }
+            compose.waitForIdle()
+            assertTrue("iteration=$index original=$original actual=${position.get()!!.offset}", abs(position.get()!!.offset-original) < 80)
+        }
+    }
+
     @Before fun setUp() {
         root = File(RuntimeEnvironment.getApplication().cacheDir, "reader-startup-${UUID.randomUUID()}").apply { mkdirs() }
     }
@@ -99,6 +126,9 @@ class ReaderScreenStartupRobolectricTest {
         }
         advance(2300)
         compose.waitUntil(15_000) { advance(32); (position.get()?.offset ?: 0) > 0 }
+        val afterFirst = position.get()!!.offset
+        advance(2300)
+        compose.waitUntil(15000) { advance(32); position.get()!!.offset > afterFirst }
         compose.onNodeWithTag("reader_body").performTouchInput { click() }
         advance(32)
         compose.onNodeWithTag("reader_auto_floating_action").performClick()

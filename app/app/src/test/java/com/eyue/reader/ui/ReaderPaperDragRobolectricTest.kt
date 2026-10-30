@@ -34,7 +34,7 @@ class ReaderPaperDragRobolectricTest {
         compose.runOnIdle { assertTrue(preview.last().first == 1); assertEquals(.4f, preview.last().second, .02f); assertTrue(commits.isEmpty()) }
         paper.performTouchInput { up() }
         assertEquals(listOf(true), commits)
-        paper.performTouchInput { down(Offset(2f, center.y)); moveBy(Offset(width * .1f, 0f)); up() }
+        paper.performTouchInput { down(Offset(2f, center.y)); moveBy(Offset(width * .04f, 0f)); up() }
         assertEquals(-1, preview.last().first)
         assertEquals(listOf(true, false), commits)
         paper.performTouchInput { down(Offset(2f, center.y)); moveBy(Offset(width * .5f, 0f)); cancel() }

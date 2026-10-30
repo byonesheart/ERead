@@ -382,42 +382,43 @@
             moveToPage(Math.floor((coordinate + .5) / pageStride()));
         }
     }
-    function step(direction) {
+    function step(direction, user = false) {
         if (config.mode === 'SCROLL') {
-            beginManual();
+            if (user) beginManual();
             const maximum = Math.max(0, document.documentElement.scrollHeight - innerHeight);
             const target = Math.max(0, Math.min(maximum, scrollY + direction * innerHeight * .85));
             if ((direction > 0 && scrollY >= maximum - 1) || (direction < 0 && scrollY <= 1)) send('chapterStep', {direction: direction});
             else scrollTo(0, target);
-            endManual();
+            if (user) endManual();
             return;
         }
         const span = pageHorizontal() && config.dual ? 2 : 1;
         const target = (pageTransition ? pageTransition.page : pageIndex()) + direction * span;
-        beginManual();
+        if (user) beginManual();
         if (target < 0 || target >= pageCount()) send('chapterStep', {direction: direction});
         else if (config.eink || config.mode === 'VERTICAL_PAGED') moveToPage(target);
         else if (config.turn === 'SLIDE') animatePage(target);
         else transitionPage(target, direction);
-        endManual();
+        if (user) endManual();
     }
     function finishPageAnimation() {
         if (pageTransition) {
             const previous = pageTransition; pageTransition = null;
             previous.animations.forEach(animation => animation.cancel());
             previous.transition.skipTransition(); automatic = false;
+            if (previous.drag && previous.commit !== true) scrollTo(previous.origin * pageStride(), 0);
         }
         if (!pageAnimation) return;
         const previous = pageAnimation; pageAnimation = null; previous.cancel();
         automatic = false;
         if (overlay) overlay.style.visibility = '';
     }
-    function transitionPage(page, direction) {
+    function transitionPage(page, direction, dragging) {
         finishPageAnimation();
         // Keep both snapshots in Chromium's compositor. Android software WebView
         // readback can still contain the previous GPU frame, even after a visual callback.
         if (!document.startViewTransition) { animatePage(page); return; }
-        const state = {page:page, transition:null, animations:[]};
+        const state = {page:page, origin:pageIndex(), transition:null, animations:[], drag:!!dragging, progress:0, commit:null};
         pageTransition = state; automatic = true;
         state.transition = document.startViewTransition(function () {
             if (pageTransition !== state) return;
@@ -426,6 +427,13 @@
         state.transition.ready.then(function () {
             if (pageTransition !== state) return;
             const curl = config.turn === 'CURL', forward = direction > 0;
+            if (dragging && config.turn === 'SLIDE') {
+                const sign = direction > 0 ? -1 : 1;
+                ['old', 'new'].forEach((kind, index) => state.animations.push(document.documentElement.animate([
+                    {transform:`translateX(${index ? -sign * 100 : 0}%)`},
+                    {transform:`translateX(${index ? 0 : sign * 100}%)`}
+                ], {duration:180, fill:'both', pseudoElement:'::view-transition-' + kind + '(root)'})));
+            } else {
             const moving = forward ? 'old' : 'new', fixed = forward ? 'new' : 'old';
             const movingPseudo = '::view-transition-' + moving + '(root)';
             const still = document.documentElement.animate([{zIndex:1},{zIndex:1}],
@@ -437,43 +445,56 @@
                 {transform:end, filter:curl ? 'brightness(.65)' : 'brightness(1)', zIndex:2, transformOrigin:'left center'}
             ];
             const animation = document.documentElement.animate(forward ? frames : frames.reverse(),
-                {duration:curl ? 280 : 180, easing:'cubic-bezier(.2,.65,.3,1)', fill:'both', pseudoElement:movingPseudo});
+                {duration:curl ? 280 : 180, easing:dragging ? 'linear' : 'cubic-bezier(.2,.65,.3,1)', fill:'both', pseudoElement:movingPseudo});
             animation.id = still.id = 'eread-page-turn';
             state.animations.push(animation, still);
-
+            }
+            if (dragging) {
+                state.animations.forEach(animation => { animation.pause(); animation.currentTime = state.progress * Number(animation.effect.getTiming().duration); });
+                if (state.commit !== null) settleEdgeTransition(state, state.commit);
+            }
         }).catch(function () { /* A resize or a newer navigation can skip a transition. */ });
         state.transition.finished.then(function () {
             state.animations.forEach(animation => animation.cancel());
             if (pageTransition !== state) return;
+            if (state.drag && !state.commit) scrollTo(state.origin * pageStride(), 0);
             pageTransition = null; automatic = false; report(true);
         });
+    }
+    function settleEdgeTransition(state, commit) {
+        state.commit = commit;
+        state.animations.forEach(animation => { animation.playbackRate = commit ? 1 : -1; animation.play(); });
     }
     function edgeDrag(point) {
         if (!touch || touch.selecting || (!touch.dragging && Date.now() - touch.time >= 500) || config.mode !== 'PAGED' || config.vertical || config.eink) return false;
         if (!touch.dragging && !getSelection().isCollapsed) { touch.selecting = true; return false; }
         const dx = touch.x - point.clientX;
-        if (!touch.dragging && (Math.abs(dx) <= 10 || Math.abs(point.clientY - touch.y) > Math.abs(dx))) return false;
+        if (!touch.dragging && (Math.abs(dx) <= 6 || Math.abs(point.clientY - touch.y) > Math.abs(dx))) return false;
         const direction = touch.dragging ? touch.edge : dx > 0 ? 1 : -1;
         touch.edge = direction;
         const delta = dx * direction;
         const progress = Math.max(0, Math.min(.999, delta / innerWidth));
-        if (!touch.dragging && delta <= 10) return false;
+        if (!touch.dragging && delta <= 6) return false;
         if (!touch.dragging) {
             touch.dragging = true; clearTimeout(selectionTimer); getSelection().removeAllRanges();
             beginManual();
             const span = config.dual ? 2 : 1, target = pageIndex() + direction * span;
             touch.origin = pageIndex(); touch.target = target;
+            if (target >= 0 && target < pageCount() && document.startViewTransition) transitionPage(target, direction, true);
 
         }
         touch.progress = progress;
-        // Move the live paper, rather than a View Transition snapshot. The latter
-        // can suppress touch input while capturing and cannot track a held gesture.
-        document.body.style.transform = `translateX(${-direction * progress * innerWidth}px)`;
+        if (pageTransition?.drag) {
+            pageTransition.progress = progress;
+            pageTransition.animations.forEach(animation => { animation.currentTime = progress * Number(animation.effect.getTiming().duration); });
+        } else document.body.style.transform = `translateX(${-direction * progress * innerWidth}px)`;
         return true;
     }
     function releaseEdgeDrag(previous, cancel) {
         suppressClickUntil = Date.now() + 300;
-        const commit = !cancel && previous.progress >= .22;
+        const commit = !cancel && (previous.progress >= .10 || previous.progress * innerWidth >= 16 &&
+            previous.progress * innerWidth / Math.max(1, Date.now() - previous.time) >= .35);
+        if (pageTransition?.drag) { settleEdgeTransition(pageTransition, commit); if (manual) endManual(); return; }
         const offset = -previous.edge * previous.progress * innerWidth;
         document.body.style.transform = '';
         const outside = previous.target < 0 || previous.target >= pageCount();
@@ -562,6 +583,7 @@
             [data-eread-body-weight] { font-weight:inherit!important; }
         ` : '';
         readerStyle.textContent = `
+            ::view-transition { pointer-events:none; }
             ::view-transition-group(root),::view-transition-old(root),::view-transition-new(root) { animation:none; }
             ::view-transition-image-pair(root) { isolation:isolate; }
             ::view-transition-old(root),::view-transition-new(root) { mix-blend-mode:normal; height:100%; object-fit:fill; backface-visibility:hidden;
@@ -893,7 +915,7 @@
         if (previous.dragging) { releaseEdgeDrag(previous, false); return; }
         if (previous.moved && !previous.selecting && Date.now() - previous.time < 500 && config.mode !== 'SCROLL' && getSelection().isCollapsed) {
             const point = event.changedTouches[0], delta = config.mode === 'PAGED' ? point.clientX - previous.x : point.clientY - previous.y;
-            if (Math.abs(delta) > 24) step(delta < 0 ? 1 : -1);
+            if (Math.abs(delta) > 24) step(delta < 0 ? 1 : -1, true);
         } else if (previous.moved && config.mode === 'SCROLL' && !continuousHost) {
             const delta = event.changedTouches[0].clientY - previous.y;
             if (previous.startAtStart && scrollY <= 1 && delta > 70) send('chapterStep', {direction:-1});
