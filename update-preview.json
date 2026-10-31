@@ -1,14 +1,15 @@
 {
-  "versionCode": 74,
-  "versionName": "1.11.25-beta.1",
+  "versionCode": 75,
+  "versionName": "1.11.25-beta.2",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.25-beta.1",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.25-beta.1/ERead-1.11.25-beta.1-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.25-beta.2",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.25-beta.2/ERead-1.11.25-beta.2-release.apk",
   "mirrors": [],
   "changelog": [
-    "修复 EPUB 编辑时部分文本结构被误判为不兼容，编辑先预览，保存后写回原文件。",
-    "书籍重命名同步修改源文件名，保留扩展名与阅读记录。",
-    "重复导入同一书籍时明确提示；同名但无法确定时可选择保留。",
+    "编辑预览只更新当前章节文字，目录整理和源文件写回移至保存时，保存并离开显示进度。",
+    "改善选字菜单和系统翻译调用，支持长按书名直接重命名并补充源文件授权。",
+    "外部文件按导入处理，名称和内容相同则打开已有书籍。",
+    "修复自动阅读被轻点中断，移除自动阅读浮栏的关闭按钮。",
     "更多功能请自行体验。"
   ]
 }
