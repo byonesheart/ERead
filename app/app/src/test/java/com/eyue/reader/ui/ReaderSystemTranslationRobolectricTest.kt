@@ -40,33 +40,54 @@ class ReaderSystemTranslationRobolectricTest {
         assertEquals("此设备未提供可调用的系统翻译", ShadowToast.getTextOfLatestToast())
     }
 
-    @Test fun multipleTranslatorsOfferARememberedDefaultAndSettingsCanChangeIt() {
-        val activity = org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup().get()
-        activity.getSharedPreferences("reader_translation", 0).edit().clear().commit()
+    @Test fun multipleTranslatorsUseTheNativeResolverAndTheNativePickerRemembersTheSelectedApp() {
+        val context = RuntimeEnvironment.getApplication()
+        context.getSharedPreferences("reader_translation", 0).edit().clear().commit()
         for (name in listOf("first", "second")) {
             val resolver = ResolveInfo().apply { activityInfo = ActivityInfo().apply {
                 packageName = "test.$name"; this.name = "Translator"; exported = true
             } }
-            shadowOf(activity.packageManager).addResolveInfoForIntent(readerTranslationIntent("文字"), resolver)
+            shadowOf(context.packageManager).addResolveInfoForIntent(readerTranslationIntent("文字"), resolver)
         }
-        openReaderTranslation(activity, "文字")
-        val dialog = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog()
-        assertTrue(dialog.isShowing)
-        dialog.listView.performItemClick(null, 1, 1)
-        fun checkbox(view: android.view.View): android.widget.CheckBox? = when (view) {
-            is android.widget.CheckBox -> view
-            is android.view.ViewGroup -> (0 until view.childCount).firstNotNullOfOrNull { checkbox(view.getChildAt(it)) }
-            else -> null
+        openReaderTranslation(context, "文字")
+        val nativeResolver = shadowOf(context).nextStartedActivity
+        assertEquals(Intent.ACTION_TRANSLATE, nativeResolver.action)
+        assertNull(nativeResolver.component)
+        assertEquals("文字", nativeResolver.getCharSequenceExtra(Intent.EXTRA_TEXT).toString())
+        val picker = readerTranslationPickerIntent(context)!!
+        assertEquals(Intent.ACTION_PICK_ACTIVITY, picker.action)
+        val query = picker.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)!!
+        assertEquals(Intent.ACTION_TRANSLATE, query.action)
+        assertNull(query.component)
+        val selected = Intent(query).setComponent(android.content.ComponentName("test.second", "Translator"))
+        rememberReaderTranslator(context, android.app.Activity.RESULT_CANCELED, selected)
+        assertNull(context.getSharedPreferences("reader_translation", 0).getString("component", null))
+        rememberReaderTranslator(context, android.app.Activity.RESULT_OK, selected)
+        openReaderTranslation(context, "再次选字")
+        assertEquals("test.second", shadowOf(context).nextStartedActivity.component!!.packageName)
+    }
+
+    @Test fun processTextNativeChooserExcludesOtherProcessorsAndKeepsTheReadOnlyText() {
+        val context = RuntimeEnvironment.getApplication()
+        context.getSharedPreferences("reader_translation", 0).edit().clear().commit()
+        val action = Intent(Intent.ACTION_PROCESS_TEXT).setType("text/plain")
+        for (name in listOf("SystemTranslatorA", "SystemTranslatorB", "Browser")) {
+            shadowOf(context.packageManager).addResolveInfoForIntent(action, ResolveInfo().apply {
+                activityInfo = ActivityInfo().apply {
+                    packageName = "test.$name"; this.name = name; exported = true
+                    applicationInfo = ApplicationInfo().apply { flags = ApplicationInfo.FLAG_SYSTEM }
+                }
+            })
         }
-        checkbox(dialog.window!!.decorView)!!.isChecked = true
-        dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick()
-        shadowOf(android.os.Looper.getMainLooper()).idle()
-        assertEquals("test.second", shadowOf(activity).nextStartedActivity.component!!.packageName)
-        openReaderTranslation(activity, "再次选字")
-        assertEquals("test.second", shadowOf(activity).nextStartedActivity.component!!.packageName)
-        openReaderTranslationSettings(activity)
-        assertTrue(org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog().isShowing)
-        activity.finish()
+        openReaderTranslation(context, "文字")
+        val chooser = shadowOf(context).nextStartedActivity
+        assertEquals(Intent.ACTION_CHOOSER, chooser.action)
+        val target = chooser.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)!!
+        assertEquals(Intent.ACTION_PROCESS_TEXT, target.action)
+        assertEquals("文字", target.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT).toString())
+        assertTrue(target.getBooleanExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, false))
+        assertEquals(listOf("test.Browser"), chooser.getParcelableArrayExtra(Intent.EXTRA_EXCLUDE_COMPONENTS)!!
+            .map { (it as android.content.ComponentName).packageName })
     }
 
     @Test fun processTextFallbackExcludesBrowsersAndUsesOnlyTheSystemTranslator() {

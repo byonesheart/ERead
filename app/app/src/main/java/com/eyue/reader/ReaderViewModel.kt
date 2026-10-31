@@ -617,7 +617,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun resumeSession() {
+        val returning = !foreground
         foreground = true
+        if (returning && !loading) scanLocalSources()
         if (activeBookId != null && sessionStarted == 0L) sessionStarted = System.currentTimeMillis()
         if (!loading) viewModelScope.launch { refreshCloudConfiguration() }
     }
@@ -718,29 +720,66 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     var localSourceChangedIds by mutableStateOf<Set<String>>(emptySet())
         private set
+    var localSourceScanIssues by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
+    var scanningLocalSources by mutableStateOf(false)
+        private set
     private var sourceScanJob: Job? = null
+    private var sourceScanGeneration = 0
+    fun grantScanSource(bookId: String, uri: Uri) {
+        val book = state.books.firstOrNull { it.id == bookId } ?: return
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val info = documentSourceFileInfo(getApplication(), uri.toString())
+                    require(info != null && !info.directory && (book.sourceFileName == null || info.name == book.sourceFileName)) {
+                        "请选择《${book.sourceFileName ?: book.title}》的原文件"
+                    }
+                    requireDocumentAvailable(getApplication(), uri.toString())
+                }
+                if (state.books.none { it.id == bookId && it.sourceUri == book.sourceUri && it.contentVersion == book.contentVersion }) return@launch
+                changed(state.copy(books = state.books.map { if (it.id == bookId) it.copy(sourceUri = uri.toString()) else it }))
+                persistNow()
+                scanLocalSources()
+            } catch (cancelled: CancellationException) { throw cancelled }
+              catch (failure: Exception) { message = failure.message ?: "无法读取源文件" }
+        }
+    }
     fun setScanLocalChanges(enabled: Boolean) {
         if (!storageReady) return
         changed(state.copy(scanLocalChanges = enabled))
         scanLocalSources()
     }
     private fun scanLocalSources() {
+        val generation = ++sourceScanGeneration
         sourceScanJob?.cancel()
-        if (!state.scanLocalChanges) { localSourceChangedIds = emptySet(); return }
+        if (!state.scanLocalChanges) { localSourceChangedIds = emptySet(); localSourceScanIssues = emptyMap(); scanningLocalSources = false; return }
         val books = state.books.toList()
+        scanningLocalSources = true
         sourceScanJob = viewModelScope.launch {
-            val scanner = LocalSourceChanges(getApplication())
-            for (book in books) {
-                if (book.id in editingBookIds || hasBookDraft(book.id) || book.id in cloudTransfers) continue
-                val changed = try { withContext(Dispatchers.IO) {
-                    val work = kotlinx.coroutines.currentCoroutineContext()
-                    scanner.changed(book) { work.ensureActive() }
-                } } catch (cancelled: CancellationException) { throw cancelled }
-                  catch (_: Exception) { continue }
-                if (state.books.any { it.id == book.id && it.contentVersion == book.contentVersion && it.sourceUri == book.sourceUri } &&
-                    book.id !in editingBookIds && !hasBookDraft(book.id) && book.id !in cloudTransfers)
-                    localSourceChangedIds = if (changed) localSourceChangedIds + book.id else localSourceChangedIds - book.id
-            }
+            try {
+                localSourceChangedIds = localSourceChangedIds.filterTo(mutableSetOf()) { id -> books.any { it.id == id } }
+                localSourceScanIssues = localSourceScanIssues.filterKeys { id -> books.any { it.id == id } }
+                val scanner = LocalSourceChanges(getApplication())
+                for (book in books) {
+                    if (book.id in editingBookIds || hasBookDraft(book.id) || book.id in cloudTransfers) continue
+                    val changed = try { withContext(Dispatchers.IO) {
+                        val work = kotlinx.coroutines.currentCoroutineContext()
+                        scanner.changed(book) { work.ensureActive() }
+                    } } catch (cancelled: CancellationException) { throw cancelled }
+                      catch (failure: Exception) {
+                          if (state.books.any { it.id == book.id && it.contentVersion == book.contentVersion && it.sourceUri == book.sourceUri })
+                              localSourceScanIssues = localSourceScanIssues + (book.id to (failure.message ?: "无法读取源文件，请重新选择"))
+                          continue
+                      }
+                    if (state.books.any { it.id == book.id && it.contentVersion == book.contentVersion && it.sourceUri == book.sourceUri } &&
+                        book.id !in editingBookIds && !hasBookDraft(book.id) && book.id !in cloudTransfers)
+                    {
+                        localSourceChangedIds = if (changed) localSourceChangedIds + book.id else localSourceChangedIds - book.id
+                        localSourceScanIssues = localSourceScanIssues - book.id
+                    }
+                }
+            } finally { if (generation == sourceScanGeneration) scanningLocalSources = false }
         }
     }
 
@@ -1739,6 +1778,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val account = withContext(Dispatchers.IO) { service.identity() }
         val snapshot = state
         val downloadedBook = snapshot.books.first { it.id == book.id }
+        withContext(Dispatchers.IO) { runCatching { LocalSourceChanges(getApplication()).accepted(downloadedBook) } }
         if (account != null) withContext(Dispatchers.IO) {
             // A local shelf rename has not been uploaded merely because the content was downloaded.
             cloudHistory.record(account, book.id, cloudBackupFingerprint(repository, snapshot,
@@ -2110,6 +2150,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                             throw error
                         }
                         saved = true
+                        localSourceChangedIds = localSourceChangedIds - bookId
+                        localSourceScanIssues = localSourceScanIssues - bookId
                         val completedDraft = bookDrafts.getValue(bookId)
                         bookDrafts = bookDrafts - bookId
                         if (completedDraft != latest) {
@@ -2130,6 +2172,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         progress("保存完成", 1f)
                         withContext(NonCancellable + Dispatchers.IO) {
                             transaction?.finish()
+                            // A scanner failure must not turn a successful source save into a failed save.
+                            runCatching { LocalSourceChanges(getApplication()).accepted(updated) }
                             removeReaderPageCaches(getApplication(), bookId)
                             val retained = referencedBookPaths(updated).map { File(it).absoluteFile.toPath() }
                             (latest.directories + listOfNotNull(transactionDirectory)).filter { directory -> retained.none { it.startsWith(directory.absoluteFile.toPath()) } }

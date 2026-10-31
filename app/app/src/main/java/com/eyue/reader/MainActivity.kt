@@ -56,6 +56,7 @@ class MainActivity : ComponentActivity() {
 
     private fun openExternalIntent(intent: Intent?) {
         val request = externalFilesFromIntent(intent) ?: return
+        request.uris.forEach { com.eyue.reader.data.retainDocumentAccess(this, it, request.grantFlags) }
         val requestId = externalRequestId ?: UUID.randomUUID().toString().also { externalRequestId = it }
         reader.openExternalFiles(request.uris, request.mimeType, requestId)
     }

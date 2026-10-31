@@ -4,7 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.core.content.IntentCompat
 
-internal data class ExternalFileRequest(val uris: List<Uri>, val mimeType: String?)
+internal data class ExternalFileRequest(val uris: List<Uri>, val mimeType: String?, val grantFlags: Int = 0)
 
 /** Keep the granted URIs intact; the importer determines each document's actual format. */
 internal fun externalFilesFromIntent(intent: Intent?): ExternalFileRequest? {
@@ -23,5 +23,5 @@ internal fun externalFilesFromIntent(intent: Intent?): ExternalFileRequest? {
         repeat(clips.itemCount) { index -> clips.getItemAt(index).uri?.let(uris::add) }
     }
     val documents = uris.filter { it.scheme == "content" || it.scheme == "file" }.distinct()
-    return if (documents.isEmpty()) null else ExternalFileRequest(documents, intent.type)
+    return if (documents.isEmpty()) null else ExternalFileRequest(documents, intent.type, intent.flags)
 }

@@ -87,6 +87,19 @@ private fun <T> withTemporaryDocument(context: Context, source: String, block: (
     }
 }
 
+/** Keep only permissions the sender offered. Providers may retain read and write independently. */
+internal fun retainDocumentAccess(context: Context, uri: Uri, offeredFlags: Int) {
+    if (uri.scheme != "content" || offeredFlags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION == 0) return
+    val permissionUri = if (DocumentsContract.isTreeUri(uri))
+        DocumentsContract.buildTreeDocumentUri(requireNotNull(uri.authority), DocumentsContract.getTreeDocumentId(uri)) else uri
+    for (flag in listOf(Intent.FLAG_GRANT_READ_URI_PERMISSION, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)) {
+        if (offeredFlags and flag == 0) continue
+        try { context.contentResolver.takePersistableUriPermission(permissionUri, flag) }
+        catch (_: SecurityException) { /* Temporary access remains usable for the import copy. */ }
+        catch (_: IllegalArgumentException) { }
+    }
+}
+
 /** Returns true only for a readable local file or an actually retained SAF read grant. */
 fun retainDocumentReadPermission(context: Context, uri: Uri): Boolean {
     documentFile(uri.toString())?.let { return it.exists() && it.canRead() }

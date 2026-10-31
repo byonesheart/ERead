@@ -53,7 +53,10 @@ class SourceOperationsRobolectricTest {
         assertTrue(LocalSourceChanges(context).changed(book))
         assertTrue(LocalSourceChanges(context).changed(book))
         File(book.sourcePath!!).writeText("new! content")
-        assertFalse(LocalSourceChanges(context).changed(book.copy(contentVersion = book.contentVersion + 1)))
+        val saved = book.copy(contentVersion = book.contentVersion + 1)
+        assertTrue(LocalSourceChanges(context).changed(saved))
+        LocalSourceChanges(context).accepted(saved)
+        assertFalse(LocalSourceChanges(context).changed(saved))
     }
     @Test fun firstScanDetectsExistingDifferencesAgainstTheImportedCopyAndReferenceFilesKeepTheirBaseline() {
         val book = book()
@@ -63,6 +66,48 @@ class SourceOperationsRobolectricTest {
         assertFalse(LocalSourceChanges(context).changed(linked))
         File(root, "original.epub").appendText(" again")
         assertTrue(LocalSourceChanges(context).changed(linked))
+    }
+    @Test fun legacyLinkedTxtDetectsSameSizeChangesBeforeItsFirstScan() {
+        val original = File(root, "old.txt").apply { writeText("第一章\n原始正文。") }
+        val cached = File(context.filesDir, "chapter.txt").apply { writeText(original.readText()) }
+        val book = book().copy(id = "legacy-txt", format = BookFormat.TXT, sourceUri = original.path,
+            sourcePath = original.path, sourceLinked = true, sourceFileBytes = original.length(),
+            chapters = listOf(Chapter(title = "第一章", textPath = cached.path)))
+        original.writeText("第一章\n变更正文。")
+        // Beta4 may already have accepted a late first scan; migrate using the cached TXT.
+        context.getSharedPreferences("local_source_snapshots", 0).edit()
+            .putString(book.id, java.security.MessageDigest.getInstance("SHA-256").digest(original.readBytes())
+                .joinToString("") { "%02x".format(it) }).putString(book.id + ":key", "old-version-key").commit()
+        assertTrue(LocalSourceChanges(context).changed(book))
+        assertTrue(LocalSourceChanges(context).changed(book.copy(contentVersion = book.contentVersion + 1)))
+        assertEquals("第一章\n原始正文。", cached.readText())
+    }
+    @Test fun keepingACopiedImportDigestDoesNotNeedTheExpiredOriginalGrant() {
+        val book = book().copy(sourceUri = "content://expired.provider/missing.epub")
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(File(book.sourcePath!!).readBytes())
+            .joinToString("") { "%02x".format(it) }
+        LocalSourceChanges(context).imported(book, digest)
+        assertEquals(digest, context.getSharedPreferences("local_source_snapshots", 0).getString(book.id, null))
+    }
+    @Test fun singleImageBooksInspectTheOriginalRatherThanOnlyTheirPrivateCopy() {
+        val book = book().copy(format = BookFormat.IMAGES, mode = LibraryMode.COMIC,
+            chapters = listOf(Chapter(title = "图片", pages = listOf(PageSource(book().sourcePath!!)))))
+        LocalSourceChanges(context).accepted(book)
+        File(root, "original.epub").writeText("changed external image bytes")
+        assertTrue(LocalSourceChanges(context).changed(book))
+    }
+    @Test fun importedDigestSurvivesAChangedVersionAndReauthorizedUri() {
+        val book = book()
+        LocalSourceChanges(context).accepted(book)
+        val changed = File(root, "changed.epub").apply { writeText("externally changed") }
+        assertTrue(LocalSourceChanges(context).changed(book.copy(sourceUri = changed.path, contentVersion = 500)))
+    }
+    @Test fun linkedImportBaselineDetectsAnEditBeforeScanningIsEnabled() {
+        val source = File(root, "linked.pdf").apply { writeText("initial") }
+        val book = book().copy(id = "linked-pdf", format = BookFormat.PDF, sourceUri = source.path, sourcePath = source.path)
+        LocalSourceChanges(context).imported(book)
+        source.writeText("longer edited content")
+        assertTrue(LocalSourceChanges(context).changed(book))
     }
     @Test fun externalOpenKeepsOwnedBytesAfterTheTemporarySourceIsRemoved() {
         val book = book().copy(sourcePath = File(root, "original.epub").path, sourceLinked = true)

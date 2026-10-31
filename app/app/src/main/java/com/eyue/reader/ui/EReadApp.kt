@@ -128,6 +128,15 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             if (it.isNotEmpty()) vm.mode = selectedImportMode
             vm.importFiles(it, selectedImportMode)
         }
+        var scanSourceBookId by rememberSaveable { mutableStateOf<String?>(null) }
+        val scanSourceAccess = rememberLauncherForActivityResult(GrantBookWriteAccess(write = false)) { uri ->
+            val bookId = scanSourceBookId
+            scanSourceBookId = null
+            if (uri != null && bookId != null) {
+                retainBookAccess(context, uri)
+                vm.grantScanSource(bookId, uri)
+            }
+        }
         val sourceWriteAccess = rememberLauncherForActivityResult(GrantBookWriteAccess()) { uri ->
             if (uri == null) vm.cancelSourceWrite() else {
                 retainBookAccess(context, uri)
@@ -363,6 +372,11 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                     restoreProgress = vm.cloudRestoreProgress,
                                     onAppTheme = vm::setAppTheme, availableUpdate = updateSession.availableUpdate,
                                     onCheckUpdate = updateSession::checkNow, onShowRecentReading = vm::setShowRecentReading, onScanLocalChanges = vm::setScanLocalChanges,
+                                    localSourceScanIssues = vm.localSourceScanIssues, scanningLocalSources = vm.scanningLocalSources,
+                                    onGrantScanSource = { book ->
+                                        scanSourceBookId = book.id
+                                        scanSourceAccess.launch(book.sourceUri ?: book.sourcePath.orEmpty())
+                                    },
                                     developerMode = updateSession.developerMode, onEnableDeveloperMode = {
                                         runCatching { developerPreferences.enable() }.onSuccess {
                                             updateSession.configureDeveloperMode(true)

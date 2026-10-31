@@ -180,6 +180,35 @@ class ReaderEditIsolationRobolectricTest {
         root.deleteRecursively()
     }
 
+    @Test fun returningToForegroundRescansAndUnavailableSourcesCanBeReauthorizedWithoutOverwritingCaches() {
+        val original = textBook("扫描授权", "第一章\n原始正文。")
+        val cached = File(root, "cached-chapter.txt").apply { writeText("第一章\n原始正文。") }
+        val book = original.copy(sourceFileName = "扫描授权.txt", chapters = listOf(original.chapters.single().copy(textPath = cached.path)))
+        openLibrary(book)
+        vm.resumeSession()
+        vm.setScanLocalChanges(true)
+        await { !vm.scanningLocalSources }
+        // Wait for the actual IO job, not only its initial false state.
+        await { app.getSharedPreferences("local_source_snapshots", 0).contains(book.id) }
+        vm.pauseSession()
+        File(book.sourcePath!!).writeText("第一章\n修改正文。")
+        vm.resumeSession()
+        await { book.id in vm.localSourceChangedIds }
+        vm.pauseSession()
+        File(book.sourcePath!!).delete()
+        vm.resumeSession()
+        await { book.id in vm.localSourceScanIssues }
+        assertNull(vm.message)
+        val recovered = File(root, "recovered/扫描授权.txt").apply { parentFile!!.mkdirs(); writeText("第一章\n修改正文。") }
+        vm.grantScanSource(book.id, Uri.parse(recovered.path))
+        await { book.id !in vm.localSourceScanIssues && book(book.id).sourceUri == recovered.path && !vm.scanningLocalSources }
+        assertTrue(book.id in vm.localSourceChangedIds)
+        assertEquals("第一章\n原始正文。", cached.readText())
+        vm.setScanLocalChanges(false)
+        assertTrue(vm.localSourceChangedIds.isEmpty())
+        assertTrue(vm.localSourceScanIssues.isEmpty())
+    }
+
     @Test fun anEditWaitingForOneBookDoesNotBlockAnotherBooksEditOrCloudAction() {
         val first = textBook("甲", "第一章\n甲的旧正文。")
         val second = textBook("乙", "第一章\n乙的旧正文。")

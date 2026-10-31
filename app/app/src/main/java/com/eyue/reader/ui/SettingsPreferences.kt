@@ -75,12 +75,18 @@ private enum class SettingsPage(val title: String) {
     onCheckUpdate: (suspend () -> AppUpdateResult)? = null,
     restoreProgress: CloudOperationProgress? = null, onAppTheme: (AppThemeStyle) -> Unit = {},
     availableUpdate: AppUpdateResult? = null, onShowRecentReading: (Boolean) -> Unit = {},
-    developerMode: Boolean = false, onEnableDeveloperMode: () -> Unit = {}, onScanLocalChanges: (Boolean) -> Unit = {}) {
+    developerMode: Boolean = false, onEnableDeveloperMode: () -> Unit = {}, onScanLocalChanges: (Boolean) -> Unit = {},
+    localSourceScanIssues: Map<String, String> = emptyMap(), scanningLocalSources: Boolean = false,
+    onGrantScanSource: (Book) -> Unit = {}) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
     val page = pages.lastOrNull()
     val pageScroll = remember(page) { ScrollState(0) }
     val context = LocalContext.current
+    val translationPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        rememberReaderTranslator(context, result.resultCode, result.data)
+    }
+
     val cleanupUsage by produceState<Result<LibraryCleanupUsage>?>(null, state, speechCacheRevision, page == SettingsPage.CACHE) {
         value = if (page != SettingsPage.CACHE) null else try {
             Result.success(withContext(Dispatchers.IO) { measureLibraryCleanup(context, state) })
@@ -118,8 +124,18 @@ private enum class SettingsPage(val title: String) {
                         SettingsSeparator()
                         SettingsToggle("墨水屏模式", "高对比度显示，关闭翻页动画", state.einkMode, onEinkMode, "settings_eink_mode", Icons.Outlined.Contrast)
                         SettingsSeparator()
-                        SettingsToggle("启动时扫描本地修改", "后台检查源文件变化，在封面显示更新标识", state.scanLocalChanges, onScanLocalChanges,
+                        SettingsToggle("扫描本地修改", "启动及返回前台时检查源文件，在封面显示更新标识", state.scanLocalChanges, onScanLocalChanges,
                             "settings_scan_local_changes", Icons.Outlined.Sync)
+                        if (state.scanLocalChanges) {
+                            if (scanningLocalSources) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("source_scan_progress"))
+                            localSourceScanIssues.forEach { (id, issue) ->
+                                state.books.firstOrNull { it.id == id }?.let { book ->
+                                    SettingsLink(Icons.Outlined.FolderOpen, book.title, "源文件不可读取 · 重新选择",
+                                        "source_scan_access_$id", { onGrantScanSource(book) })
+                                    Text(issue, Modifier.padding(horizontal = 16.dp), fontSize = 12.sp)
+                                }
+                            }
+                        }
                         SettingsSeparator()
                         SettingsToggle("平板横屏双页", "宽屏横向翻页时并排显示两页", state.tabletDualPage, onTabletDualPage, "settings_tablet_dual_page", Icons.AutoMirrored.Outlined.MenuBook)
                         SettingsSeparator()
@@ -129,7 +145,11 @@ private enum class SettingsPage(val title: String) {
                     SettingsCard(Modifier.testTag("settings_services_card")) {
                         SettingsLink(Icons.Outlined.Cloud, "WebDAV 备份与还原", if (cloudConfigured) "已连接" else "未配置", "settings_cloud", { open(SettingsPage.CLOUD) })
                         SettingsSeparator()
-                        SettingsLink(Icons.Outlined.Translate, "系统翻译应用", "", "settings_translation", { openReaderTranslationSettings(context) })
+                        SettingsLink(Icons.Outlined.Translate, "系统翻译应用", "", "settings_translation", { readerTranslationPickerIntent(context)?.let { request ->
+                            try { translationPicker.launch(request) }
+                            catch (_: android.content.ActivityNotFoundException) { showMissingTranslation(context) }
+                            catch (_: SecurityException) { showMissingTranslation(context) }
+                        } })
                         SettingsSeparator()
                         SettingsLink(Icons.Outlined.CleaningServices, "清理缓存", "", "settings_cache", { open(SettingsPage.CACHE) })
                         SettingsSeparator()

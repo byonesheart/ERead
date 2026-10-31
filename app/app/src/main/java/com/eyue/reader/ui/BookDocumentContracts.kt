@@ -16,10 +16,11 @@ internal class OpenBookDocuments : ActivityResultContract<Array<String>, List<Ur
     override fun parseResult(resultCode: Int, intent: Intent?): List<Uri> = delegate.parseResult(resultCode, intent)
 }
 
-internal class GrantBookWriteAccess : ActivityResultContract<String, Uri?>() {
+internal class GrantBookWriteAccess(private val write: Boolean = true) : ActivityResultContract<String, Uri?>() {
     override fun createIntent(context: Context, input: String): Intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
         .addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
-        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+            (if (write) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0))
         .putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse(input))
     override fun parseResult(resultCode: Int, intent: Intent?): Uri? = if (resultCode == Activity.RESULT_OK) intent?.data else null
 }
@@ -33,8 +34,6 @@ internal class GrantBookRenameFolder : ActivityResultContract<String, Uri?>() {
 }
 
 internal fun retainBookAccess(context: Context, uri: Uri) {
-    if (uri.scheme != "content") return
-    val read = Intent.FLAG_GRANT_READ_URI_PERMISSION
-    runCatching { context.contentResolver.takePersistableUriPermission(uri, read or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
-        .onFailure { runCatching { context.contentResolver.takePersistableUriPermission(uri, read) } }
+    com.eyue.reader.data.retainDocumentAccess(context, uri,
+        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
 }

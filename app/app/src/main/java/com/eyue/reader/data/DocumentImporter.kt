@@ -85,6 +85,7 @@ class DocumentImporter(private val context: Context) {
                 val imported = runCatching { importImages(imageUris, LibraryMode.COMIC) }
                     .onFailure { rethrowCancellation(it); failures += "图片：${it.message ?: "导入失败"}" }.getOrNull()
                 if (imported != null) {
+                    LocalSourceChanges(context).imported(imported)
                     onBookImported(imported)
                     books += imported
                 }
@@ -103,14 +104,15 @@ class DocumentImporter(private val context: Context) {
                         report("读取源文件", item.name)
                         // Keep the complete EPUB, including fonts and resources,
                         // after a transient provider grant or an external file is removed.
+                        var sourceDigest: String? = null
                         val reference = if (forceCopy || format in setOf(BookFormat.EPUB, BookFormat.MOBI)) {
                             val original = File(directory, "source.${format.name.lowercase()}")
-                            timing.measure("copy") { copy(item.uri, original) { work.ensureActive() } }
+                            sourceDigest = timing.measure("copy") { copy(item.uri, original) { work.ensureActive() } }
                             SourceReference(original.absolutePath, false)
                         } else reference(item, directory, "source.${format.name.lowercase()}", retainFallback = format in setOf(BookFormat.PDF, BookFormat.TXT))
                         val imported = withLocalDocument(context, reference.path) { source ->
                             val parsed = when (format) {
-                                BookFormat.TXT -> importText(source, directory, id, item.name.substringBeforeLast('.'), LibraryMode.NOVEL, rule)
+                                BookFormat.TXT -> importText(source, directory, id, item.name.substringBeforeLast('.'), LibraryMode.NOVEL, rule) { sourceDigest = it }
                                 BookFormat.EPUB -> importEpub(source, directory, id, item.name.substringBeforeLast('.'), mode) { work.ensureActive() }
                                 BookFormat.MOBI -> importMobi(source, directory, id, item.name.substringBeforeLast('.'), rule, { work.ensureActive() })
                                 BookFormat.PDF -> importPdf(source, reference.path, directory, id, item.name.substringBeforeLast('.'), mode)
@@ -122,7 +124,9 @@ class DocumentImporter(private val context: Context) {
                         timing.count("chapters", imported.chapters.size.toLong())
                         timing.count("sourceBytes", imported.sourceFileBytes ?: 0)
                         imported.copy(sourcePath = documentFile(reference.path)?.absolutePath,
-                            sourceUri = item.permissionUri.toString(), sourceLinked = reference.linked)
+                            sourceUri = item.permissionUri.toString(), sourceLinked = reference.linked).also {
+                                LocalSourceChanges(context).imported(it, sourceDigest)
+                            }
                     } catch (error: Throwable) {
                         status = if (error is CancellationException) "canceled" else "failed"
                         directory.deleteRecursively()
@@ -145,7 +149,7 @@ class DocumentImporter(private val context: Context) {
             report("扫描漫画文件夹")
             lastImportErrors = emptyList()
             lastImportWarnings = emptyList()
-            importComicFolder(sourceInfo(uri))
+            importComicFolder(sourceInfo(uri)).also { LocalSourceChanges(context).imported(it) }
         }
     }
 
@@ -480,9 +484,11 @@ class DocumentImporter(private val context: Context) {
     }
 
     private fun importText(source: File, directory: File, id: String, fallbackTitle: String,
-                           mode: LibraryMode, rule: String): Book {
+                           mode: LibraryMode, rule: String, onDigest: (String) -> Unit = {}): Book {
         report("解析 TXT 正文", fallbackTitle)
-        val text = TextParser.decode(source.readBytes())
+        val bytes = source.readBytes()
+        onDigest(MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) })
+        val text = TextParser.decode(bytes)
         require(text.isNotBlank()) { "TXT 文件为空" }
         val metadata = TextParser.metadata(text)
         return Book(id = id, title = metadata.title ?: fallbackTitle, author = metadata.author,
@@ -854,7 +860,8 @@ class DocumentImporter(private val context: Context) {
         if (page.pdfPage >= 0) pdfCover(page.path, directory)
         else withLocalDocument(context, page.path) { BitmapLoader.createThumbnail(it, directory) }
 
-    private fun copy(uri: Uri, destination: File, check: () -> Unit = {}) {
+    private fun copy(uri: Uri, destination: File, check: () -> Unit = {}): String {
+        val digest = MessageDigest.getInstance("SHA-256")
         destination.parentFile?.mkdirs()
         val item = currentProgress.value?.currentItem.orEmpty()
         val total = documentFile(uri.toString())?.length() ?: runCatching {
@@ -871,12 +878,14 @@ class DocumentImporter(private val context: Context) {
                 val count = source.read(buffer)
                 if (count < 0) break
                 output.write(buffer, 0, count)
+                digest.update(buffer, 0, count)
                 copied += count
                 report("复制临时来源", "$item · 已复制 ${copied / 1024} KB",
                     fraction = if (total > 0) copied.toFloat() / total else null)
             }
         } }
         require(destination.length() > 0) { "文件为空" }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun displayName(uri: Uri): String = sourceInfo(uri).name

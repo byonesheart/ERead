@@ -36,56 +36,62 @@ internal fun readerTranslationTargets(context: Context, text: String): List<Inte
 private const val TRANSLATION_PREFERENCES = "reader_translation"
 private const val DEFAULT_TRANSLATOR = "component"
 
-internal fun openReaderTranslationSettings(context: Context) {
-    try { chooseReaderTranslation(context, "", false) }
-    catch (_: ActivityNotFoundException) { showMissingTranslation(context) }
+/** The platform picker owns app labels/icons and returns a component without translating empty text. */
+internal fun readerTranslationPickerIntent(context: Context): Intent? {
+    val targets = readerTranslationTargets(context, "")
+    if (targets.isEmpty()) { showMissingTranslation(context); return null }
+    val query = Intent(targets.first()).setComponent(null)
+    return Intent(Intent.ACTION_PICK_ACTIVITY).putExtra(Intent.EXTRA_INTENT, query)
+        .putExtra(Intent.EXTRA_TITLE, "默认翻译应用")
+}
+
+internal fun rememberReaderTranslator(context: Context, resultCode: Int, data: Intent?) {
+    if (resultCode != android.app.Activity.RESULT_OK) return
+    val component = data?.component ?: return
+    if (readerTranslationTargets(context, "").none { it.component == component }) {
+        showMissingTranslation(context)
+        return
+    }
+    context.getSharedPreferences(TRANSLATION_PREFERENCES, 0).edit()
+        .putString(DEFAULT_TRANSLATOR, component.flattenToString()).apply()
 }
 
 private fun launchTranslation(context: Context, intent: Intent) {
     context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
 
-private fun chooseReaderTranslation(context: Context, text: String, open: Boolean) {
+private fun chooseReaderTranslation(context: Context, text: String) {
     val targets = readerTranslationTargets(context, text)
     if (targets.isEmpty()) throw ActivityNotFoundException()
     val preferences = context.getSharedPreferences(TRANSLATION_PREFERENCES, 0)
     val remembered = preferences.getString(DEFAULT_TRANSLATOR, null)
     val default = targets.firstOrNull { it.component?.flattenToString() == remembered }
-    if (open && default != null) {
+    if (default != null) {
         try { launchTranslation(context, default); return }
         catch (_: ActivityNotFoundException) { preferences.edit().remove(DEFAULT_TRANSLATOR).apply() }
     }
-    if (open && targets.size == 1) { launchTranslation(context, targets.single()); return }
-    var selected = targets.indexOf(default).coerceAtLeast(0)
-    val remember = android.widget.CheckBox(context).apply {
-        this.text = "默认使用此应用"; isChecked = !open || default != null
-        setPadding(32, 12, 16, 12)
+    if (targets.size == 1) { launchTranslation(context, targets.single()); return }
+    if (targets.first().action == Intent.ACTION_TRANSLATE) {
+        // Normal resolution preserves the system's "just once/always" choice and app icons.
+        launchTranslation(context, readerTranslationIntent(text))
+    } else {
+        val base = Intent(targets.first()).setComponent(null)
+        val eligible = targets.mapNotNull { it.component }.toSet()
+        val excluded = context.packageManager.queryIntentActivities(base, 0).mapNotNull { it.activityInfo?.let { activity ->
+            ComponentName(activity.packageName, activity.name).takeUnless(eligible::contains)
+        } }.toTypedArray()
+        launchTranslation(context, Intent.createChooser(base, "系统翻译")
+            .putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, excluded))
     }
-    val labels = targets.map { intent ->
-        val component = requireNotNull(intent.component)
-        runCatching { context.packageManager.getActivityInfo(component, 0).loadLabel(context.packageManager).toString() }
-            .getOrDefault(component.packageName)
-    }.toTypedArray()
-    android.app.AlertDialog.Builder(context).setTitle("系统翻译")
-        .setSingleChoiceItems(labels, selected) { _, which -> selected = which }
-        .setView(remember).setNegativeButton("取消", null)
-        .setPositiveButton(if (open) "打开" else "保存") { _, _ ->
-            val target = targets[selected]
-            preferences.edit().apply {
-                if (remember.isChecked) putString(DEFAULT_TRANSLATOR, target.component!!.flattenToString()) else remove(DEFAULT_TRANSLATOR)
-            }.apply()
-            if (open) try { launchTranslation(context, target) }
-                catch (_: ActivityNotFoundException) { showMissingTranslation(context) }
-        }.show()
 }
 
-private fun showMissingTranslation(context: Context) {
+internal fun showMissingTranslation(context: Context) {
     val toast = Toast.makeText(context, "此设备未提供可调用的系统翻译", Toast.LENGTH_SHORT)
     toast.show(); Handler(Looper.getMainLooper()).postDelayed({ toast.cancel() }, 1000)
 }
 
 internal fun openReaderTranslation(context: Context, text: String) {
-    try { chooseReaderTranslation(context, text, true) }
+    try { chooseReaderTranslation(context, text) }
     catch (_: ActivityNotFoundException) { showMissingTranslation(context) }
     catch (_: SecurityException) { showMissingTranslation(context) }
 }

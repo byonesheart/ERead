@@ -52,6 +52,13 @@ class BookDocumentContractsRobolectricTest {
         assertNull(contract.parseResult(Activity.RESULT_CANCELED, Intent().setData(tree)))
     }
 
+    @Test fun scanningRequestsOnlyPersistentReadAccess() {
+        val request = GrantBookWriteAccess(write = false).createIntent(context, source.toString())
+        assertTrue(request.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+        assertTrue(request.flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION != 0)
+        assertEquals(0, request.flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+    }
+
     @Test fun retainingImportAccessIncludesWriteAccessForFutureEdits() {
         retainBookAccess(context, source)
         val permission = context.contentResolver.persistedUriPermissions.single { it.uri == source }
@@ -59,6 +66,22 @@ class BookDocumentContractsRobolectricTest {
         assertTrue(permission.isWritePermission)
         context.contentResolver.releasePersistableUriPermission(source,
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+    }
+
+    @Test fun externallyOfferedReadOnlyAccessIsNeverUpgradedAndTemporaryAccessIsNotRetained() {
+        val resolver = context.contentResolver
+        val readOnly = Uri.parse("content://books.provider/document/read-only.epub")
+        com.eyue.reader.data.retainDocumentAccess(context, readOnly,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        val grant = resolver.persistedUriPermissions.single { it.uri == readOnly }
+        assertTrue(grant.isReadPermission)
+        assertFalse(grant.isWritePermission)
+        val temporary = Uri.parse("content://books.provider/document/temporary.epub")
+        com.eyue.reader.data.retainDocumentAccess(context, temporary, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        assertTrue(resolver.persistedUriPermissions.none { it.uri == temporary })
+        val request = com.eyue.reader.externalFilesFromIntent(Intent(Intent.ACTION_VIEW, readOnly)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION))!!
+        assertEquals(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION, request.grantFlags)
     }
 
     private fun assertWriteFlags(intent: Intent) {
