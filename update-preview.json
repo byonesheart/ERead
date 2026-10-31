@@ -1,13 +1,15 @@
 {
-  "versionCode": 76,
-  "versionName": "1.11.25-beta.3",
+  "versionCode": 77,
+  "versionName": "1.11.25-beta.4",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.25-beta.3",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.25-beta.3/ERead-1.11.25-beta.3-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.25-beta.4",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.25-beta.4/ERead-1.11.25-beta.4-release.apk",
   "mirrors": [],
   "changelog": [
-    "修复部分本地文件重命名提示不支持的问题，可授权原文件夹后核对并重命名源文件。",
-    "保留 EPUB／MOBI 编辑预览的原书排版，修复保存及重新打开后的样式丢失。",
+    "修复 EPUB／MOBI 保存后持续加载，完善外部打开文件的离线导入与已有书籍复用。",
+    "系统翻译支持记住默认应用，书籍信息补充文件大小和应用空间占用。",
+    "云端原文件默认保存至系统下载目录，可自选文件夹；扩展大型备份记录支持。",
+    "增加可选的启动源文件变更检测，统一星彩与经典主题的云同步图标。",
     "更多功能请自行体验。"
   ]
 }
