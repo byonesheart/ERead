@@ -321,6 +321,9 @@ class ImportQueueRobolectricTest {
         val note = Annotation(bookId = original.id, chapterIndex = 0, pageIndex = 0, note = "保留已有笔记")
         vm.annotate(note)
         vm.importFiles(listOf(uri), LibraryMode.NOVEL)
+        await { vm.duplicateImportTitle != null }
+        assertEquals(original.title, vm.duplicateImportTitle)
+        vm.acknowledgeDuplicateImport()
         await { !vm.importing && vm.pendingImports.isEmpty() }
         assertEquals(listOf(original), vm.state.books)
         assertEquals(listOf(note), vm.state.annotations)
@@ -479,6 +482,8 @@ class ImportQueueRobolectricTest {
         opened.clear()
         gates["already-imported.epub"] = CountDownLatch(1)
         vm.importFiles(listOf(source), LibraryMode.NOVEL)
+        await { vm.duplicateImportTitle != null }
+        vm.acknowledgeDuplicateImport()
         await { !vm.importing && vm.pendingImports.isEmpty() }
         assertEquals(listOf(id), vm.state.books.map { it.id })
         assertFalse("Identity metadata must be checked before copying or parsing the file", "already-imported.epub" in opened)

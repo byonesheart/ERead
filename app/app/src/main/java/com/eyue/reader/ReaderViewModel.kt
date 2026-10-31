@@ -131,6 +131,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     var pendingImportConflict by mutableStateOf<ImportBookConflict?>(null)
         private set
     private var importConflictAnswer: CompletableDeferred<Set<String>>? = null
+    var duplicateImportTitle by mutableStateOf<String?>(null)
+        private set
+    private var duplicateImportAnswer: CompletableDeferred<Unit>? = null
     var message by mutableStateOf<String?>(null)
     var activeBookId by mutableStateOf<String?>(null)
         private set
@@ -449,6 +452,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (keepIds.isNotEmpty() && allowed.containsAll(keepIds)) importConflictAnswer?.complete(keepIds)
     }
 
+    fun acknowledgeDuplicateImport() { duplicateImportAnswer?.complete(Unit) }
+
     private suspend fun acceptImportedBook(incoming: Book, notices: MutableList<String>, prepareLayout: Boolean = true): Book? {
         try {
             val identified = withContext(Dispatchers.IO) {
@@ -456,7 +461,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     else hydrateBookSourceIdentity(getApplication(), it) }
             }.filter { known -> state.books.any { it.id == known.id } }
             val same = identified.firstOrNull { !it.cloudOnly && cloudBookSourceMatch(it, incoming) == CloudBookMatch.SAME }
-            if (same != null) return state.books.find { it.id == same.id }
+            if (same != null) {
+                val answer = CompletableDeferred<Unit>()
+                duplicateImportAnswer = answer
+                duplicateImportTitle = same.title
+                try { answer.await() } finally { duplicateImportTitle = null; duplicateImportAnswer = null }
+                return state.books.find { it.id == same.id }
+            }
             val candidates = importBookCandidates(identified, incoming)
             var selected = setOf(incoming.id)
             if (candidates.isNotEmpty()) {
@@ -771,16 +782,55 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (!storageReady) return false
         val value = title.trim()
         if (value.isEmpty()) { message = "请输入书籍名称"; return false }
+        if (value in setOf(".", "..") || value.any { it in "/\\\u0000\r\n" }) {
+            message = "书籍名称不能包含斜杠或换行"; return false
+        }
         val book = state.books.find { it.id == bookId } ?: return false
         if (bookId in editingBookIds || hasBookDraft(bookId)) {
             message = "请先保存或放弃这本书的正文修改，再重命名"; return false
         }
         if (value != book.title) {
+            if (bookId in cloudTransfers || organizing || cloudBusy) {
+                message = "请等待本书当前操作完成后再重命名"; return false
+            }
             if (book.cloudOnly) {
                 val ids = shelfRenamePreferences.getStringSet("pending_titles", emptySet()).orEmpty() + book.id
                 shelfRenamePreferences.edit().putStringSet("pending_titles", ids).apply()
             }
-            changed(state.copy(books = state.books.map { if (it.id == bookId) it.copy(title = value) else it }))
+            if (book.cloudOnly || book.isDemo) {
+                changed(state.copy(books = state.books.map { if (it.id == bookId) it.copy(title = value) else it }))
+            } else {
+                editingBookIds = editingBookIds + bookId
+                viewModelScope.launch {
+                    val rename = BookSourceRename(getApplication(), book)
+                    try {
+                        cloudOperationMutex.withBook(bookId) {
+                            withContext(NonCancellable) {
+                                val updated = withContext(Dispatchers.IO) { rename.apply(value) }
+                                val previous = state
+                                state = state.copy(books = state.books.map { if (it.id == bookId) updated.copy(
+                                    chapterIndex = it.chapterIndex, characterOffset = it.characterOffset,
+                                    pageIndex = it.pageIndex, progress = it.progress, lastReadAt = it.lastReadAt) else it },
+                                    annotations = state.annotations.map { annotation ->
+                                        if (annotation.bookId == bookId && annotation.imagePath != null) annotation.copy(imagePath =
+                                            when (annotation.imagePath) {
+                                                book.sourcePath -> updated.sourcePath
+                                                book.sourceUri -> updated.sourceUri
+                                                else -> annotation.imagePath
+                                            }) else annotation
+                                    })
+                                saves.cancelPending()
+                                try { persistNow() } catch (error: Exception) { state = previous; throw error }
+                            }
+                        }
+                    } catch (error: Exception) {
+                        try { withContext(NonCancellable + Dispatchers.IO) { rename.rollback() } }
+                        catch (recovery: Exception) { message = recovery.message; return@launch }
+                        if (error is CancellationException) throw error
+                        message = error.message ?: "源文件重命名失败，书架名称未修改"
+                    } finally { editingBookIds = editingBookIds - bookId }
+                }
+            }
         }
         return true
     }
@@ -1628,7 +1678,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             return@cloudOperation
         }
         val localTitle = state.books.first { it.id == book.id }.title
-        val downloaded = mergeCloudDownloadedBook(state, restored.copy(book = restored.book.copy(title = localTitle)))
+        val localBook = if (localTitle != restored.book.title) withContext(Dispatchers.IO) {
+            BookSourceRename(getApplication(), restored.book).apply(localTitle)
+        } else restored.book
+        val downloaded = mergeCloudDownloadedBook(state, restored.copy(book = localBook.copy(title = localTitle)))
         changed(downloaded.copy(settings = downloaded.settings.ensureActiveAppearanceProfile(),
             comicSettings = downloaded.comicSettings.ensureActiveAppearanceProfile()))
         persistNow()

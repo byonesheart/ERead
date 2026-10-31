@@ -384,6 +384,11 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             vm::cancelCloudUploadConflict, vm::resolveCloudUploadSelections, uploading = true)
         else if (vm.pendingCloudRestore != null) CloudRestoreDialog(vm.cloudRestoreConflicts, vm.meteredNetwork, vm.cloudBusy,
             vm::cancelCloudRestore, vm::resolveCloudRestoreSelections)
+        vm.duplicateImportTitle?.let { title ->
+            AlertDialog(onDismissRequest = vm::acknowledgeDuplicateImport,
+                title = { Text("书籍已存在") }, text = { Text("《$title》的文件名和文件大小与书架中的书籍一致，已跳过重复导入。") },
+                confirmButton = { TextButton(onClick = vm::acknowledgeDuplicateImport) { Text("知道了") } })
+        }
         if (showChapterRules) {
             ChapterRulesDialog(state.settings.chapterRules, state.settings.activeChapterRuleId,
                 onDismiss = { showChapterRules = false }, onSavePreset = vm::saveChapterRulePreset,

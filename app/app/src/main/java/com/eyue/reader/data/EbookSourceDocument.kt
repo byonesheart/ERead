@@ -112,7 +112,25 @@ internal class EbookSourceStore(private val context: Context, private val book: 
             val original = SourceHtmlEdit.plain(html, { worker.ensureActive() }, ::sourceImage)
             if (original != canonicalText) {
                 if (book.hasTextEdits) {
-                    html = SourceHtmlEdit.replace(html, canonicalText, { worker.ensureActive() }, ::sourceImage).html
+                    html = try { SourceHtmlEdit.replace(html, canonicalText, { worker.ensureActive() }, ::sourceImage).html }
+                    catch (_: IllegalArgumentException) {
+                        // A draft must remain visible even when exact archive writeback cannot yet be validated.
+                        // Saving still uses the strict source writer; it never replaces the archive with this preview.
+                        val images = sourceHtmlTags(html, { worker.ensureActive() })
+                            .filter { !it.closing && it.name in setOf("img", "image") }.toList()
+                        buildString {
+                            append("<html><head></head><body><p>")
+                            var cursor = 0
+                            content.inlineImages.forEachIndexed { index, image ->
+                                val at = image.offset.coerceIn(cursor, canonicalText.length)
+                                append(SourceHtmlEdit.escape(canonicalText.substring(cursor, at)).replace("\n", "<br/>"))
+                                images.getOrNull(index)?.let { append(html, it.start, it.end) }
+                                cursor = at
+                            }
+                            append(SourceHtmlEdit.escape(canonicalText.substring(cursor)).replace("\n", "<br/>"))
+                            append("</p></body></html>")
+                        }
+                    }
                 } else require(original.filterNot(Char::isWhitespace) == canonicalText.filterNot(Char::isWhitespace)) {
                     "原书正文与阅读记录不一致，请重新导入；阅读记录尚未修改"
                 }
@@ -481,12 +499,9 @@ private fun ebookSourceOffsets(html: String, canonical: String, offsets: List<In
     fun probe(index: Int): Int = probes.getOrPut(index) {
         checkActive()
         val point = boundaries[index]
-        val text = SourceHtmlEdit.plain(html.substring(0, point) + token + html.substring(point), checkActive, image)
-        val at = text.indexOf(token)
-        require(at >= 0) { "无法定位原书文字" }
-        val removed = normalizeHtmlText(text.removeRange(at, at + token.length), intArrayOf(at), checkActive)
-        require(removed.text == canonical) { "原书章节文字映射失败" }
-        removed.offset(at)
+        val (text, at) = HtmlChapterParser.probe(html.substring(0, point) + token + html.substring(point), token, checkActive, image)
+        require(text == canonical) { "原书章节文字映射失败" }
+        at
     }
     return offsets.map { offset ->
         var low = 0

@@ -18,7 +18,8 @@ internal class EbookSourceWriteback private constructor(
     private val context: Context,
     private val source: String,
     private val backup: File,
-    private val prepared: File
+    private val prepared: File,
+    private val mirror: EbookSourceWriteback? = null
 ) {
     private var committed = false
     var recoveryRequired = false
@@ -39,8 +40,10 @@ internal class EbookSourceWriteback private constructor(
             check(openDocumentStream(context, source).use { input ->
                 hash(input) { copied -> progress.report("校验保存结果", .8f + .19f * copied / prepared.length().coerceAtLeast(1)) }
             } == expectedHash) { "源文件写入校验失败" }
+            mirror?.commit()
             committed = true
         } catch (error: Exception) {
+            if (mirror?.recoveryRequired == true) recoveryRequired = true
             restoreBackup()
             throw error
         }
@@ -49,7 +52,10 @@ internal class EbookSourceWriteback private constructor(
 
     fun rollback() {
         if (committed) {
-            restoreBackup()
+            try { mirror?.rollback() } finally {
+                if (mirror?.recoveryRequired == true) recoveryRequired = true
+                restoreBackup()
+            }
             committed = false
         }
     }
@@ -64,7 +70,7 @@ internal class EbookSourceWriteback private constructor(
         }
     }
 
-    fun finish() { backup.delete(); prepared.delete() }
+    fun finish() { mirror?.finish(); backup.delete(); prepared.delete() }
 
     private fun replace(file: File, onCopied: (Long) -> Unit = {}) {
         documentFile(source)?.let { target ->
@@ -85,9 +91,7 @@ internal class EbookSourceWriteback private constructor(
 
     companion object {
         fun source(book: Book): String =
-            (if (book.format == BookFormat.EPUB && !book.sourceLinked && book.sourcePath != null &&
-                File(File(book.sourcePath).parentFile, "readium-publication.json").let { it.isFile || File(it.path + ".bak").isFile })
-                book.sourcePath else book.sourceUri ?: book.sourcePath)
+            (book.sourceUri ?: book.sourcePath)
                 ?: throw IOException("原文件不存在，请重新选择")
 
         fun requireWritable(context: Context, source: String) {
@@ -135,7 +139,18 @@ internal class EbookSourceWriteback private constructor(
                 else -> error("不支持覆盖此格式")
             }
             progress.report("文件准备完成", 1f)
-            return EbookSourceWriteback(context, source, backup, prepared)
+            // Reading and cloud backup may still use the complete private EPUB/MOBI copy.
+            val privateSource = before.sourcePath?.let(::File)?.takeIf { file ->
+                before.format in setOf(BookFormat.EPUB, BookFormat.MOBI) && file.isFile &&
+                    file.canonicalPath.startsWith(File(context.filesDir, "books/${before.id}").canonicalPath + File.separator) &&
+                    documentFile(source)?.canonicalFile != file.canonicalFile
+            }
+            val mirror = privateSource?.let { file ->
+                val mirrorBackup = File(directory, "private-original.${before.format.name.lowercase()}")
+                file.copyTo(mirrorBackup)
+                EbookSourceWriteback(context, file.absolutePath, mirrorBackup, prepared)
+            }
+            return EbookSourceWriteback(context, source, backup, prepared, mirror)
         }
 
         private fun txt(destination: File, edited: Book, progress: Progress, checkActive: () -> Unit) {

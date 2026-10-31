@@ -119,6 +119,17 @@ class EbookSourceDocumentRobolectricTest {
         assertTrue(document.noteTargets.getValue("#fn2").contains("原书注解"))
     }
 
+    @Test fun draftParagraphChangesRemainVisibleWithoutWritingTheOriginalArchive() = runBlocking {
+        val source = epubFixture(includeImage = false)
+        val original = source.readBytes()
+        val book = epubBook(source).copy(hasTextEdits = true)
+        val edited = "预览正文\n新的第二行\n\n新的段落与 <文字>"
+        val document = store(book).load(0, edited)
+        assertEquals(edited, document.canonicalText)
+        assertEquals(edited, SourceHtmlEdit.plain(document.html) { null })
+        assertArrayEquals(original, source.readBytes())
+    }
+
     @Test fun linkedCssImportsFontSvgAndImageResolveFromTheirOriginalVirtualDirectories() = runBlocking {
         val book = epubBook(epubFixture())
         val store = store(book)

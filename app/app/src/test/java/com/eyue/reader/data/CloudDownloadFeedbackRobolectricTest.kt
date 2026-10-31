@@ -148,11 +148,13 @@ class CloudDownloadFeedbackRobolectricTest {
         await { vm.cloudDirtyBookIds == setOf(before.id) && LibraryRepository(app).load().books.single().title == "自选书名" }
         val renamed = vm.state.books.single()
         assertEquals("自选书名", renamed.title)
-        assertEquals(before.copy(title = "自选书名"), renamed)
-        assertArrayEquals(originalBytes, source.readBytes())
+        assertEquals(before.copy(title = "自选书名", sourcePath = File(source.parentFile, "自选书名.txt").path,
+            sourceFileName = "自选书名.txt", chapters = before.chapters.map { it.copy(textPath = File(source.parentFile, "自选书名.txt").path) }), renamed)
+        assertFalse(source.exists())
+        assertArrayEquals(originalBytes, File(renamed.sourcePath!!).readBytes())
         val (_, uploaded) = cloudUploadSnapshot(vm.state, renamed, "existing-cloud-id")
         assertEquals("自选书名", uploaded.title)
-        assertEquals(before.sourceFileName, uploaded.sourceFileName)
+        assertEquals("自选书名.txt", uploaded.sourceFileName)
         assertEquals(before.sourceFileBytes, uploaded.sourceFileBytes)
     }
 

@@ -54,13 +54,10 @@ internal object SourceHtmlEdit {
         fun probe(index: Int): Int = probes.getOrPut(index) {
             checkActive()
             val position = candidates[index]
-            val marked = plain(html.substring(0, position) + marker + html.substring(position), checkActive, image)
-            val location = marked.indexOf(marker)
-            require(location >= 0) { "无法定位源文件正文，修改未保存" }
-            val removed = marked.removeRange(location, location + marker.length)
-            val normalized = normalizeHtmlText(removed, intArrayOf(location), checkActive)
-            require(normalized.text == original) { "源文件包含不兼容的文本结构，修改未保存" }
-            normalized.offset(location)
+            val (text, location) = HtmlChapterParser.probe(html.substring(0, position) + marker + html.substring(position),
+                marker, checkActive, image)
+            require(text == original) { "源文件包含不兼容的文本结构，修改未保存" }
+            location
         }
         fun locate(offset: Int, last: Boolean = false): Int {
             var low = 0

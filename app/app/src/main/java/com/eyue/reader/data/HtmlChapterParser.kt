@@ -18,6 +18,16 @@ internal object HtmlChapterParser {
     fun readPlain(title: String, html: String, checkActive: () -> Unit = {}, image: (String) -> String?): ParsedTextChapter =
         readContent(title, html, "", false, checkActive, emptyMap(), image)
 
+    /** An empty inline tag records the boundary without changing HTML whitespace handling. */
+    fun probe(html: String, token: String, checkActive: () -> Unit, image: (String) -> String?): Pair<String, Int> {
+        var offset = -1
+        val tag = "eread-probe-${UUID.randomUUID()}"
+        val parsed = readContent("", html.replaceFirst(token, "<$tag></$tag>"), "", false, checkActive, emptyMap(), image,
+            probe = tag to { value -> offset = value })
+        require(offset >= 0) { "无法定位源文件正文，修改未保存" }
+        return parsed.text to offset
+    }
+
     fun readPlainWithNotes(title: String, html: String, checkActive: () -> Unit = {},
                            noteTargets: Map<String, String>, image: (String) -> String?): ParsedTextChapter =
         readContent(title, html, "", false, checkActive, noteTargets, image)
@@ -28,7 +38,7 @@ internal object HtmlChapterParser {
 
     private fun readContent(title: String, html: String, css: String, includeStyles: Boolean,
                             checkActive: () -> Unit, noteTargets: Map<String, String>, image: (String) -> String?,
-                            scanned: SourceHtmlScan? = null): ParsedTextChapter {
+                            scanned: SourceHtmlScan? = null, probe: Pair<String, (Int) -> Unit>? = null): ParsedTextChapter {
         val prefix = "\uE000${UUID.randomUUID()}_"
         val paths = mutableListOf<String>()
         val scan = scanned ?: SourceHtmlScan(html, checkActive)
@@ -69,8 +79,11 @@ internal object HtmlChapterParser {
             }
             append(source.html, cursor, source.html.length)
         }
+        var rawProbeOffset = -1
         val plain = Html.fromHtml(marked, Html.FROM_HTML_SEPARATOR_LINE_BREAK_PARAGRAPH or
-            Html.FROM_HTML_SEPARATOR_LINE_BREAK_DIV).toString()
+            Html.FROM_HTML_SEPARATOR_LINE_BREAK_DIV, null, if (probe == null) null else Html.TagHandler { opening, tag, output, _ ->
+                if (opening && tag.equals(probe.first, ignoreCase = true)) rawProbeOffset = output.length
+            }).toString()
         checkActive()
         val result = StringBuilder()
         val images = mutableListOf<InlineImage>()
@@ -83,7 +96,9 @@ internal object HtmlChapterParser {
         val noteImages = arrayOfNulls<String>(notes.size)
         val activeNotes = mutableSetOf<Int>()
         var cursor = 0
+        var removedBeforeProbe = 0
         Regex("${Regex.escape(prefix)}(SC|I|S|N)(\\d+)([BE]?)\uE001").findAll(plain).forEach { marker ->
+            if (marker.range.last < rawProbeOffset) removedBeforeProbe += marker.value.length
             result.append(plain, cursor, marker.range.first)
             val index = marker.groupValues[2].toInt()
             if (marker.groupValues[1] == "I") {
@@ -99,7 +114,13 @@ internal object HtmlChapterParser {
             cursor = marker.range.last + 1
         }
         result.append(plain, cursor, plain.length)
-        val normalized = normalizeHtmlText(result.toString(), starts + ends + cssStarts + cssEnds + noteStarts + noteEnds + images.map { it.offset }.toIntArray(), checkActive)
+        val probeOffset = if (rawProbeOffset < 0) -1 else rawProbeOffset - removedBeforeProbe
+        val boundaries = starts + ends + cssStarts + cssEnds + noteStarts + noteEnds + images.map { it.offset }.toIntArray()
+        val normalized = normalizeHtmlText(result.toString(), boundaries +
+            if (probeOffset >= 0) intArrayOf(probeOffset) else intArrayOf(), checkActive)
+        if (probeOffset >= 0) probe?.second?.invoke(normalized.offset(probeOffset))
+        // The probe path is used only for locating text, not for returning image/style ranges.
+        if (probe != null) return ParsedTextChapter(title, normalized.text)
         val text = normalized.text
         val styles = source.styles.mapIndexedNotNull { index, style ->
             val start = normalized.offset(starts[index])

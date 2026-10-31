@@ -101,6 +101,13 @@ class ReaderSourceEditTransactionRobolectricTest {
         await { !vm.importing }
         assertTrue(vm.hasBookDraft(book.id))
         assertEquals(text.replace("旧正文", "新的正文"), File(vm.activeReaderBook!!.chapters.single().textPath!!).readText())
+        runBlocking {
+            val preview = requireNotNull(vm.activeReaderBook)
+            EbookSourceStore(app, preview).use { sourceStore ->
+                val document = sourceStore.load(0, readChapterText(preview.chapters.single()))
+                assertEquals(text.replace("旧正文", "新的正文"), SourceHtmlEdit.plain(document.html) { null })
+            }
+        }
         assertArrayEquals(bytes, source.readBytes())
         assertEquals(text, File(repository.load().books.single().chapters.single().textPath!!).readText())
         vm.saveBookDraft(book.id)

@@ -70,6 +70,52 @@ class EbookSourceWritebackRobolectricTest {
         assertTrue(result.html.contains("<blockquote>引用保留</blockquote>"))
     }
 
+    @Test fun sourceEditMapsWhitespaceBeforeNormalizingAndKeepsOriginalMarkup() {
+        val examples = listOf(
+            "<html><body>\n  <h1>标题</h1>\n  <p>  旧正文<span>后文</span></p>\n  <p>末段</p>\n</body></html>",
+            "<html><body><div>\n  <p>旧正文</p>\n\n  <p>后文</p>\n</div></body></html>",
+            "<html><body><ul><li>旧正文</li><li>后文</li></ul><table><tr><td>表格文字</td></tr></table></body></html>",
+            "<html><body><p>旧正文<br/>  后文<br/><br/>末段</p></body></html>")
+        examples.forEach { html ->
+            val original = SourceHtmlEdit.plain(html) { null }
+            val target = original.replace("旧正文", "已编辑的🙂正文")
+            val edited = SourceHtmlEdit.replace(html, target) { null }
+            assertEquals(target, SourceHtmlEdit.plain(edited.html) { null })
+            assertEquals(html.replace("旧正文", "已编辑的🙂正文"), edited.html)
+        }
+    }
+
+    @Test fun migratedEpubWritesTheExternalOriginalAndPrivateCopyOnlyWhenCommitted() {
+        val source = epubFixture()
+        val external = File(root, "external.epub").apply { source.copyTo(this) }
+        val initial = epubBook(source)
+        val privateDirectory = File(context.filesDir, "books/${initial.id}").apply { mkdirs() }
+        val privateSource = File(privateDirectory, "source.epub").apply { source.copyTo(this) }
+        val fullText = ZipFile(source).use { zip -> SourceHtmlEdit.plain(zip.getInputStream(zip.getEntry("body.xhtml")).reader().readText()) { "image" } }
+        val fullChapter = Chapter(title = "正文", textPath = File(root, "legacy-full.txt").apply { writeText(fullText) }.absolutePath,
+            characterCount = fullText.length)
+        val book = initial.copy(chapters = listOf(fullChapter), sourcePath = privateSource.absolutePath,
+            sourceUri = external.absolutePath, sourceLinked = false)
+        val index = org.json.JSONObject().put("version", 1).put("spine", org.json.JSONArray(book.chapters.mapIndexed { chapter, item ->
+            org.json.JSONObject().put("href", "body.xhtml")
+                .put("chapterIndex", chapter).put("chapterId", item.id)
+        })).put("manifest", org.json.JSONObject().put("readingOrder", org.json.JSONArray()))
+        File(privateDirectory, "readium-publication.json").writeText(index.toString())
+        assertEquals(book.sourceUri, EbookSourceWriteback.source(book))
+        val updated = change(book, 0, "旧🙂正文", "修改后正文")
+        val original = external.readBytes()
+        val transaction = EbookSourceWriteback.prepare(context, book, updated, folder("external-transaction"))
+        assertArrayEquals(original, external.readBytes())
+        assertArrayEquals(original, privateSource.readBytes())
+        transaction.commit()
+        assertTrue(EpubArchive.read(external).sections.first().html.contains("修改后正文"))
+        assertArrayEquals(external.readBytes(), privateSource.readBytes())
+        transaction.rollback()
+        assertArrayEquals(original, external.readBytes())
+        assertArrayEquals(original, privateSource.readBytes())
+        transaction.finish()
+    }
+
     @Test fun epubCommitReallyOverwritesSourceAndRollbackRestoresExactOriginalArchive() {
         val source = epubFixture()
         val originalBytes = source.readBytes()
