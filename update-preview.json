@@ -1,15 +1,14 @@
 {
-  "versionCode": 72,
-  "versionName": "1.11.24-beta.3",
+  "versionCode": 74,
+  "versionName": "1.11.25-beta.1",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.24-beta.3",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.24-beta.3/ERead-1.11.24-beta.3-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.25-beta.1",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.25-beta.1/ERead-1.11.25-beta.1-release.apk",
   "mirrors": [],
   "changelog": [
-    "提高翻页灵敏度，支持快速短划翻页。",
-    "拖拽翻页跟随所选的覆盖、滑动或仿真效果。",
-    "修复自动翻页只翻一页就暂停的问题。",
-    "修复反复切换翻页和滚动时阅读位置向章首偏移。",
+    "修复 EPUB 编辑时部分文本结构被误判为不兼容，编辑先预览，保存后写回原文件。",
+    "书籍重命名同步修改源文件名，保留扩展名与阅读记录。",
+    "重复导入同一书籍时明确提示；同名但无法确定时可选择保留。",
     "更多功能请自行体验。"
   ]
 }
