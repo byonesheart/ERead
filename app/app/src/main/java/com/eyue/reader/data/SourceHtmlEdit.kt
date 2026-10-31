@@ -25,7 +25,14 @@ internal object SourceHtmlEdit {
 
     fun replace(html: String, target: String, image: (String) -> String?): Result = replace(html, target, {}, image)
 
-    fun replace(html: String, target: String, checkActive: () -> Unit, image: (String) -> String?): Result {
+    fun replace(html: String, target: String, checkActive: () -> Unit, image: (String) -> String?): Result =
+        replace(html, target, checkActive, image, exactParagraphs = true)
+
+    /** Display drafts keep block boundaries; strict archive validation still happens only on save. */
+    fun preview(html: String, target: String, checkActive: () -> Unit, image: (String) -> String?): Result =
+        replace(html, target, checkActive, image, exactParagraphs = false)
+
+    private fun replace(html: String, target: String, checkActive: () -> Unit, image: (String) -> String?, exactParagraphs: Boolean): Result {
         val original = plain(html, checkActive, image)
         if (original == target) return Result(html, emptyList())
         var start = 0
@@ -108,7 +115,10 @@ internal object SourceHtmlEdit {
             }.toMutableList().also { if (it.none { item -> item.start == from }) it += Change(from, from, inserted) }
         }
         val result = apply(html, changes)
-        require(plain(result.html, checkActive, image) == target) { "此编辑会改变段落结构，无法安全覆盖源文件；修改未保存" }
+        val verified = plain(result.html, checkActive, image)
+        require(verified == target || !exactParagraphs && verified.filterNot(Char::isWhitespace) == target.filterNot(Char::isWhitespace)) {
+            "此编辑会改变段落结构，无法安全覆盖源文件；修改未保存"
+        }
         return result
     }
 

@@ -59,26 +59,11 @@ internal class EbookSourceStore(private val context: Context, private val book: 
             val worker = currentCoroutineContext()
             worker.ensureActive()
             val chapter = book.chapters[chapterIndex]
-            val textPreview = preview && chapter.textPath?.let { File(it).parentFile?.name?.startsWith("edit-") } == true
-            if (book.format == BookFormat.TXT || textPreview) {
+            if (book.format == BookFormat.TXT) {
                 synchronized(documents) { documents[chapterIndex] }?.takeIf { it.canonicalText == canonicalText }
                     ?.let { return@withLock it }
-                val html = if (book.format == BookFormat.TXT) canonicalText.lineSequence().joinToString("\n",
+                val html = canonicalText.lineSequence().joinToString("\n",
                     "<html><head></head><body>", "</body></html>") { "<p>${SourceHtmlEdit.escape(it)}</p>" }
-                else buildString {
-                    append("<html><head></head><body><p>")
-                    var cursor = 0
-                    chapter.inlineImages.forEachIndexed { index, image ->
-                        val at = image.offset.coerceIn(cursor, canonicalText.length)
-                        append(SourceHtmlEdit.escape(canonicalText.substring(cursor, at)).replace("\n", "<br/>"))
-                        val path = "preview/$chapterIndex-$index.${File(image.path).extension}"
-                        deferredImages[path] = File(image.path).canonicalPath
-                        append("<img src=\"").append(origin).append("archive/").append(path).append("\"/>")
-                        cursor = at
-                    }
-                    append(SourceHtmlEdit.escape(canonicalText.substring(cursor)).replace("\n", "<br/>"))
-                    append("</p></body></html>")
-                }
                 return@withLock EbookSourceDocument("$bookKey:${book.contentVersion}:$chapterIndex:${digest(canonicalText)}",
                     html, origin + "archive/chapter-$chapterIndex.html", canonicalText).also { document ->
                     synchronized(documents) {
@@ -127,25 +112,8 @@ internal class EbookSourceStore(private val context: Context, private val book: 
             val original = SourceHtmlEdit.plain(html, { worker.ensureActive() }, ::sourceImage)
             if (original != canonicalText) {
                 if (book.hasTextEdits) {
-                    html = try { SourceHtmlEdit.replace(html, canonicalText, { worker.ensureActive() }, ::sourceImage).html }
-                    catch (_: IllegalArgumentException) {
-                        // A draft must remain visible even when exact archive writeback cannot yet be validated.
-                        // Saving still uses the strict source writer; it never replaces the archive with this preview.
-                        val images = sourceHtmlTags(html, { worker.ensureActive() })
-                            .filter { !it.closing && it.name in setOf("img", "image") }.toList()
-                        buildString {
-                            append("<html><head></head><body><p>")
-                            var cursor = 0
-                            content.inlineImages.forEachIndexed { index, image ->
-                                val at = image.offset.coerceIn(cursor, canonicalText.length)
-                                append(SourceHtmlEdit.escape(canonicalText.substring(cursor, at)).replace("\n", "<br/>"))
-                                images.getOrNull(index)?.let { append(html, it.start, it.end) }
-                                cursor = at
-                            }
-                            append(SourceHtmlEdit.escape(canonicalText.substring(cursor)).replace("\n", "<br/>"))
-                            append("</p></body></html>")
-                        }
-                    }
+                    html = (if (preview) SourceHtmlEdit.preview(html, canonicalText, { worker.ensureActive() }, ::sourceImage)
+                        else SourceHtmlEdit.replace(html, canonicalText, { worker.ensureActive() }, ::sourceImage)).html
                 } else require(original.filterNot(Char::isWhitespace) == canonicalText.filterNot(Char::isWhitespace)) {
                     "原书正文与阅读记录不一致，请重新导入；阅读记录尚未修改"
                 }

@@ -9,8 +9,13 @@ import java.io.File
 import java.io.IOException
 import java.nio.file.Files
 
+internal class SourceRenameFolderRequiredException(val source: String) : IOException("此文件入口不支持重命名，请选择原文件所在文件夹")
+
+data class SourceRenameFolderRequest(val bookId: String, val title: String, val source: String, val sourceName: String)
+
 /** Keep the shelf unchanged until the file and all private source references have been renamed. */
-internal class BookSourceRename(private val context: Context, private val original: Book) {
+internal class BookSourceRename(private val context: Context, private val original: Book,
+    private val sourceAliases: Set<String> = emptySet()) {
     private var previous: String? = null
     private var renamed: String? = null
     private var previousName: String? = null
@@ -48,7 +53,7 @@ internal class BookSourceRename(private val context: Context, private val origin
                 }
             }
             fun path(value: String?): String? = when {
-                value == source -> target
+                value == source || value != null && value in sourceAliases -> target
                 value != null && documentFile(value)?.absolutePath == documentFile(source)?.absolutePath && documentFile(source) != null ->
                     documentFile(target)?.absolutePath ?: target
                 else -> value
@@ -83,12 +88,16 @@ internal class BookSourceRename(private val context: Context, private val origin
             return if (Uri.parse(source).scheme == "file") Uri.fromFile(target).toString() else target.absolutePath
         }
         val uri = Uri.parse(source)
-        if (!DocumentsContract.isDocumentUri(context, uri)) throw SourceWritePermissionRequiredException(source)
+        if (!DocumentsContract.isDocumentUri(context, uri)) throw SourceRenameFolderRequiredException(source)
+        val flags = documentSourceFileInfo(context, source)?.flags
+        if (flags != null && flags and DocumentsContract.Document.FLAG_SUPPORTS_RENAME == 0)
+            throw SourceRenameFolderRequiredException(source)
         try {
             return DocumentsContract.renameDocument(context.contentResolver, uri, name)?.toString()
                 ?: throw SourceWritePermissionRequiredException(source)
         } catch (_: SecurityException) { throw SourceWritePermissionRequiredException(source) }
           catch (_: java.io.FileNotFoundException) { throw SourceWritePermissionRequiredException(source) }
+          catch (_: UnsupportedOperationException) { throw SourceRenameFolderRequiredException(source) }
     }
 
     private fun write(file: File, bytes: ByteArray) {

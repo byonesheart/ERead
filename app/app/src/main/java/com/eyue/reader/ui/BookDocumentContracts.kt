@@ -24,6 +24,14 @@ internal class GrantBookWriteAccess : ActivityResultContract<String, Uri?>() {
     override fun parseResult(resultCode: Int, intent: Intent?): Uri? = if (resultCode == Activity.RESULT_OK) intent?.data else null
 }
 
+internal class GrantBookRenameFolder : ActivityResultContract<String, Uri?>() {
+    override fun createIntent(context: Context, input: String): Intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+        .putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse(input))
+    override fun parseResult(resultCode: Int, intent: Intent?): Uri? = if (resultCode == Activity.RESULT_OK) intent?.data else null
+}
+
 internal fun retainBookAccess(context: Context, uri: Uri) {
     if (uri.scheme != "content") return
     val read = Intent.FLAG_GRANT_READ_URI_PERMISSION

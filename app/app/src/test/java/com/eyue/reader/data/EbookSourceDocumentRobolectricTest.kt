@@ -124,27 +124,37 @@ class EbookSourceDocumentRobolectricTest {
         val original = source.readBytes()
         val book = epubBook(source).copy(hasTextEdits = true)
         val edited = "预览正文\n新的第二行\n\n新的段落与 <文字>"
-        val document = store(book).load(0, edited)
+        val document = EbookSourceStore(context, book, preview = true).also(stores::add).load(0, edited)
         assertEquals(edited, document.canonicalText)
         assertEquals(edited, SourceHtmlEdit.plain(document.html) { null })
         assertArrayEquals(original, source.readBytes())
     }
 
-    @Test fun lightweightDraftDisplaysWithoutOpeningOrMappingThePublication() = runBlocking {
+    @Test fun editedChapterKeepsOriginalDomCssAndResourcesWithoutRescanningOtherChapters() = runBlocking {
         val source = epubFixture(includeImage = false)
-        val book = epubBook(source)
+        val bytes = source.readBytes()
+        val directory = File(context.filesDir, "books/draft-styles").apply { mkdirs() }
+        val book = EpubTestImporter(context).import(source, directory, "draft-styles", "draft-styles")
+        val prepared = loadChapterContent(context, book, 1)
         val folder = File(root, "edit-preview").apply { mkdirs() }
-        val text = "立即预览修改后的 <文本>\n第二行"
-        val chapter = book.chapters[0].copy(textPath = File(folder, "chapter.txt").apply { writeText(text) }.path,
-            lazySourcePath = null, characterCount = text.length)
-        val draft = book.copy(sourcePath = File(root, "not-opened.epub").path,
-            chapters = listOf(chapter) + book.chapters.drop(1), hasTextEdits = true)
+        val start = prepared.text.indexOf("旧🙂正文")
+        val edit = EbookTextEdit(1, prepared.text, start, start + "旧🙂正文".length, "新🙂修改正文")
+        val textFile = File(folder, "chapter.txt").apply { writeText(edit.text) }
+        val chapter = retainEditedChapterSource(prepared.chapter, edit.chapter(prepared.chapter, textFile.path))
+        val draft = edit.book(book, chapter, book.chapters.map { readChapterText(it).length })
+        File(requireNotNull(book.chapters[0].lazySourcePath)).writeText("unrequested manifest must not be parsed")
         EbookSourceStore(context, draft, preview = true).use { store ->
-            val document = store.load(0, text)
-            assertEquals(text, document.canonicalText)
-            assertEquals(text, SourceHtmlEdit.plain(document.html) { null })
-            assertFalse(document.html.contains("href='../styles/main.css'"))
+            val document = store.load(1, edit.text)
+            assertTrue(document.html.contains("<p class='body'>第二章<b>新🙂修改正文</b>结束</p>"))
+            assertTrue(document.html.contains("<blockquote cite='original'>"))
+            assertTrue(document.html.contains("href='../styles/main.css'"))
+            assertTrue(document.html.contains("<body class='paper' style='padding:1em'>"))
+            assertEquals(edit.text, SourceHtmlEdit.plain(document.html) { null })
+            val css = URI(document.baseUrl).resolve("../styles/main.css").toString()
+            assertEquals(mainCss, resource(store, css, "text/css").toString(Charsets.UTF_8))
         }
+        assertEquals(prepared.text, readChapterText(book.chapters[1]))
+        assertArrayEquals(bytes, source.readBytes())
     }
 
     @Test fun linkedCssImportsFontSvgAndImageResolveFromTheirOriginalVirtualDirectories() = runBlocking {

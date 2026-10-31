@@ -119,6 +119,24 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                 vm.resumeSourceWrite(uri)
             }
         }
+        val sourceRenameFolderAccess = rememberLauncherForActivityResult(GrantBookRenameFolder()) { uri ->
+            if (uri == null) vm.cancelSourceRenameFolder() else {
+                retainBookAccess(context, uri)
+                vm.resumeSourceRenameFolder(uri)
+            }
+        }
+        var sourceRenameFolderPickerOpen by rememberSaveable { mutableStateOf(false) }
+        LaunchedEffect(vm.pendingSourceRenameFolder) { if (vm.pendingSourceRenameFolder == null) sourceRenameFolderPickerOpen = false }
+        vm.pendingSourceRenameFolder?.takeIf { !sourceRenameFolderPickerOpen }?.let { request ->
+            AlertDialog(onDismissRequest = vm::cancelSourceRenameFolder, modifier = Modifier.testTag("source_rename_folder_dialog"),
+                title = { Text("选择原文件所在文件夹") },
+                text = { Text("当前文件入口不支持重命名。请选择“${request.sourceName}”所在的文件夹并授权；核对内容一致后，将修改源文件名和书架名称。") },
+                confirmButton = { TextButton(onClick = {
+                    sourceRenameFolderPickerOpen = true
+                    sourceRenameFolderAccess.launch(request.source)
+                }, modifier = Modifier.testTag("source_rename_choose_folder")) { Text("选择文件夹") } },
+                dismissButton = { TextButton(onClick = vm::cancelSourceRenameFolder) { Text("取消") } })
+        }
         var sourceWritePickerOpen by rememberSaveable { mutableStateOf(false) }
         LaunchedEffect(vm.pendingSourceWriteUri) {
             val uri = vm.pendingSourceWriteUri

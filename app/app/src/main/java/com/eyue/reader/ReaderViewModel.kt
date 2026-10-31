@@ -812,7 +812,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             } else {
                 editingBookIds = editingBookIds + bookId
                 viewModelScope.launch {
-                    val rename = BookSourceRename(getApplication(), book)
+                    val rename = BookSourceRename(getApplication(), book, if (sourceOverride == null) emptySet() else
+                        setOfNotNull(currentBook.sourceUri, currentBook.sourcePath.takeUnless { keepPrivateSource }))
                     try {
                         cloudOperationMutex.withBook(bookId) {
                             withContext(NonCancellable) {
@@ -824,8 +825,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                                     annotations = state.annotations.map { annotation ->
                                         if (annotation.bookId == bookId && annotation.imagePath != null) annotation.copy(imagePath =
                                             when (annotation.imagePath) {
-                                                book.sourcePath -> updated.sourcePath
-                                                book.sourceUri -> updated.sourceUri
+                                                currentBook.sourcePath -> updated.sourcePath ?: updated.sourceUri
+                                                currentBook.sourceUri -> updated.sourceUri
                                                 else -> annotation.imagePath
                                             }) else annotation
                                     })
@@ -837,7 +838,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         try { withContext(NonCancellable + Dispatchers.IO) { rename.rollback() } }
                         catch (recovery: Exception) { message = recovery.message; return@launch }
                         if (error is CancellationException) throw error
-                        if (error is SourceWritePermissionRequiredException) {
+                        if (error is SourceRenameFolderRequiredException) {
+                            val name = withContext(Dispatchers.IO) { documentSourceFileInfo(getApplication(), error.source)?.name }
+                                ?: book.sourceFileName
+                            if (name == null) message = "无法确认原文件名，请重新导入后再重命名"
+                            else pendingSourceRenameFolder = SourceRenameFolderRequest(bookId, value, error.source, name)
+                        } else if (error is SourceWritePermissionRequiredException) {
                             pendingSourceRename = bookId to value
                             pendingSourceWriteUri = error.source
                             message = "请重新选择这本书的原文件，授予重命名权限"
@@ -1839,10 +1845,34 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private data class PendingSourceSave(val bookId: String, val onSaved: () -> Unit)
     private var pendingSourceSave: PendingSourceSave? = null
     private var pendingSourceRename: Pair<String, String>? = null
+    var pendingSourceRenameFolder by mutableStateOf<SourceRenameFolderRequest?>(null)
+        private set
     var pendingSourceWriteUri by mutableStateOf<String?>(null)
         private set
 
     fun cancelSourceWrite() { pendingSourceWriteUri = null; pendingSourceSave = null; pendingSourceRename = null }
+
+    fun cancelSourceRenameFolder() { pendingSourceRenameFolder = null }
+
+    fun resumeSourceRenameFolder(uri: Uri) {
+        val pending = pendingSourceRenameFolder ?: return
+        pendingSourceRenameFolder = null
+        val book = state.books.firstOrNull { it.id == pending.bookId } ?: return
+        if (book.id in editingBookIds || book.id in cloudTransfers || hasBookDraft(book.id)) {
+            message = "请先完成这本书的当前操作，再重命名"; return
+        }
+        editingBookIds = editingBookIds + book.id
+        viewModelScope.launch {
+            var source: String? = null
+            try {
+                source = withContext(Dispatchers.IO) { sourceInRenameFolder(getApplication(), book, uri, pending.sourceName) }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                message = error.message ?: "无法使用所选文件夹重命名，原文件未修改"
+            } finally { editingBookIds = editingBookIds - book.id }
+            source?.let { renameBook(book.id, pending.title, it) }
+        }
+    }
 
     fun resumeSourceWrite(uri: Uri) {
         pendingSourceRename?.let { (id, title) ->
@@ -1930,7 +1960,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                             val edit = EbookTextEdit(chapter, text, start, end, replacement)
                             val textFile = File(folder, "chapter-$chapter.txt").apply { writeText(edit.text) }
                             val cached = DeferredEbookContent.cached(current) ?: current
-                            val updatedChapter = edit.chapter(cached, textFile.absolutePath)
+                            val updatedChapter = retainEditedChapterSource(cached, edit.chapter(cached, textFile.absolutePath))
                             edit.book(book, updatedChapter, DeferredEbookContent.lengthHints(book.chapters)) to edit::annotation
                         }
                     }
@@ -2021,6 +2051,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                             if (sourceBook.sourceUri != null || sourceBook.sourcePath != null) {
                                 transaction = EbookSourceWriteback.prepare(getApplication(), sourceBook, preparedPreview, directory,
                                     onProgress = { stage, fraction -> progress(stage, .1f + fraction * 0.75f) }) { editWork.ensureActive() }
+                                if (sourceBook.format in setOf(BookFormat.EPUB, BookFormat.MOBI))
+                                    preparedPreview = saveEditedChapterSources(preparedPreview, directory) { editWork.ensureActive() }
                                 withContext(NonCancellable) {
                                     transaction!!.commit { stage, fraction -> progress(stage, 0.85f + fraction * 0.1f) }
                                 }
@@ -2112,7 +2144,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 count += replacements.size
                 lengths += edit.text.length
                 val file = File(folder, "chapter-$index.txt").apply { writeText(edit.text) }
-                edit.chapter(prepared, file.absolutePath)
+                retainEditedChapterSource(prepared, edit.chapter(prepared, file.absolutePath))
             }
         }
         require(count > 0) { "没有找到可替换的文字，请重新搜索" }

@@ -158,7 +158,7 @@ fun documentSourceIdentity(context: Context, pathOrUri: String): String {
     return "$pathOrUri:$size:$modified"
 }
 
-internal data class DocumentSourceFileInfo(val name: String?, val bytes: Long?, val directory: Boolean)
+internal data class DocumentSourceFileInfo(val name: String?, val bytes: Long?, val directory: Boolean, val flags: Int? = null)
 
 /** Metadata only; never opens, copies or scans the book contents or a cache directory. */
 internal fun documentSourceFileInfo(context: Context, pathOrUri: String): DocumentSourceFileInfo? = runCatching {
@@ -177,7 +177,9 @@ internal fun documentSourceFileInfo(context: Context, pathOrUri: String): Docume
             setOf(DocumentsContract.Document.MIME_TYPE_DIR, "inode/directory", "resource/folder")
         val bytes = if (directory) null else cursor.getColumnIndex(OpenableColumns.SIZE)
             .takeIf { it >= 0 && !cursor.isNull(it) }?.let(cursor::getLong)?.takeIf { it >= 0 }
-        DocumentSourceFileInfo(string(OpenableColumns.DISPLAY_NAME), bytes, directory)
+        val flags = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_FLAGS)
+            .takeIf { it >= 0 && !cursor.isNull(it) }?.let(cursor::getInt)
+        DocumentSourceFileInfo(string(OpenableColumns.DISPLAY_NAME), bytes, directory, flags)
     }
 }.getOrNull()
 

@@ -516,6 +516,105 @@ class EbookSourceWritebackRobolectricTest {
         assertArrayEquals(original, File(directory, "original.epub").readBytes())
     }
 
+    @Test
+    @Config(shadows = [MobiBitmapRegionDecoderShadow::class])
+    fun importedMobiKeepsChapterMarkupAndStylesAcrossDraftSaveReopenAndSecondEdit() = runBlocking {
+        val css = ".chapter{margin:2em}.body{text-indent:2em;line-height:1.8}"
+        val markup = "<html><head><style>$css</style></head><body class='paper'><div class='chapter'>" +
+            "<h1>第一章</h1><p class='body'>第一章<b>旧正文</b></p>" +
+            "<h1>第二章</h1><p class='body'>第二章保留正文</p></div></body></html>"
+        val source = mobiFixture(markup, includeCover = false)
+        val originalBytes = source.readBytes()
+        var book = importMobi(source)
+        val repository = LibraryRepository(context)
+        repeat(2) { pass ->
+            val prepared = loadChapterContent(context, book, 0)
+            val old = if (pass == 0) "旧正文" else "修改正文"
+            val replacement = if (pass == 0) "修改正文" else "再次修改正文"
+            val start = prepared.text.indexOf(old)
+            assertTrue(start >= 0)
+            val edit = EbookTextEdit(0, prepared.text, start, start + old.length, replacement)
+            val editFolder = folder("edit-mobi-$pass")
+            val textFile = File(editFolder, "chapter.txt").apply { writeText(edit.text) }
+            val chapter = retainEditedChapterSource(prepared.chapter, edit.chapter(prepared.chapter, textFile.path))
+            val draft = edit.book(book, chapter, book.chapters.map { readChapterText(it).length })
+            EbookSourceStore(context, draft, preview = true).use { store ->
+                val html = store.load(0, edit.text).html
+                assertTrue(html.contains(css))
+                assertTrue(html.contains("<p class='body'>第一章<b>$replacement</b></p>"))
+                assertTrue(html.contains("<body class='paper'>"))
+            }
+            if (pass == 0) assertArrayEquals(originalBytes, source.readBytes())
+            val saveFolder = folder("save-mobi-$pass")
+            val transaction = EbookSourceWriteback.prepare(context, book, draft, saveFolder)
+            val saved = saveEditedChapterSources(draft, saveFolder) {}
+            transaction.commit(); transaction.finish()
+            book = repository.readBook(repository.writeBook(saved))
+            EbookSourceStore(context, book).use { store ->
+                val html = store.load(0, readChapterText(book, 0)).html
+                assertTrue(html.contains(css))
+                assertTrue(html.contains("<p class='body'>第一章<b>$replacement</b></p>"))
+                assertTrue(html.contains("<body class='paper'>"))
+            }
+            val parsed = MobiArchive.read(source)
+            assertEquals(css, parsed.css)
+            assertTrue(parsed.sections.first().html.contains(replacement))
+            assertTrue(parsed.sections.last().html.contains("第二章保留正文"))
+        }
+    }
+
+    @Test
+    @Config(shadows = [MobiBitmapRegionDecoderShadow::class])
+    fun importedEpubKeepsStyledTextImagesAndLinkedCssBeforeAndAfterSaving() = runBlocking {
+        val fixture = epubFixture()
+        val image = ByteArrayOutputStream().also { output ->
+            javax.imageio.ImageIO.write(java.awt.image.BufferedImage(4, 4, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", output)
+        }.toByteArray()
+        val source = File(root, "styled.epub")
+        ZipFile(fixture).use { archive -> ZipOutputStream(source.outputStream()).use { zip ->
+            archive.entries().asSequence().forEach { entry ->
+                zip.putNextEntry(ZipEntry(entry.name))
+                zip.write(if (entry.name == "cover.png") image else archive.getInputStream(entry).use { it.readBytes() })
+                zip.closeEntry()
+            }
+        } }
+        val original = source.readBytes()
+        val id = UUID.randomUUID().toString()
+        val imported = EpubTestImporter(context).import(source, File(context.filesDir, "books/$id").apply { mkdirs() }, id, "样书")
+            .copy(sourceUri = source.absolutePath)
+        val prepared = loadChapterContent(context, imported, 0)
+        val from = prepared.text.indexOf("旧🙂正文")
+        val edit = EbookTextEdit(0, prepared.text, from, from + "旧🙂正文".length, "修改🙂正文")
+        val work = folder("edit-epub-styles")
+        val text = File(work, "chapter.txt").apply { writeText(edit.text) }
+        val updated = retainEditedChapterSource(prepared.chapter, edit.chapter(prepared.chapter, text.path))
+        val draft = edit.book(imported, updated, imported.chapters.map { readChapterText(it).length })
+        val save = folder("save-epub-styles")
+        val transaction = EbookSourceWriteback.prepare(context, imported, draft, save)
+        val committed = saveEditedChapterSources(draft, save) {}
+        for (book in listOf(draft, committed)) {
+            EbookSourceStore(context, book, preview = true).use { store ->
+                val document = store.load(0, edit.text)
+                assertTrue(document.html.contains("<b>修改🙂正文</b>"))
+                assertTrue(document.html.contains("<blockquote>引用保留</blockquote>"))
+                assertTrue(document.html.contains("href='styles.css'"))
+                assertTrue(document.html.contains("src='cover.png'"))
+            }
+        }
+        assertArrayEquals(original, source.readBytes())
+        transaction.commit(); transaction.finish()
+        val repository = LibraryRepository(context)
+        val reopened = repository.readBook(repository.writeBook(committed))
+        EbookSourceStore(context, reopened).use { store ->
+            val document = store.load(0, readChapterText(reopened, 0))
+            assertTrue(document.html.contains("<b>修改🙂正文</b>"))
+            val css = java.net.URI(document.baseUrl).resolve("styles.css").toString()
+            assertEquals("h1{text-align:center} blockquote{font-style:italic}",
+                requireNotNull(store.openResource(css)).stream.use { it.readBytes().toString(Charsets.UTF_8) })
+        }
+        assertTrue(EpubArchive.read(source).sections.first().html.contains("修改🙂正文"))
+    }
+
     private fun registerProvider(authority: String, provider: ContentProvider) {
         provider.attachInfo(context, ProviderInfo().apply { this.authority = authority; exported = true; grantUriPermissions = true })
         ShadowContentResolver.registerProviderInternal(authority, provider)

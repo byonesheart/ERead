@@ -79,6 +79,28 @@ private fun chapterTextFootnotes(format: BookFormat, chapter: Chapter, text: Str
     else -> chapter
 }
 
+/** Snapshot the chapter template without parsing it or changing any source/import caches. */
+internal fun retainEditedChapterSource(original: Chapter, edited: Chapter): Chapter {
+    val source = original.lazySourcePath?.let(::File)?.takeIf { it.isFile } ?: return edited
+    val manifest = File(requireNotNull(edited.textPath) + ".source.json")
+    source.copyTo(manifest)
+    return edited.copy(lazySourcePath = manifest.absolutePath)
+}
+
+/** Save immutable DOM snapshots beside the saved text, so reopening never uses a stale draft/template. */
+internal fun saveEditedChapterSources(book: Book, directory: File, checkActive: () -> Unit): Book = book.copy(chapters =
+    book.chapters.mapIndexed { index, chapter ->
+        checkActive()
+        val source = chapter.lazySourcePath?.let(::File)?.takeIf { it.parentFile?.name?.startsWith("edit-") == true }
+            ?: return@mapIndexed chapter
+        val manifest = JSONObject(source.readText())
+        val images = manifest.getJSONObject("images")
+        manifest.put("html", SourceHtmlEdit.replace(manifest.getString("html"), readChapterText(chapter, checkActive),
+            checkActive) { images.optString(it).takeIf(String::isNotEmpty) }.html)
+        val saved = File(directory, "chapter-$index.source.json").apply { writeText(manifest.toString()) }
+        chapter.copy(lazySourcePath = saved.absolutePath)
+    })
+
 /** Used by imports after lightweight text/image extraction; no source styling is evaluated here. */
 internal fun saveLazyChapter(directory: File, index: Int, parsed: ParsedTextChapter, html: String, css: String,
                              images: Map<String, String>, noteTargets: Map<String, String> = emptyMap(), archivePath: String? = null,

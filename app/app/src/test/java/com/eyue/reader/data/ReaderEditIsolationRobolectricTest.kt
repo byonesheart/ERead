@@ -4,11 +4,15 @@ import android.app.Application
 import android.content.ContextWrapper
 import android.content.ContentProvider
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.ProviderInfo
+import android.content.pm.ResolveInfo
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.provider.DocumentsContract
+import android.os.Bundle
 import android.os.Looper
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewModelScope
@@ -55,7 +59,7 @@ class ReaderEditIsolationRobolectricTest {
     @Test fun renameRequestsDocumentAccessThenRenamesTheSourceAndShelfTogether() {
         val original = textBook("重命名授权", "第一章\n原始正文。")
         val authority = "readonly-rename-${UUID.randomUUID()}"
-        val uri = Uri.parse("content://$authority/file")
+        val uri = DocumentsContract.buildDocumentUri(authority, "file")
         val provider = object : ContentProvider() {
             override fun onCreate() = true
             override fun getType(uri: Uri) = "text/plain"
@@ -64,11 +68,14 @@ class ReaderEditIsolationRobolectricTest {
                     addRow(arrayOf<Any>("重命名授权.txt", File(original.sourcePath!!).length()))
                 }
             override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+            override fun call(method: String, arg: String?, extras: Bundle?): Bundle = throw SecurityException("No write grant")
             override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?) = 0
             override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?) = 0
         }
         provider.attachInfo(app, ProviderInfo().apply { this.authority = authority; exported = true })
         ShadowContentResolver.registerProviderInternal(authority, provider)
+        Shadows.shadowOf(app.packageManager).addResolveInfoForIntent(Intent(DocumentsContract.PROVIDER_INTERFACE),
+            ResolveInfo().apply { providerInfo = ProviderInfo().apply { this.authority = authority; exported = true } })
         openLibrary(original.copy(sourceUri = uri.toString()))
         assertTrue(vm.renameBook(original.id, "新的名字"))
         await { vm.pendingSourceWriteUri != null && !vm.importing }
@@ -82,6 +89,32 @@ class ReaderEditIsolationRobolectricTest {
         assertEquals("新的名字.txt", renamed.sourceFileName)
         assertEquals("第一章\n原始正文。", readChapterText(renamed.chapters.single()))
         assertEquals("新的名字", LibraryRepository(app).load().books.single().title)
+    }
+
+    @Test fun unsupportedRenameUsesVerifiedFolderAccessWithoutRepeatingTheFilePicker() {
+        val original = textBook("原文件", "第一章\n原始正文。")
+        val source = File(original.sourcePath!!)
+        val alias = RenameFolderTestProvider(source.parentFile!!, supported = false).register(app)
+        val folder = RenameFolderTestProvider(source.parentFile!!, supported = true).register(app)
+        val cached = File(app.filesDir, "original-chapter.txt").apply { writeText(source.readText()) }
+        openLibrary(original.copy(sourceUri = alias.uri(source.name).toString(),
+            chapters = listOf(original.chapters.single().copy(textPath = cached.path))))
+        assertTrue(vm.renameBook(original.id, "改好的书名"))
+        await { vm.pendingSourceRenameFolder != null && !vm.importing }
+        assertNull(vm.pendingSourceWriteUri)
+        assertEquals(0, alias.renameCalls)
+        assertEquals("原文件.txt", vm.pendingSourceRenameFolder!!.sourceName)
+        assertEquals(original.title, book(original.id).title)
+        vm.resumeSourceRenameFolder(folder.tree)
+        await { !vm.importing && book(original.id).title == "改好的书名" }
+        assertNull(vm.pendingSourceRenameFolder)
+        assertNull(vm.pendingSourceWriteUri)
+        assertEquals(1, folder.renameCalls)
+        assertFalse(source.exists())
+        assertEquals("改好的书名.txt", book(original.id).sourceFileName)
+        assertEquals("第一章\n原始正文。", openDocumentStream(app, book(original.id).sourceUri!!).reader().use { it.readText() })
+        assertEquals("第一章\n原始正文。", readChapterText(book(original.id).chapters.single()))
+        assertEquals("改好的书名", LibraryRepository(app).load().books.single().title)
     }
 
     @Test fun previewDoesNotReadUnopenedChaptersOrRebuildTheirCatalog() {

@@ -40,6 +40,18 @@ class BookDocumentContractsRobolectricTest {
         assertNull(contract.parseResult(Activity.RESULT_CANCELED, Intent().setData(source)))
     }
 
+    @Test fun renameFolderAuthorizationRequestsPersistentAccessToTheContainingFolder() {
+        val contract = GrantBookRenameFolder()
+        val intent = contract.createIntent(context, source.toString())
+        assertEquals(Intent.ACTION_OPEN_DOCUMENT_TREE, intent.action)
+        assertEquals(source, intent.getParcelableExtra<Uri>(DocumentsContract.EXTRA_INITIAL_URI))
+        assertWriteFlags(intent)
+        assertTrue(intent.flags and Intent.FLAG_GRANT_PREFIX_URI_PERMISSION != 0)
+        val tree = DocumentsContract.buildTreeDocumentUri("books.provider", "folder")
+        assertEquals(tree, contract.parseResult(Activity.RESULT_OK, Intent().setData(tree)))
+        assertNull(contract.parseResult(Activity.RESULT_CANCELED, Intent().setData(tree)))
+    }
+
     @Test fun retainingImportAccessIncludesWriteAccessForFutureEdits() {
         retainBookAccess(context, source)
         val permission = context.contentResolver.persistedUriPermissions.single { it.uri == source }
