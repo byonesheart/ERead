@@ -431,7 +431,7 @@ class CloudBackupService(
                 }
             }
             val settings = remapSettings(info.settings, ::font)
-            CloudRestoredBook(book, annotations, settings, info.group, info.backupAt, info.readingSeconds)
+            CloudRestoredBook(CloudDownloadLocation(context).publish(book, check), annotations, settings, info.group, info.backupAt, info.readingSeconds)
         } catch (error: Throwable) {
             // This directory belongs solely to this operation; previously readable files are untouched.
             if (staging.exists()) staging.deleteRecursively()

@@ -280,6 +280,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 prefs.edit().putBoolean("demo_seeded", true).apply()
             }
             loading = false
+            scanLocalSources()
             refreshCloudConfiguration()
             runCatching { refreshAiSpeechConfiguration() }
                 .onFailure { message = "AI 语音配置无法读取，请重新保存" }
@@ -399,7 +400,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 identicalExternalBook(application, state.books, request.uris.single())
             }
             if (known != null) {
-                if (request.id !in dismissedExternalOpens) open(state.books.firstOrNull { it.id == known.id } ?: known)
+                val retained = withContext(Dispatchers.IO) { retainExternalBookSource(application, known, request.uris.single()) }
+                changed(state.copy(books = state.books.map { if (it.id == known.id) retained else it }))
+                if (request.id !in dismissedExternalOpens) open(retained)
                 return
             }
         }
@@ -437,9 +440,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 val existing = state.books.firstOrNull { !request.external && !it.cloudOnly && info?.bytes != null &&
                     it.sourceFileName == info.name && it.sourceFileBytes == info.bytes }
                 if (existing != null) acceptBook(existing)
-                else taskImporter.importFiles(request.uris, request.mode, state.settings.chapterRule, request.mimeType, ::acceptBook)
+                else taskImporter.importFiles(request.uris, request.mode, state.settings.chapterRule, request.mimeType, forceCopy = request.external, onBookImported = ::acceptBook)
             }
-            notices += taskImporter.lastImportErrors + taskImporter.lastImportWarnings
+            notices += taskImporter.lastImportErrors + if (request.external) emptyList() else taskImporter.lastImportWarnings
             message = notices.takeIf { it.isNotEmpty() }?.joinToString("\n")
         } finally { progressJob.cancelAndJoin() }
     }
@@ -711,6 +714,34 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setTabletDualPage(enabled: Boolean) {
         if (storageReady) changed(state.copy(tabletDualPage = enabled))
+    }
+
+    var localSourceChangedIds by mutableStateOf<Set<String>>(emptySet())
+        private set
+    private var sourceScanJob: Job? = null
+    fun setScanLocalChanges(enabled: Boolean) {
+        if (!storageReady) return
+        changed(state.copy(scanLocalChanges = enabled))
+        scanLocalSources()
+    }
+    private fun scanLocalSources() {
+        sourceScanJob?.cancel()
+        if (!state.scanLocalChanges) { localSourceChangedIds = emptySet(); return }
+        val books = state.books.toList()
+        sourceScanJob = viewModelScope.launch {
+            val scanner = LocalSourceChanges(getApplication())
+            for (book in books) {
+                if (book.id in editingBookIds || hasBookDraft(book.id) || book.id in cloudTransfers) continue
+                val changed = try { withContext(Dispatchers.IO) {
+                    val work = kotlinx.coroutines.currentCoroutineContext()
+                    scanner.changed(book) { work.ensureActive() }
+                } } catch (cancelled: CancellationException) { throw cancelled }
+                  catch (_: Exception) { continue }
+                if (state.books.any { it.id == book.id && it.contentVersion == book.contentVersion && it.sourceUri == book.sourceUri } &&
+                    book.id !in editingBookIds && !hasBookDraft(book.id) && book.id !in cloudTransfers)
+                    localSourceChangedIds = if (changed) localSourceChangedIds + book.id else localSourceChangedIds - book.id
+            }
+        }
     }
 
     fun setShowRecentReading(enabled: Boolean) {

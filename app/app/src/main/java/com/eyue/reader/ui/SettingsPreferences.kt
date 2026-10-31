@@ -3,6 +3,9 @@ package com.eyue.reader.ui
 import com.eyue.reader.ui.AppIcon as Icon
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.eyue.reader.data.cloud.CloudDownloadLocation
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ScrollState
@@ -72,7 +75,7 @@ private enum class SettingsPage(val title: String) {
     onCheckUpdate: (suspend () -> AppUpdateResult)? = null,
     restoreProgress: CloudOperationProgress? = null, onAppTheme: (AppThemeStyle) -> Unit = {},
     availableUpdate: AppUpdateResult? = null, onShowRecentReading: (Boolean) -> Unit = {},
-    developerMode: Boolean = false, onEnableDeveloperMode: () -> Unit = {}) {
+    developerMode: Boolean = false, onEnableDeveloperMode: () -> Unit = {}, onScanLocalChanges: (Boolean) -> Unit = {}) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
     val page = pages.lastOrNull()
@@ -115,6 +118,9 @@ private enum class SettingsPage(val title: String) {
                         SettingsSeparator()
                         SettingsToggle("墨水屏模式", "高对比度显示，关闭翻页动画", state.einkMode, onEinkMode, "settings_eink_mode", Icons.Outlined.Contrast)
                         SettingsSeparator()
+                        SettingsToggle("启动时扫描本地修改", "后台检查源文件变化，在封面显示更新标识", state.scanLocalChanges, onScanLocalChanges,
+                            "settings_scan_local_changes", Icons.Outlined.Sync)
+                        SettingsSeparator()
                         SettingsToggle("平板横屏双页", "宽屏横向翻页时并排显示两页", state.tabletDualPage, onTabletDualPage, "settings_tablet_dual_page", Icons.AutoMirrored.Outlined.MenuBook)
                         SettingsSeparator()
                         SettingsLink(Icons.Outlined.Headphones, "朗读引擎", if (state.speechEngine == SpeechEngine.AI) "AI 语音" else "系统语音",
@@ -122,6 +128,8 @@ private enum class SettingsPage(val title: String) {
                     }
                     SettingsCard(Modifier.testTag("settings_services_card")) {
                         SettingsLink(Icons.Outlined.Cloud, "WebDAV 备份与还原", if (cloudConfigured) "已连接" else "未配置", "settings_cloud", { open(SettingsPage.CLOUD) })
+                        SettingsSeparator()
+                        SettingsLink(Icons.Outlined.Translate, "系统翻译应用", "", "settings_translation", { openReaderTranslationSettings(context) })
                         SettingsSeparator()
                         SettingsLink(Icons.Outlined.CleaningServices, "清理缓存", "", "settings_cache", { open(SettingsPage.CACHE) })
                         SettingsSeparator()
@@ -271,7 +279,15 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
     restoreProgress: CloudOperationProgress? = null) {
     var accountDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current.applicationContext
-    val downloadDirectory = remember(context) { File(context.filesDir, "books").absolutePath }
+    val downloadLocation = remember(context) { CloudDownloadLocation(context) }
+    var downloadDirectory by remember(context) { mutableStateOf(downloadLocation.label()) }
+    val downloadFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            retainBookAccess(context, uri)
+            downloadLocation.select(uri)
+            downloadDirectory = downloadLocation.label()
+        }
+    }
     SettingsCard {
         Column(Modifier.fillMaxWidth().padding(16.dp).testTag("cloud_settings"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             OutlinedButton(onClick = { accountDialog = true }, enabled = !busy,
@@ -300,7 +316,12 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
                     Text(downloadDirectory, style = MaterialTheme.typography.bodySmall, color = Muted,
                         modifier = Modifier.fillMaxWidth().testTag("cloud_download_directory"))
                 }
-                Text("应用内部存储，按书籍分别保存。", style = MaterialTheme.typography.bodySmall, color = Muted)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { downloadFolder.launch(downloadLocation.tree) }, modifier = Modifier.testTag("cloud_choose_download_directory")) { Text("修改目录") }
+                    TextButton(onClick = { downloadLocation.select(null); downloadDirectory = downloadLocation.label() },
+                        modifier = Modifier.testTag("cloud_reset_download_directory")) { Text("系统下载目录") }
+                }
+                Text("原文件保存至此处，阅读缓存留在应用内；仅影响后续下载。", style = MaterialTheme.typography.bodySmall, color = Muted)
             }
             if (configured) TextButton(onClick = onDisconnect, enabled = !busy, modifier = Modifier.align(Alignment.End).testTag("cloud_disconnect")) {
                 Text("解绑此账号")

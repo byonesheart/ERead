@@ -60,7 +60,7 @@ class DocumentImporter(private val context: Context) {
     }
 
     suspend fun importFiles(uris: List<Uri>, mode: LibraryMode, rule: String, mimeType: String? = null,
-                            onBookImported: suspend (Book) -> Unit = {}): List<Book> = withContext(Dispatchers.IO) {
+                            forceCopy: Boolean = false, onBookImported: suspend (Book) -> Unit = {}): List<Book> = withContext(Dispatchers.IO) {
         val work = currentCoroutineContext()
         importTask {
             if (mode == LibraryMode.NOVEL) TextParser.validateRule(rule)
@@ -103,11 +103,11 @@ class DocumentImporter(private val context: Context) {
                         report("读取源文件", item.name)
                         // Keep the complete EPUB, including fonts and resources,
                         // after a transient provider grant or an external file is removed.
-                        val reference = if (format in setOf(BookFormat.EPUB, BookFormat.MOBI)) {
+                        val reference = if (forceCopy || format in setOf(BookFormat.EPUB, BookFormat.MOBI)) {
                             val original = File(directory, "source.${format.name.lowercase()}")
                             timing.measure("copy") { copy(item.uri, original) { work.ensureActive() } }
                             SourceReference(original.absolutePath, false)
-                        } else reference(item, directory, "source.${format.name.lowercase()}", retainFallback = format == BookFormat.PDF)
+                        } else reference(item, directory, "source.${format.name.lowercase()}", retainFallback = format in setOf(BookFormat.PDF, BookFormat.TXT))
                         val imported = withLocalDocument(context, reference.path) { source ->
                             val parsed = when (format) {
                                 BookFormat.TXT -> importText(source, directory, id, item.name.substringBeforeLast('.'), LibraryMode.NOVEL, rule)

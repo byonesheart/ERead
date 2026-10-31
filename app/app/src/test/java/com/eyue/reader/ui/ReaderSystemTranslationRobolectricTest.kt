@@ -40,6 +40,35 @@ class ReaderSystemTranslationRobolectricTest {
         assertEquals("此设备未提供可调用的系统翻译", ShadowToast.getTextOfLatestToast())
     }
 
+    @Test fun multipleTranslatorsOfferARememberedDefaultAndSettingsCanChangeIt() {
+        val activity = org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup().get()
+        activity.getSharedPreferences("reader_translation", 0).edit().clear().commit()
+        for (name in listOf("first", "second")) {
+            val resolver = ResolveInfo().apply { activityInfo = ActivityInfo().apply {
+                packageName = "test.$name"; this.name = "Translator"; exported = true
+            } }
+            shadowOf(activity.packageManager).addResolveInfoForIntent(readerTranslationIntent("文字"), resolver)
+        }
+        openReaderTranslation(activity, "文字")
+        val dialog = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog()
+        assertTrue(dialog.isShowing)
+        dialog.listView.performItemClick(null, 1, 1)
+        fun checkbox(view: android.view.View): android.widget.CheckBox? = when (view) {
+            is android.widget.CheckBox -> view
+            is android.view.ViewGroup -> (0 until view.childCount).firstNotNullOfOrNull { checkbox(view.getChildAt(it)) }
+            else -> null
+        }
+        checkbox(dialog.window!!.decorView)!!.isChecked = true
+        dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick()
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertEquals("test.second", shadowOf(activity).nextStartedActivity.component!!.packageName)
+        openReaderTranslation(activity, "再次选字")
+        assertEquals("test.second", shadowOf(activity).nextStartedActivity.component!!.packageName)
+        openReaderTranslationSettings(activity)
+        assertTrue(org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog().isShowing)
+        activity.finish()
+    }
+
     @Test fun processTextFallbackExcludesBrowsersAndUsesOnlyTheSystemTranslator() {
         val context = RuntimeEnvironment.getApplication()
         val intent = Intent(Intent.ACTION_PROCESS_TEXT).setType("text/plain")

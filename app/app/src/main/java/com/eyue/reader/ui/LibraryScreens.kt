@@ -340,10 +340,12 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                                 onCloud?.let { { it(book) } }, cloudBusy || transfer(book) != null, transfer(book) != null,
                                 transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
                                 onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds)
-                            Surface(Modifier.align(Alignment.TopStart).padding(8.dp), shape = appShape(5.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .9f)) {
-                                if (selectingBackup) Checkbox(book.id in backupSelection, { selectBackup(book) },
-                                    modifier = Modifier.testTag("backup_select_${book.id}"))
-                                else Text(if (book.isDemo) "示例" else book.format.name, fontSize = 9.sp, color = Olive, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
+                            if (selectingBackup || book.id !in LocalSourceChangeIds.current) {
+                                Surface(Modifier.align(Alignment.TopStart).padding(8.dp), shape = appShape(5.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .9f)) {
+                                    if (selectingBackup) Checkbox(book.id in backupSelection, { selectBackup(book) },
+                                        modifier = Modifier.testTag("backup_select_${book.id}"))
+                                    else Text(if (book.isDemo) "示例" else book.format.name, fontSize = 9.sp, color = Olive, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
+                                }
                             }
                             if (!selectingBackup) ShelfMoreButton(book, Modifier.align(Alignment.TopEnd).padding(8.dp)
                                 .background(MaterialTheme.colorScheme.surface.copy(alpha = .9f), CircleShape),
@@ -504,6 +506,9 @@ private const val UNGROUPED_FILTER = "@ungrouped"
         val speechCacheBytes by produceState<Long?>(null, book.id, book.mode, speechCacheRevision) {
             if (book.mode == LibraryMode.NOVEL) value = withContext(Dispatchers.IO) { AiSpeechCache(context).bytes(book.id) }
         }
+        val storageBytes by produceState<Long?>(null, book.id, book.contentVersion, speechCacheRevision) {
+            value = localBookStorageBytes(context, book)
+        }
         val characterCount by produceState<Result<Long>?>(null, book.id, book.contentVersion, book.chapters, book.cloudOnly) {
             if (!book.cloudOnly) value = try { Result.success(bookCharacterCount(book)) }
             catch (error: CancellationException) { throw error }
@@ -514,6 +519,10 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 Text("作者：${book.displayAuthor}")
                 Text("格式：${book.format.name}${if (book.isDemo) " · 原创示例" else ""}")
                 Text("目录：${book.chapters.size} 章")
+                Text("书籍文件：" + (book.sourceFileBytes?.let { android.text.format.Formatter.formatShortFileSize(context, it) } ?: "未知"),
+                    modifier = Modifier.testTag("book_source_size"))
+                Text("应用占用（含缓存）：" + (storageBytes?.let { android.text.format.Formatter.formatShortFileSize(context, it) } ?: "统计中…"),
+                    modifier = Modifier.testTag("book_storage_size"))
                 Text("总字数：" + when {
                     book.cloudOnly -> "下载后统计"
                     characterCount == null -> "统计中…"
@@ -695,9 +704,19 @@ private const val UNGROUPED_FILTER = "@ungrouped"
     }
 }
 
+internal val LocalSourceChangeIds = staticCompositionLocalOf<Set<String>> { emptySet() }
+internal val LocalSourceReimport = staticCompositionLocalOf<(Book) -> Unit> { {} }
+
 @Composable fun BookCover(book: Book, modifier: Modifier = Modifier, onCloud: (() -> Unit)? = null,
     cloudBusy: Boolean = false, cloudInProgress: Boolean = false, cloudTaskLabel: String = "", cloudFraction: Float? = null,
     onCancelCloud: (() -> Unit)? = null, cloudCanCancel: Boolean = false, cloudDirty: Boolean = false) {
+    var showSourceChange by remember(book.id) { mutableStateOf(false) }
+    val reimportSource = LocalSourceReimport.current
+    if (showSourceChange) AlertDialog(onDismissRequest = { showSourceChange = false }, title = { Text("源文件已修改") },
+        text = { Text("书架中的副本和阅读记录尚未更改。重新导入后，可在同名书籍确认中选择保留的版本。") },
+        confirmButton = { TextButton(onClick = { showSourceChange = false; reimportSource(book) }) { Text("重新导入") } },
+        dismissButton = { TextButton(onClick = { showSourceChange = false }) { Text("关闭") } })
+    val sourceChanged = book.id in LocalSourceChangeIds.current
     val bitmap by rememberBookCoverBitmap(book)
     val colors = listOf(Color(0xFF63705D), Color(0xFF7F8972), Color(0xFF6E8290), Color(0xFF9A816A))
     val base = colors[(book.title.hashCode() and Int.MAX_VALUE) % colors.size]
@@ -714,6 +733,12 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 Text("E READ  /  ${book.format.name}", color = Color.White.copy(alpha = .55f), fontSize = 7.sp, letterSpacing = 1.sp)
                 Text(book.title, color = Color.White, fontFamily = FontFamily.Serif, fontSize = 19.sp, maxLines = 4, overflow = TextOverflow.Ellipsis, lineHeight = 27.sp)
                 Text(book.displayAuthor, color = Color.White.copy(alpha = .65f), fontSize = 8.sp)
+            }
+        }
+        if (sourceChanged) Surface(Modifier.align(Alignment.TopStart).padding(3.dp), shape = CircleShape,
+            color = MaterialTheme.colorScheme.surface.copy(alpha = .95f)) {
+            IconButton(onClick = { showSourceChange = true }, modifier = Modifier.size(30.dp).testTag("local_source_changed_${book.id}")) {
+                Icon(Icons.Outlined.Sync, "源文件有修改", Modifier.size(19.dp), tint = Olive)
             }
         }
         if (book.cloudOnly) Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface.copy(alpha = .22f))

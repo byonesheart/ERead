@@ -157,6 +157,18 @@ class EbookSourceDocumentRobolectricTest {
         assertArrayEquals(bytes, source.readBytes())
     }
 
+    @Test fun finishingADraftWithoutChapterManifestsCannotReuseTheLivePreviewPage() = runBlocking {
+        val book = epubBook(epubFixture(includeImage = false))
+        assertTrue(book.chapters.all { it.lazySourcePath == null })
+        EbookSourceStore(context, book, preview = true).use { preview ->
+            EbookSourceStore(context, book, preview = false).use { saved ->
+                assertNotEquals(preview.continuousKey, saved.continuousKey)
+                val text = text(book, 1)
+                assertNotEquals(preview.load(1, text).key, saved.load(1, text).key)
+            }
+        }
+    }
+
     @Test fun linkedCssImportsFontSvgAndImageResolveFromTheirOriginalVirtualDirectories() = runBlocking {
         val book = epubBook(epubFixture())
         val store = store(book)

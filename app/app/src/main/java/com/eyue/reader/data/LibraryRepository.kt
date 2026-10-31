@@ -53,6 +53,7 @@ class LibraryRepository(private val context: Context) {
                 tabletDualPage = json.optBoolean("tabletDualPage", false),
                 appTheme = enumValue(json.optString("appTheme"), AppThemeStyle.CLASSIC),
                 showRecentReading = json.optBoolean("showRecentReading", true),
+                scanLocalChanges = json.optBoolean("scanLocalChanges", false),
                 commonVoiceRoles = if (json.has("commonVoiceRoles")) json.array("commonVoiceRoles").objects().map(BookVoiceRole::fromJson)
                     else defaultCommonVoiceRoles()
             )
@@ -81,6 +82,7 @@ class LibraryRepository(private val context: Context) {
             .put("einkMode", state.einkMode).put("tabletDualPage", state.tabletDualPage)
             .put("appTheme", state.appTheme.name)
             .put("showRecentReading", state.showRecentReading)
+            .put("scanLocalChanges", state.scanLocalChanges)
             .put("commonVoiceRoles", JSONArray(state.commonVoiceRoles.map { it.toJson() }))
         val output = stateFile.startWrite()
         try {

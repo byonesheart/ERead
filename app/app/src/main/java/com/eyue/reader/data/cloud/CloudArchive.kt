@@ -8,7 +8,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
-internal const val CLOUD_METADATA_LIMIT = 16 * 1024 * 1024
+internal const val CLOUD_METADATA_LIMIT = 64 * 1024 * 1024
 internal const val CLOUD_ARCHIVE_LIMIT = 32L * 1024 * 1024 * 1024
 internal const val CLOUD_PART_BYTES = 1024L * 1024
 internal const val CLOUD_LEGACY_PART_BYTES = 128L * 1024 * 1024
@@ -67,7 +67,7 @@ internal object CloudArchive {
                     records += CloudAssetRecord(asset.name, size, hex(digest.digest()))
                 }
                 val bytes = metadata(records)
-                require(bytes.size <= CLOUD_METADATA_LIMIT) { "图书记录过大，无法备份" }
+                require(bytes.size <= CLOUD_METADATA_LIMIT) { "图书排版与注释记录超过 64 MB，无法备份；书籍文件大小不受此限制" }
                 zip.putNextEntry(ZipEntry("metadata.json"))
                 zip.write(bytes)
                 zip.closeEntry()

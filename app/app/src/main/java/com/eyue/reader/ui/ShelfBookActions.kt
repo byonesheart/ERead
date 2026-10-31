@@ -121,7 +121,7 @@ internal fun bookStorageLocation(book: Book): String = when {
     book.cloudOnly -> "云端，尚未下载到本机"
     book.isDemo -> "应用内置示例"
     book.sourceLinked -> book.sourceUri ?: book.sourcePath ?: "原文件位置不可用"
-    else -> book.sourcePath ?: book.sourceUri ?: "本地文件位置不可用"
+    else -> book.sourceUri ?: book.sourcePath ?: "本地文件位置不可用"
 }
 
 @Composable private fun ShelfQuickAction(icon: ImageVector, label: String, color: Color, modifier: Modifier = Modifier,

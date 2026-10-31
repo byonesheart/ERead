@@ -548,6 +548,12 @@ class EbookSourceWritebackRobolectricTest {
             val saveFolder = folder("save-mobi-$pass")
             val transaction = EbookSourceWriteback.prepare(context, book, draft, saveFolder)
             val saved = saveEditedChapterSources(draft, saveFolder) {}
+            EbookSourceStore(context, draft, preview = true).use { previewStore ->
+                EbookSourceStore(context, saved).use { savedStore ->
+                    assertNotEquals(previewStore.continuousKey, savedStore.continuousKey)
+                    assertNotEquals(previewStore.load(0, edit.text).key, savedStore.load(0, edit.text).key)
+                }
+            }
             transaction.commit(); transaction.finish()
             book = repository.readBook(repository.writeBook(saved))
             EbookSourceStore(context, book).use { store ->

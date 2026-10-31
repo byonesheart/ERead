@@ -51,6 +51,9 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
     val systemDark = isSystemInDarkTheme()
     SideEffect { vm.updateSystemTheme(systemDark) }
     val dark = vm.state.themeMode.isDark(systemDark)
+    CompositionLocalProvider(LocalSourceChangeIds provides vm.localSourceChangedIds, LocalSourceReimport provides { book ->
+        (book.sourceUri ?: book.sourcePath)?.let { vm.importFiles(listOf(android.net.Uri.parse(it)), book.mode) }
+    }) {
     EReadTheme(dark = dark, eink = vm.state.einkMode, style = vm.state.appTheme) {
         val state = vm.state.withResolvedTheme(systemDark)
         val settings = vm.readerSettings.copy(nightMode = dark)
@@ -98,10 +101,22 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
         var selectedImportMode by rememberSaveable { mutableStateOf(vm.mode) }
         var selectedFontMode by rememberSaveable { mutableStateOf(vm.mode) }
         var selectedBackgroundMode by rememberSaveable { mutableStateOf(vm.mode) }
+        var pendingLegacyDownloads by remember { mutableStateOf<List<Book>>(emptyList()) }
+        val legacyDownloadPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val targets = pendingLegacyDownloads; pendingLegacyDownloads = emptyList()
+            if (granted) targets.forEach(vm::downloadCloudBook)
+            else vm.message = "未获得下载目录写入权限，可在 WebDAV 设置中另选文件夹"
+        }
         fun cloudBook(target: Book) {
             if (!vm.cloudConfigured) {
                 tab = 2
                 vm.message = "请先在设置中配置 WebDAV 网盘"
+            } else if (target.cloudOnly && Build.VERSION.SDK_INT <= 28 &&
+                com.eyue.reader.data.cloud.CloudDownloadLocation(context).tree == null &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                val requestPermission = pendingLegacyDownloads.isEmpty()
+                pendingLegacyDownloads = (pendingLegacyDownloads + target).distinctBy { it.id }
+                if (requestPermission) legacyDownloadPermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             } else if (target.cloudOnly) vm.downloadCloudBook(target)
             else vm.uploadCloudBook(target)
         }
@@ -347,7 +362,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                     onEinkMode = vm::setEinkMode, onTabletDualPage = vm::setTabletDualPage,
                                     restoreProgress = vm.cloudRestoreProgress,
                                     onAppTheme = vm::setAppTheme, availableUpdate = updateSession.availableUpdate,
-                                    onCheckUpdate = updateSession::checkNow, onShowRecentReading = vm::setShowRecentReading,
+                                    onCheckUpdate = updateSession::checkNow, onShowRecentReading = vm::setShowRecentReading, onScanLocalChanges = vm::setScanLocalChanges,
                                     developerMode = updateSession.developerMode, onEnableDeveloperMode = {
                                         runCatching { developerPreferences.enable() }.onSuccess {
                                             updateSession.configureDeveloperMode(true)
@@ -432,6 +447,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             onCancel = { leavingDraftIds = emptyList() },
             preparing = leavingDraftIds.any { it in vm.editingBookIds && it !in vm.bookSaveProgress },
             progress = leavingDraftIds.firstNotNullOfOrNull { vm.bookSaveProgress[it] })
+    }
     }
 }
 

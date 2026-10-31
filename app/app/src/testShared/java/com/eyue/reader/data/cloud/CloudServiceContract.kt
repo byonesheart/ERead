@@ -265,7 +265,10 @@ abstract class CloudServiceContract {
         val restored = service.download(listed)
         assertFalse(restored.book.cloudOnly)
         assertFalse(restored.book.sourceLinked)
-        assertNull(restored.book.sourceUri)
+        assertNotNull(restored.book.sourceUri)
+        com.eyue.reader.data.openDocumentStream(context(), requireNotNull(restored.book.sourceUri)).use {
+            assertEquals("mock original bytes", it.readBytes().toString(Charsets.UTF_8))
+        }
         assertEquals(book.progress, restored.book.progress)
         assertEquals(book.characterOffset, restored.book.characterOffset)
         assertEquals("mock original bytes", File(restored.book.sourcePath!!).readText())
@@ -522,7 +525,7 @@ abstract class CloudServiceContract {
         assertEquals(listOf(-1, 0, 1), restored.chapters[0].pages.map { it.pdfPage })
         assertEquals(restored.chapters[0].pages[1].path, restored.chapters[0].pages[2].path)
         assertEquals(book.chapters[0].subsections, restored.chapters[0].subsections)
-        assertArrayEquals(byteArrayOf(4, 5, 6), File(restored.chapters[0].pages[1].path).readBytes())
+        assertArrayEquals(byteArrayOf(4, 5, 6), com.eyue.reader.data.openDocumentStream(context(), restored.chapters[0].pages[1].path).use { it.readBytes() })
     }
 
     private fun largeSource(book: Book): File = File(book.sourcePath!!).apply {

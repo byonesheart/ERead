@@ -31,6 +31,14 @@ class CloudArchiveTest {
         assertArrayEquals(image, File(output, "assets/page.png").readBytes())
     }
 
+    @Test fun recordsLargerThanThePreviousSixteenMegabyteBudgetRoundTripInTheExistingFormat() = directory { root ->
+        val archive = File(root, "large-records.zip")
+        val metadata = ("{\"version\":1,\"records\":\"" + "n".repeat(17 * 1024 * 1024) + "\"}").toByteArray()
+        assertTrue(metadata.size > 16 * 1024 * 1024 && metadata.size < CLOUD_METADATA_LIMIT)
+        val records = CloudArchive.write(archive, emptyList(), { metadata })
+        assertArrayEquals(metadata, CloudArchive.extract(archive, File(root, "restored"), records))
+    }
+
     @Test fun pathsRejectTraversalAbsoluteUrlsAndEmptySegments() {
         for (name in listOf("../outside", "/outside", "assets/../outside", "assets//page", "assets/./page", "C:/outside", "assets\\page", "https://evil/path", "assets/page\u0000")) {
             assertThrows(IllegalArgumentException::class.java) { CloudArchive.safeName(name) }

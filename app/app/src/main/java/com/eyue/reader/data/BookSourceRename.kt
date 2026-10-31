@@ -88,6 +88,15 @@ internal class BookSourceRename(private val context: Context, private val origin
             return if (Uri.parse(source).scheme == "file") Uri.fromFile(target).toString() else target.absolutePath
         }
         val uri = Uri.parse(source)
+        if (uri.authority == "media" && com.eyue.reader.data.cloud.CloudDownloadLocation(context).owns(source)) {
+            try {
+                val changed = context.contentResolver.update(uri, android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
+                }, null, null)
+                if (changed > 0) return source
+            } catch (_: SecurityException) { throw SourceRenameFolderRequiredException(source) }
+            throw SourceRenameFolderRequiredException(source)
+        }
         if (!DocumentsContract.isDocumentUri(context, uri)) throw SourceRenameFolderRequiredException(source)
         val flags = documentSourceFileInfo(context, source)?.flags
         if (flags != null && flags and DocumentsContract.Document.FLAG_SUPPORTS_RENAME == 0)

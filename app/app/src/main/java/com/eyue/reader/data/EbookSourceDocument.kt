@@ -41,7 +41,8 @@ internal class EbookSourceStore(private val context: Context, private val book: 
         ?: if (book.format == BookFormat.TXT) "" else throw IOException("原文件不存在，请重新选择这本书")
     private val bookKey = digest(book.id).take(24)
     private val origin = "https://eread.local/$bookKey/"
-    val continuousKey: String get() = "$bookKey:${book.contentVersion}:continuous"
+    private val displayRevision = digest(preview.toString() + ":" + book.chapters.joinToString("|") { "${it.textPath}:${it.lazySourcePath}" }).take(16)
+    val continuousKey: String get() = "$bookKey:${book.contentVersion}:$displayRevision:continuous"
     val continuousUrl: String get() = origin + "continuous.html"
     private val sourceLock = Any()
     private val temporarySource = File(context.cacheDir, "document-sources/ebook-$bookKey-${UUID.randomUUID()}.tmp")
@@ -121,7 +122,7 @@ internal class EbookSourceStore(private val context: Context, private val book: 
             worker.ensureActive()
             check(!closed) { "原书阅读资源已经关闭" }
             val path = savedSource?.optString("archivePath")?.takeIf(String::isNotBlank) ?: row.getString("path")
-            val document = EbookSourceDocument("$bookKey:${book.contentVersion}:$chapterIndex:${digest(canonicalText)}", html,
+            val document = EbookSourceDocument("$bookKey:${book.contentVersion}:$displayRevision:$chapterIndex:${digest(canonicalText)}", html,
                 origin + "archive/" + EpubArchive.safePath(path).split('/').joinToString("/") { encodeSegment(it) }, canonicalText, notes)
             synchronized(documents) {
                 if (window?.contains(chapterIndex) != false) documents[chapterIndex] = document
