@@ -231,7 +231,10 @@ try {
     await page.touchscreen.tap(190, 450);
     const touched = await page.evaluate(() => scrollY);
     await page.waitForTimeout(250);
-    assert.equal(await page.evaluate(() => scrollY), touched);
+    assert.ok(await page.evaluate(() => scrollY) > touched + 10, 'A tap must keep automatic scrolling running');
+    assert.equal(await page.evaluate(() => events.filter(e => e.type === 'manualStart').length), 0);
+    await page.mouse.wheel(0, 80);
+    await page.waitForTimeout(180);
     assert.ok(await page.evaluate(() => events.some(e => e.type === 'manualStart')));
     await command({ type: 'navigate', lastPage: true, offset: 0 });
     await page.evaluate(() => { window.events = []; ERead.command({ type: 'autoScroll', speed: 64 }); });
@@ -1157,6 +1160,22 @@ try {
       assert.equal((await viewport()).page,3);
       assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='manualStart').length),0);
     }
+  });
+
+  await test('selection-menu-reports-after-releasing-the-long-press', async () => {
+    await open({mode:'PAGED'});
+    const session = await page.context().newCDPSession(page);
+    await session.send('Input.dispatchTouchEvent', {type:'touchStart',touchPoints:[{x:120,y:180}]});
+    await page.evaluate(() => {
+      window.events=[];
+      const text=document.getElementById('intro').firstChild, range=document.createRange();
+      range.setStart(text,3); range.setEnd(text,12); getSelection().removeAllRanges(); getSelection().addRange(range);
+    });
+    await session.send('Input.dispatchTouchEvent', {type:'touchEnd',touchPoints:[]});
+    await page.waitForFunction(()=>events.some(e=>e.type==='selection' && e.end>e.start));
+    const selected=await page.evaluate(()=>events.findLast(e=>e.type==='selection' && e.end>e.start));
+    assert.equal(canonical.substring(selected.start,selected.end),canonicalParts[1].substring(3,12));
+    await session.detach();
   });
 
   if (startupManifest) await test('provided-actual-import-trusted-document-startup', async () => {

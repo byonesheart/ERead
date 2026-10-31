@@ -32,7 +32,7 @@ internal fun ReaderDraftSaveAction(progress: BookSaveProgress?, busy: Boolean, o
 
 @Composable
 internal fun ReaderUnsavedChangesDialog(titles: List<String>, saving: Boolean, onSave: () -> Unit,
-    onDiscard: () -> Unit, onCancel: () -> Unit, preparing: Boolean = false) {
+    onDiscard: () -> Unit, onCancel: () -> Unit, preparing: Boolean = false, progress: BookSaveProgress? = null) {
     AlertDialog(onDismissRequest = { if (!saving) onCancel() },
         modifier = Modifier.testTag("reader_unsaved_dialog"),
         title = { Text("有未保存的正文修改") },
@@ -40,9 +40,12 @@ internal fun ReaderUnsavedChangesDialog(titles: List<String>, saving: Boolean, o
             Text(titles.joinToString("、") { "《$it》" })
             Text("保存后再离开，或放弃本次修改。")
             Text("放弃会还原正文和阅读位置，并丢弃预览期间新增或修改的标注。", style = MaterialTheme.typography.bodySmall)
-            if (saving) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                Text(if (preparing) "正在应用修改…" else "正在保存…")
+            if (saving) Column(Modifier.fillMaxWidth().testTag("reader_unsaved_progress"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                val fraction = progress?.fraction
+                if (fraction == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+                else LinearProgressIndicator(progress = { fraction.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+                Text((progress?.stage ?: if (preparing) "正在准备修改…" else "正在保存…") +
+                    (fraction?.let { " ${(it.coerceIn(0f, 1f) * 100).toInt()}%" } ?: ""))
             }
         } },
         confirmButton = { TextButton(onClick = onSave, enabled = !saving,

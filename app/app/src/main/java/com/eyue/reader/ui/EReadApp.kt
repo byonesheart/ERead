@@ -412,7 +412,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             onSave = { saveBeforeLeaving(leavingDraftIds.filter(vm::hasBookDraft)) },
             onDiscard = { leavingDraftIds.forEach(vm::discardBookDraft); finishLeaving() },
             onCancel = { leavingDraftIds = emptyList() },
-            preparing = leavingDraftIds.any { it in vm.editingBookIds && it !in vm.bookSaveProgress })
+            preparing = leavingDraftIds.any { it in vm.editingBookIds && it !in vm.bookSaveProgress },
+            progress = leavingDraftIds.firstNotNullOfOrNull { vm.bookSaveProgress[it] })
     }
 }
 

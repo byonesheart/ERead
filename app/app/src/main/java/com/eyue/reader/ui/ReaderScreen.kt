@@ -184,8 +184,8 @@ internal fun ReaderScreen(
         !importedBook.isDemo && importedBook.format in setOf(BookFormat.EPUB, BookFormat.MOBI) &&
             (!importedBook.sourcePath.isNullOrBlank() || !importedBook.sourceUri.isNullOrBlank()))
     val ebookStore = remember(sourceEbook, importedBook.id, importedBook.contentVersion, importedBook.sourcePath,
-        importedBook.sourceUri, importedBook.sourceLinked, importedBook.chapters) {
-        if (sourceEbook) EbookSourceStore(context, importedBook) else null
+        importedBook.sourceUri, importedBook.sourceLinked, importedBook.chapters, hasUnsavedText) {
+        if (sourceEbook) EbookSourceStore(context, importedBook, preview = hasUnsavedText) else null
     }
     DisposableEffect(ebookStore) { onDispose { ebookStore?.close() } }
     val ebookController = remember(importedBook.id, ebookStore) { EbookReaderController() }
@@ -1038,7 +1038,7 @@ internal fun ReaderScreen(
           catch (error: Exception) { documentReadError = error.message ?: "书籍正文读取失败" }
     }
     LaunchedEffect(ebookStore, document != null, chapterIndex, readerForeground, manualDrag, progressDraft != null, ebookViewport.ready, layoutState.preparing) {
-        if (!sourceEbook || importedBook.chapters.all { it.characterCount >= 0 } || document == null || !readerForeground || manualDrag || progressDraft != null || !ebookViewport.ready || layoutState.preparing) return@LaunchedEffect
+        if (hasUnsavedText || !sourceEbook || importedBook.chapters.all { it.characterCount >= 0 } || document == null || !readerForeground || manualDrag || progressDraft != null || !ebookViewport.ready || layoutState.preparing) return@LaunchedEffect
         // Current/adjacent pages get first use of IO/CPU. Completed chapters survive cancellation on disk.
         delay(1500)
         try {
@@ -1148,6 +1148,7 @@ internal fun ReaderScreen(
         }
         try {
             read(target)
+            if (hasUnsavedText) return@LaunchedEffect
             for (nearby in listOf(target + 1, target - 1).filter { it in importedBook.chapters.indices }) {
                 try { read(nearby) }
                 catch (cancelled: CancellationException) { throw cancelled }
@@ -1159,7 +1160,7 @@ internal fun ReaderScreen(
     LaunchedEffect(ebookStore, chapterIndex, ebookViewport.ready, document?.readyChapters) {
         val source = ebookStore ?: return@LaunchedEffect
         val loaded = document ?: return@LaunchedEffect
-        if (!ebookViewport.ready) return@LaunchedEffect
+        if (hasUnsavedText || !ebookViewport.ready) return@LaunchedEffect
         source.retainWindow(chapterIndex)
         for (nearby in listOf(chapterIndex + 1, chapterIndex - 1).filter { it in loaded.readyChapters }) {
             try { source.load(nearby, loaded.text[nearby]) }
@@ -1482,7 +1483,7 @@ internal fun ReaderScreen(
                             selectedPassage = null; tappedNoteIds = emptyList(); selectionReset++
                             annotationAnchor = anchor; tappedSourceFootnote = note; chromeVisible = false
                         })
-                    if (ebookViewport.ready) EbookChapterPreloads(requireNotNull(ebookStore), renderChapters,
+                    if (ebookViewport.ready && !hasUnsavedText) EbookChapterPreloads(requireNotNull(ebookStore), renderChapters,
                         renderDocument.text, renderDocument.readyChapters, chapterIndex, settings, annotations, foreground,
                         dualPage, einkMode, chineseConverter, ebookSession)
                     }
@@ -1697,7 +1698,7 @@ internal fun ReaderScreen(
                     .testTag("reader_auto_bar").onSizeChanged { autoControlsHeight = it.height }) {
                 ReaderAutoControls(requestedSettings, onSettings, autoReading, onStart = {
                     stopSpeech(); autoReading = true; autoPaused = false; autoControlsVisible = false; chromeVisible = false
-                }, onStop = { autoReading = false; autoControlsVisible = false }, onDismiss = { autoControlsVisible = false; if (autoReading) chromeVisible = false })
+                }, onStop = { autoReading = false; autoControlsVisible = false })
             }
         }
         if (chromeVisible && !autoControlsVisible && speechSession.active && selectedPassage == null && txtSelection == null) {

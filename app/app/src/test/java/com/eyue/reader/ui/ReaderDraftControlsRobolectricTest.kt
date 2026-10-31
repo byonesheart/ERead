@@ -39,11 +39,13 @@ class ReaderDraftControlsRobolectricTest {
         compose.setContent {
             MaterialTheme {
                 ReaderUnsavedChangesDialog(listOf("手动保存"), saving = true,
-                    onSave = { actions++ }, onDiscard = { actions++ }, onCancel = { actions++ })
+                    onSave = { actions++ }, onDiscard = { actions++ }, onCancel = { actions++ },
+                    progress = BookSaveProgress("写入原文件", .42f))
             }
         }
         compose.onNodeWithTag("reader_unsaved_dialog").assertIsDisplayed()
-        compose.onNodeWithText("正在保存…").assertIsDisplayed()
+        compose.onNodeWithTag("reader_unsaved_progress").assertIsDisplayed()
+        compose.onNodeWithText("写入原文件 42%").assertIsDisplayed()
         compose.onNodeWithTag("reader_unsaved_save").assertIsNotEnabled()
         compose.onNodeWithTag("reader_unsaved_discard").assertIsNotEnabled()
         compose.onNodeWithTag("reader_unsaved_cancel").assertIsNotEnabled()

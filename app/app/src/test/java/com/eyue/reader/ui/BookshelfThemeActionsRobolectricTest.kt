@@ -103,6 +103,10 @@ class BookshelfThemeActionsRobolectricTest {
         compose.onNodeWithTag("shelf_rename_save").performClick()
         compose.runOnIdle { assertEquals("新的书名", renamed); dark = true }
         compose.onNodeWithTag("shelf_book_title_book1").performTouchInput { longClick() }
+        compose.onNodeWithTag("shelf_rename_title").assertIsDisplayed()
+        compose.onNodeWithTag("book_action_sheet").assertDoesNotExist()
+        compose.onNodeWithText("取消").performClick()
+        compose.onNodeWithTag("shelf_book_cover_book1", useUnmergedTree = true).performTouchInput { longClick() }
         compose.onNodeWithTag("book_action_sheet").assertIsDisplayed()
         capture("shelf-actions-${style.name.lowercase()}-dark", dialog = true)
         compose.onNodeWithText("移动分组").performClick()

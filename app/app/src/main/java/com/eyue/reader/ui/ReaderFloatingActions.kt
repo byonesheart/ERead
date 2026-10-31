@@ -34,7 +34,7 @@ internal fun ReaderFloatingActions(autoActive: Boolean, speechActive: Boolean, o
 
 @Composable
 internal fun ReaderAutoControls(settings: ReaderSettings, onSettings: (ReaderSettings) -> Unit, enabled: Boolean,
-    onStart: () -> Unit, onStop: () -> Unit, onDismiss: () -> Unit) {
+    onStart: () -> Unit, onStop: () -> Unit) {
     Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
         val scroll = settings.readingMode == ReadingMode.SCROLL
         Text(if (scroll) "自动滚动" else "自动翻页", style = MaterialTheme.typography.titleSmall)
@@ -43,7 +43,6 @@ internal fun ReaderAutoControls(settings: ReaderSettings, onSettings: (ReaderSet
         else ReaderAdjustableSlider("间隔", "自动翻页间隔", settings.autoPageSeconds, 2f..120f, 1f,
             { onSettings(settings.copy(autoPageSeconds = it)) }, { "${it.roundToInt()}秒" })
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = onDismiss) { Text("关闭") }
             if (enabled) TextButton(onClick = onStop, modifier = Modifier.testTag("reader_auto_stop")) { Text("停止") }
             TextButton(onClick = onStart, modifier = Modifier.testTag("reader_auto_start")) { Text(if (enabled) "继续" else "开始") }
         }

@@ -161,7 +161,7 @@ import java.util.Locale
             Text(book.title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = if (xingcai) 2 else 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.testTag("shelf_book_title_${book.id}").then(if (onRename == null && !shelfLayout) Modifier else
                     Modifier.combinedClickable(onClick = onOpen,
-                        onLongClick = longPress)))
+                        onLongClick = onRename)))
             Text(listOf(book.displayAuthor, chapterLabel(book)).filter { it.isNotBlank() }.joinToString(" · "),
                 color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (xingcai) {
@@ -356,7 +356,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                                 .height(with(androidx.compose.ui.platform.LocalDensity.current) { 40.sp.toDp() })
                                 .testTag("shelf_book_title_${book.id}").combinedClickable(
                                 onClick = { if (selectingBackup) selectBackup(book) else onOpen(book) },
-                                onLongClick = { if (!selectingBackup) actionBookId = book.id }))
+                                onLongClick = { if (!selectingBackup && onRenameBook != null) rename(book) }))
                         Text(book.displayAuthor, fontSize = 10.sp, color = Muted,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp).testTag("shelf_book_author_${book.id}"))
                         Text("第 ${book.chapterIndex + 1} / ${book.chapters.size} 章", fontSize = 10.sp, maxLines = 1,
@@ -383,7 +383,8 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                         HistoryRow(book, { if (selectingBackup) selectBackup(book) else onOpen(book) }, onCloud?.let { { it(book) } }, cloudBusy || transfer(book) != null,
                             transfer(book) != null, transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
                             onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds,
-                            shelfLayout = true, onMore = if (!selectingBackup) { { actionBookId = book.id } } else null)
+                            shelfLayout = true, onMore = if (!selectingBackup) { { actionBookId = book.id } } else null,
+                            onRename = if (!selectingBackup && onRenameBook != null) { { rename(book) } } else null)
                     }
                 }
             }

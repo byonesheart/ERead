@@ -22,7 +22,7 @@ internal class BookSourceRename(private val context: Context, private val origin
         }
         if (original.cloudOnly || original.isDemo) return original.copy(title = title)
         val source = EbookSourceWriteback.source(original)
-        val info = documentSourceFileInfo(context, source) ?: throw IOException("无法读取原文件，请重新选择")
+        val info = documentSourceFileInfo(context, source) ?: throw SourceWritePermissionRequiredException(source)
         require(!info.directory) { "漫画文件夹暂不支持重命名源文件夹" }
         val oldName = info.name ?: original.sourceFileName ?: throw IOException("无法读取原文件名")
         val extension = oldName.substringAfterLast('.', "")
@@ -36,7 +36,8 @@ internal class BookSourceRename(private val context: Context, private val origin
             // Deferred chapter/resource descriptors can still refer to an internally downloaded source.
             val privateRoot = File(context.filesDir, "books/${original.id}").canonicalFile
             if (documentFile(source)?.canonicalFile?.parentFile == privateRoot) {
-                privateRoot.walkTopDown().filter { it.isFile && it.extension == "json" }.forEach { file ->
+                privateRoot.walkTopDown().filter { it.isFile &&
+                    (it.name.endsWith(".source.json.deferred.json") || it.name == "mobi-import-resources.json") }.forEach { file ->
                     val bytes = AtomicFile(file).readFully()
                     val row = JSONObject(bytes.toString(Charsets.UTF_8))
                     if (row.optString("source") == source) {
@@ -76,13 +77,18 @@ internal class BookSourceRename(private val context: Context, private val origin
         documentFile(source)?.let { file ->
             val target = File(file.absoluteFile.parentFile, name)
             require(!target.exists()) { "目标位置已有同名文件，未重命名" }
-            Files.move(file.toPath(), target.toPath())
+            try { Files.move(file.toPath(), target.toPath()) }
+            catch (_: SecurityException) { throw SourceWritePermissionRequiredException(source) }
+            catch (_: java.nio.file.AccessDeniedException) { throw SourceWritePermissionRequiredException(source) }
             return if (Uri.parse(source).scheme == "file") Uri.fromFile(target).toString() else target.absolutePath
         }
         val uri = Uri.parse(source)
-        require(DocumentsContract.isDocumentUri(context, uri)) { "当前文件来源不支持重命名，请从系统文件选择器重新导入" }
-        return DocumentsContract.renameDocument(context.contentResolver, uri, name)?.toString()
-            ?: throw IOException("源文件重命名失败，请检查写入权限")
+        if (!DocumentsContract.isDocumentUri(context, uri)) throw SourceWritePermissionRequiredException(source)
+        try {
+            return DocumentsContract.renameDocument(context.contentResolver, uri, name)?.toString()
+                ?: throw SourceWritePermissionRequiredException(source)
+        } catch (_: SecurityException) { throw SourceWritePermissionRequiredException(source) }
+          catch (_: java.io.FileNotFoundException) { throw SourceWritePermissionRequiredException(source) }
     }
 
     private fun write(file: File, bytes: ByteArray) {

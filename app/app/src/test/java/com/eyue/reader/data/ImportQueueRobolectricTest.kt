@@ -444,7 +444,7 @@ class ImportQueueRobolectricTest {
 
     private fun sourceUri(file: File): Uri = Uri.parse("content://$authority/${file.relativeTo(root).invariantSeparatorsPath}")
 
-    @Test fun externalExistingBookOpensWithoutReopeningOrReparsingItsProviderStream() {
+    @Test fun externalExistingBookVerifiesItsBytesThenOpensWithoutReimporting() {
         val source = sourceUri(EpubFixtures.create(app, root, "external-fast"))
         openLibrary()
         vm.importFiles(listOf(source), LibraryMode.NOVEL)
@@ -452,11 +452,29 @@ class ImportQueueRobolectricTest {
         val book = vm.state.books.single()
         opened.clear()
         assertFalse(book.sourceLinked)
-        gates["external-fast.epub"] = CountDownLatch(1)
         vm.openExternalFiles(listOf(source), "application/epub+zip", "existing-fast")
         await { vm.activeBookId == book.id && !vm.importing }
         assertEquals(1, vm.state.books.size)
-        assertFalse("The existing private copy should open before any provider stream is read", "external-fast.epub" in opened)
+        assertTrue("The external file must be read to verify its contents", "external-fast.epub" in opened)
+        assertNull(vm.pendingImportConflict)
+        assertNull(vm.duplicateImportTitle)
+    }
+
+    @Test fun externalSameNameAndSizeWithDifferentTextIsImportedAndRequiresAConflictChoice() {
+        val left = File(root, "left/same.txt").apply { parentFile!!.mkdirs(); writeText("第一章\n甲的正文。") }
+        val right = File(root, "right/same.txt").apply { parentFile!!.mkdirs(); writeText("第一章\n乙的正文。") }
+        assertEquals(left.length(), right.length())
+        openLibrary()
+        vm.importFiles(listOf(sourceUri(left)), LibraryMode.NOVEL)
+        await { !vm.importing && vm.state.books.size == 1 }
+        val original = vm.state.books.single()
+        vm.openExternalFiles(listOf(sourceUri(right)), "text/plain", "different-edition")
+        await { vm.pendingImportConflict != null }
+        val conflict = requireNotNull(vm.pendingImportConflict)
+        assertEquals(listOf(original.id), conflict.existing.map { it.id })
+        vm.resolveImportConflict(setOf(original.id, conflict.incoming.id))
+        await { !vm.importing && vm.state.books.size == 2 }
+        assertEquals(conflict.incoming.id, vm.activeBookId)
     }
 
     @Test fun externalOpeningIsVisibleImmediatelyAndBackKeepsImportWithoutAnUnexpectedJump() {

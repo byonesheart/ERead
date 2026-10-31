@@ -1,5 +1,7 @@
 # Android release policy
 
+- After completing and validating an Android update, automatically publish a GitHub prerelease unless the user explicitly asks to hold publication.
+
 - Each Android update must be published as a GitHub prerelease first. An unspecified request to publish or upload an update means a test release. Only publish a full release when the user explicitly requests a formal release after a test release is available.
 - Test releases use a beta version name, a globally increasing Android `versionCode`, GitHub `prerelease: true` and `make_latest: "false"`. Publish and verify the APK and source assets before updating the test-channel manifest, `update-preview.json`.
 - Never upload test releases to Baidu, Quark, or any other netdisk. Never replace stable download links, README download tables, `update.json`, or `release/update.json` with test-release information. Test manifests must have `prerelease: true` and no netdisk mirrors.

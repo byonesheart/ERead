@@ -62,7 +62,7 @@ async function ready(index){await page.waitForFunction(index=>window.events.some
 async function jump(index,offset=0){await page.evaluate(({index,offset})=>{window.events=[];ERead.command({type:'navigate',chapter:index,offset});},{index,offset});await ready(index);}
 try{
  await page.goto('https://eread.local/root.html');await ready(0);
- await test('auto-scroll-crosses-preloaded-seam-and-touch-pauses',async()=>{
+ await test('auto-scroll-crosses-preloaded-seam-and-taps-keep-running',async()=>{
    await page.waitForFunction(()=>document.querySelectorAll('iframe').length===2&&Array.from(document.querySelectorAll('iframe')).every(f=>f.style.opacity==='1'));
    await page.evaluate(()=>scrollTo(0,document.querySelector('section').offsetHeight-innerHeight-30));
    await page.waitForTimeout(250);
@@ -77,7 +77,9 @@ try{
    await page.touchscreen.tap(190,450);
    const touched=await page.evaluate(()=>scrollY);
    await page.waitForTimeout(250);
-   assert.equal(await page.evaluate(()=>scrollY),touched);
+   assert.ok(await page.evaluate(()=>scrollY)>touched+10,'Taps in chapter frames must not stop automatic scrolling');
+   assert.equal(await page.evaluate(()=>events.filter(e=>e.type==='manualStart').length),0);
+   await page.mouse.wheel(0,80); await page.waitForTimeout(180);
    assert.ok(await page.evaluate(()=>events.some(e=>e.type==='manualStart')));
    assert.ok(await page.evaluate(()=>document.querySelectorAll('iframe').length<=3));
    await jump(0);return {before,after,visible,touched};

@@ -130,6 +130,23 @@ class EbookSourceDocumentRobolectricTest {
         assertArrayEquals(original, source.readBytes())
     }
 
+    @Test fun lightweightDraftDisplaysWithoutOpeningOrMappingThePublication() = runBlocking {
+        val source = epubFixture(includeImage = false)
+        val book = epubBook(source)
+        val folder = File(root, "edit-preview").apply { mkdirs() }
+        val text = "立即预览修改后的 <文本>\n第二行"
+        val chapter = book.chapters[0].copy(textPath = File(folder, "chapter.txt").apply { writeText(text) }.path,
+            lazySourcePath = null, characterCount = text.length)
+        val draft = book.copy(sourcePath = File(root, "not-opened.epub").path,
+            chapters = listOf(chapter) + book.chapters.drop(1), hasTextEdits = true)
+        EbookSourceStore(context, draft, preview = true).use { store ->
+            val document = store.load(0, text)
+            assertEquals(text, document.canonicalText)
+            assertEquals(text, SourceHtmlEdit.plain(document.html) { null })
+            assertFalse(document.html.contains("href='../styles/main.css'"))
+        }
+    }
+
     @Test fun linkedCssImportsFontSvgAndImageResolveFromTheirOriginalVirtualDirectories() = runBlocking {
         val book = epubBook(epubFixture())
         val store = store(book)

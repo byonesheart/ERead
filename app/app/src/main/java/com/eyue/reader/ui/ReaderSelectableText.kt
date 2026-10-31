@@ -108,8 +108,22 @@ internal fun ReaderSelectableText(
         contextMenuData = null
         session?.complete(Unit)
     }
-    LaunchedEffect(value.selection.collapsed, selectionMenuEnabled) {
+    LaunchedEffect(value.selection, selectionMenuEnabled) {
         latestSelectionActive(!value.selection.collapsed && selectionMenuEnabled)
+        if (!value.selection.collapsed && selectionMenuEnabled && !toolbarHandedOff) {
+            kotlinx.coroutines.delay(60)
+            if (toolbarHandedOff || !latestMenuEnabled) return@LaunchedEffect
+            val layout = textLayout
+            val place = coordinates
+            if (layout != null && place?.isAttached == true && text.isNotEmpty()) {
+                val first = layout.getBoundingBox(value.selection.min.coerceIn(0, text.lastIndex))
+                val last = layout.getBoundingBox((value.selection.max - 1).coerceIn(0, text.lastIndex))
+                val begin = place.localToWindow(first.topLeft)
+                val end = place.localToWindow(last.bottomRight)
+                toolbarRect = Rect(minOf(begin.x, end.x), minOf(begin.y, end.y), maxOf(begin.x, end.x), maxOf(begin.y, end.y))
+            }
+            toolbarVisible = true
+        }
     }
     DisposableEffect(Unit) { onDispose { latestSelectionActive(false) } }
     LaunchedEffect(selectionReset) {

@@ -139,7 +139,7 @@ class EReadAppDraftRobolectricTest {
             awaitState(10_000) { original.id in vm.editingBookIds }
             compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
             compose.onNodeWithTag("reader_unsaved_dialog").assertIsDisplayed()
-            compose.onNodeWithText("正在应用修改…").assertIsDisplayed()
+        compose.onNodeWithText("正在准备修改…").assertIsDisplayed()
             compose.onNodeWithTag("reader_unsaved_save").assertIsNotEnabled()
             compose.runOnIdle {
                 assertEquals(original.id, vm.activeBookId)

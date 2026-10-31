@@ -193,7 +193,6 @@
         schedule();
     }, {passive:true});
     addEventListener('resize', () => { loaded.forEach((item, index) => commandChild(index, {type:'hostResize'})); schedule(); });
-    addEventListener('touchstart', pauseAutoScroll, {passive:true});
     addEventListener('touchmove', beginManual, {passive:true});
     addEventListener('wheel', beginManual, {passive:true});
     addEventListener('pagehide', () => setAutoScroll(0));

@@ -2,7 +2,7 @@
     'use strict';
     let canonical = '', entries = [], characters = [], images = [], config = {}, decorations = {};
     let initialized = false, started = false, manual = false, automatic = false, lastViewport = '', noteTargets = new Set();
-    let frame = 0, endTimer = 0, resizeTimer = 0, touch = null, selectionTimer = 0, overlay;
+    let frame = 0, endTimer = 0, resizeTimer = 0, touch = null, selectionTimer = 0, imageSelectionTimer = 0, overlay;
     let navigationAnchor = null, reflowAnchor = null;
     let sourceNotes = [];
     let suppressClickUntil = 0;
@@ -15,7 +15,8 @@
         if (!autoScrollSpeed) return;
         navigationAnchor = null; reflowAnchor = null;
         function tick(now) {
-            if (document.hidden || manual || touch) { setAutoScroll(0); return; }
+            if (document.hidden || manual) { setAutoScroll(0); return; }
+            if (touch) { autoScrollTime = now; autoScrollFrame = requestAnimationFrame(tick); return; }
             const elapsed = autoScrollTime ? Math.min(50, now - autoScrollTime) / 1000 : 0;
             autoScrollTime = now;
             const maximum = Math.max(0, document.documentElement.scrollHeight - innerHeight);
@@ -887,14 +888,12 @@
     });
     document.addEventListener('touchstart', function (event) {
         if (!started || event.touches.length !== 1) return;
-        if (continuousHost) continuousHost.pauseAutoScroll();
-        if (autoScrollSpeed) { setAutoScroll(0); beginManual(); endManual(); }
         finishPageAnimation();
         touch = {x:event.touches[0].clientX, y:event.touches[0].clientY, time:Date.now(), moved:false, image:event.target.closest('img,image,svg'),
             startAtStart: scrollY <= 1, startAtEnd: scrollY + innerHeight >= document.documentElement.scrollHeight - 1};
         touch.selecting = !getSelection().isCollapsed;
-        clearTimeout(selectionTimer);
-        if (touch.image) selectionTimer = setTimeout(function () {
+        clearTimeout(imageSelectionTimer);
+        if (touch.image) imageSelectionTimer = setTimeout(function () {
             const image = images.find(image => image.node === touch.image || touch.image.contains(image.node));
             if (image && touch && !touch.moved) { touch.long = true; suppressClickUntil = Date.now() + 1000; send('selection', Object.assign({start:image.offset, end:image.offset, image:image.path, page:pageIndex()}, bounds(imageBounds(image)))); }
         }, 500);
@@ -905,13 +904,14 @@
         if (event.touches.length !== 1) {
             const previous = touch; touch = null; if (previous.dragging) releaseEdgeDrag(previous, true); return;
         }
-        if (Math.hypot(point.clientX - touch.x, point.clientY - touch.y) > 10) { touch.moved = true; clearTimeout(selectionTimer); beginManual(); }
+        if (Math.hypot(point.clientX - touch.x, point.clientY - touch.y) > 10) { touch.moved = true; clearTimeout(imageSelectionTimer); beginManual(); }
         if (edgeDrag(point)) { event.preventDefault(); return; }
         if (config.mode !== 'SCROLL' && getSelection().isCollapsed) event.preventDefault();
     }, {passive:false});
     document.addEventListener('touchend', function (event) {
         if (!touch) return;
-        const previous = touch; touch = null; clearTimeout(selectionTimer);
+        const previous = touch; touch = null; clearTimeout(imageSelectionTimer);
+        if (!getSelection().isCollapsed) selection();
         if (previous.dragging) { releaseEdgeDrag(previous, false); return; }
         if (previous.moved && !previous.selecting && Date.now() - previous.time < 500 && config.mode !== 'SCROLL' && getSelection().isCollapsed) {
             const point = event.changedTouches[0], delta = config.mode === 'PAGED' ? point.clientX - previous.x : point.clientY - previous.y;
@@ -926,7 +926,7 @@
     document.addEventListener('touchcancel', function () {
         const previous = touch; touch = null;
         if (previous?.dragging) releaseEdgeDrag(previous, true);
-        clearTimeout(selectionTimer);
+        clearTimeout(imageSelectionTimer);
         if (manual) endManual();
     }, {passive:true});
     document.addEventListener('contextmenu', function (event) { if (event.target.closest('img,svg')) event.preventDefault(); });

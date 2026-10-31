@@ -2,6 +2,13 @@ package com.eyue.reader.data
 
 import android.app.Application
 import android.content.ContextWrapper
+import android.content.ContentProvider
+import android.content.ContentValues
+import android.content.pm.ProviderInfo
+import android.database.Cursor
+import android.database.MatrixCursor
+import android.net.Uri
+import android.provider.OpenableColumns
 import android.os.Looper
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewModelScope
@@ -27,6 +34,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows
+import org.robolectric.shadows.ShadowContentResolver
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
 import java.io.File
@@ -43,6 +51,74 @@ class ReaderEditIsolationRobolectricTest {
     private val store = ViewModelStore()
     private val holders = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val releases = mutableListOf<CompletableDeferred<Unit>>()
+
+    @Test fun renameRequestsDocumentAccessThenRenamesTheSourceAndShelfTogether() {
+        val original = textBook("重命名授权", "第一章\n原始正文。")
+        val authority = "readonly-rename-${UUID.randomUUID()}"
+        val uri = Uri.parse("content://$authority/file")
+        val provider = object : ContentProvider() {
+            override fun onCreate() = true
+            override fun getType(uri: Uri) = "text/plain"
+            override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor =
+                MatrixCursor(arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)).apply {
+                    addRow(arrayOf<Any>("重命名授权.txt", File(original.sourcePath!!).length()))
+                }
+            override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+            override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?) = 0
+            override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?) = 0
+        }
+        provider.attachInfo(app, ProviderInfo().apply { this.authority = authority; exported = true })
+        ShadowContentResolver.registerProviderInternal(authority, provider)
+        openLibrary(original.copy(sourceUri = uri.toString()))
+        assertTrue(vm.renameBook(original.id, "新的名字"))
+        await { vm.pendingSourceWriteUri != null && !vm.importing }
+        assertEquals(original.title, book(original.id).title)
+        assertTrue(File(original.sourcePath!!).isFile)
+        vm.resumeSourceWrite(Uri.parse(original.sourcePath!!))
+        await { book(original.id).title == "新的名字" && !vm.importing }
+        assertNull(vm.pendingSourceWriteUri)
+        assertFalse(File(original.sourcePath!!).exists())
+        val renamed = book(original.id)
+        assertEquals("新的名字.txt", renamed.sourceFileName)
+        assertEquals("第一章\n原始正文。", readChapterText(renamed.chapters.single()))
+        assertEquals("新的名字", LibraryRepository(app).load().books.single().title)
+    }
+
+    @Test fun previewDoesNotReadUnopenedChaptersOrRebuildTheirCatalog() {
+        for (format in listOf(BookFormat.TXT, BookFormat.EPUB, BookFormat.MOBI)) {
+            val original = textBook("轻量预览-$format", "第一章\n旧正文。")
+            val other = Chapter(title = "未打开", textPath = File(root, "unread-$format.txt").path)
+            val target = original.copy(format = format, chapters = original.chapters + other)
+            if (::vm.isInitialized) {
+                val job = requireNotNull(vm.viewModelScope.coroutineContext[Job]); store.clear(); await { job.isCompleted }
+            }
+            openLibrary(target)
+            vm.open(book(target.id))
+            vm.editTxt(0, 4, 7, "修改后的文字")
+            await { vm.editingBookIds.isEmpty() }
+            assertTrue("$format: ${vm.message}", vm.hasBookDraft(target.id))
+            assertEquals(2, vm.activeReaderBook!!.chapters.size)
+            assertEquals(other, vm.activeReaderBook!!.chapters[1])
+            assertTrue(readChapterText(vm.activeReaderBook!!.chapters[0]).contains("修改后的文字"))
+            assertEquals("第一章\n旧正文。", File(original.sourcePath!!).readText())
+        }
+    }
+
+    @Test fun txtChapterSplittingRunsWhenSavingInsteadOfWhenApplyingThePreview() {
+        val original = textBook("保存时整理目录", "原正文。")
+        openLibrary(original)
+        vm.open(book(original.id))
+        val replacement = "第一章 开始\n甲的正文。\n\n第二章 后续\n乙的正文。"
+        vm.editTxt(0, 0, "原正文。".length, replacement)
+        await { !vm.importing && vm.hasBookDraft(original.id) }
+        assertEquals(1, vm.activeReaderBook!!.chapters.size)
+        assertEquals(replacement, readChapterText(vm.activeReaderBook!!.chapters.single()))
+        assertEquals("原正文。", File(original.sourcePath!!).readText())
+        vm.saveBookDraft(original.id)
+        await { !vm.importing && !vm.hasBookDraft(original.id) }
+        assertEquals(2, book(original.id).chapters.size)
+        assertEquals(replacement, File(original.sourcePath!!).readText())
+    }
 
     @Before fun setup() {
         val base = RuntimeEnvironment.getApplication()

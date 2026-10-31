@@ -28,7 +28,7 @@ internal data class EbookSourceDocument(val key: String, val html: String, val b
 internal data class EbookSourceResource(val mimeType: String, val encoding: String? = null, val stream: InputStream)
 
 /** Original DOM/resources are the display source. Canonical text remains the stable annotation index. */
-internal class EbookSourceStore(private val context: Context, private val book: Book) : Closeable {
+internal class EbookSourceStore(private val context: Context, private val book: Book, private val preview: Boolean = false) : Closeable {
     private val mutex = Mutex()
     private val documents = linkedMapOf<Int, EbookSourceDocument>()
     private val deferredImages = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -58,11 +58,26 @@ internal class EbookSourceStore(private val context: Context, private val book: 
             require(chapterIndex in book.chapters.indices) { "原书章节位置无效" }
             val worker = currentCoroutineContext()
             worker.ensureActive()
-            if (book.format == BookFormat.TXT) {
+            val chapter = book.chapters[chapterIndex]
+            val textPreview = preview && chapter.textPath?.let { File(it).parentFile?.name?.startsWith("edit-") } == true
+            if (book.format == BookFormat.TXT || textPreview) {
                 synchronized(documents) { documents[chapterIndex] }?.takeIf { it.canonicalText == canonicalText }
                     ?.let { return@withLock it }
-                val html = canonicalText.lineSequence().joinToString("\n", "<html><head></head><body>", "</body></html>") { line ->
-                    "<p>" + line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + "</p>"
+                val html = if (book.format == BookFormat.TXT) canonicalText.lineSequence().joinToString("\n",
+                    "<html><head></head><body>", "</body></html>") { "<p>${SourceHtmlEdit.escape(it)}</p>" }
+                else buildString {
+                    append("<html><head></head><body><p>")
+                    var cursor = 0
+                    chapter.inlineImages.forEachIndexed { index, image ->
+                        val at = image.offset.coerceIn(cursor, canonicalText.length)
+                        append(SourceHtmlEdit.escape(canonicalText.substring(cursor, at)).replace("\n", "<br/>"))
+                        val path = "preview/$chapterIndex-$index.${File(image.path).extension}"
+                        deferredImages[path] = File(image.path).canonicalPath
+                        append("<img src=\"").append(origin).append("archive/").append(path).append("\"/>")
+                        cursor = at
+                    }
+                    append(SourceHtmlEdit.escape(canonicalText.substring(cursor)).replace("\n", "<br/>"))
+                    append("</p></body></html>")
                 }
                 return@withLock EbookSourceDocument("$bookKey:${book.contentVersion}:$chapterIndex:${digest(canonicalText)}",
                     html, origin + "archive/chapter-$chapterIndex.html", canonicalText).also { document ->
@@ -163,6 +178,10 @@ internal class EbookSourceStore(private val context: Context, private val book: 
         val path = uri.path?.takeIf { it.startsWith(prefix) }?.removePrefix(prefix)?.let {
             runCatching { EpubArchive.safePath(it) }.getOrNull()
         } ?: return null
+        if (preview && path.startsWith("preview/")) {
+            val file = deferredImages[path]?.let(::File) ?: return null
+            return response(path, file.inputStream())
+        }
         val catalog = index ?: return null
         if (catalog.getString("format") == BookFormat.EPUB.name) {
             return sourceDocument { archive ->

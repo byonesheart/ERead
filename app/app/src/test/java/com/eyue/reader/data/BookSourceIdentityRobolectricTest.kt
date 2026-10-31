@@ -28,6 +28,16 @@ import java.util.UUID
 class BookSourceIdentityRobolectricTest {
     private lateinit var root: File
     private lateinit var context: Context
+
+    @Test fun externalOpenRequiresEqualContentsEvenWhenNameAndSizeAreIdentical() {
+        val stored = File(root, "cached.mobi").apply { writeText("abc") }
+        val incoming = File(root, "book.mobi").apply { writeText("xyz") }
+        val known = book().copy(sourcePath = stored.path, sourceFileName = incoming.name, sourceFileBytes = 3L)
+        assertNull(identicalExternalBook(context, listOf(known), Uri.parse(incoming.path)))
+        incoming.writeText("abc")
+        assertEquals(known, identicalExternalBook(context, listOf(known), Uri.parse(incoming.path)))
+        assertNull(identicalExternalBook(context, listOf(known.copy(sourceFileName = "other.mobi")), Uri.parse(incoming.path)))
+    }
     private fun book() = Book(title = "元数据书名", format = BookFormat.MOBI, mode = LibraryMode.NOVEL,
         chapters = listOf(Chapter(title = "第一章", textPath = "unavailable-chapter-cache")))
 

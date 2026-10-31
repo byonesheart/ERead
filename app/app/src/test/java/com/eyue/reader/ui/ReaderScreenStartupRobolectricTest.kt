@@ -132,6 +132,7 @@ class ReaderScreenStartupRobolectricTest {
         advance(32)
         compose.onNodeWithTag("reader_auto_bar").assertIsDisplayed()
         compose.onNodeWithTag("reader_auto_stop").assertIsDisplayed()
+        compose.onNodeWithText("关闭").assertDoesNotExist()
         compose.onNodeWithContentDescription("自动翻页间隔").assertIsDisplayed()
         val previousOffset = position.get()!!.offset
         advance(2300)
