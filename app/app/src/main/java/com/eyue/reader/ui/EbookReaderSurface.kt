@@ -438,9 +438,9 @@ internal fun EbookReaderSurface(
                 selected = null; controller.clearSelection(); callback(passage)
             } }, onEdit?.takeIf { passage.imagePath == null }?.let { callback -> ReaderCompactAction("edit", "编辑") {
                 selected = null; controller.clearSelection(); callback(passage)
-            } }) + ReaderCompactAction("translate", "系统翻译") {
+            } }) + listOfNotNull(if (readerTranslationTargets(context, "").isNotEmpty()) ReaderCompactAction("translate", "系统翻译") {
                 selected = null; controller.clearSelection(); openReaderTranslation(context, passage.quote)
-            } + ReaderCompactAction("copy", "复制") {
+            } else null) + ReaderCompactAction("copy", "复制") {
                 clipboard.setText(AnnotatedString(passage.quote)); selected = null; controller.clearSelection()
             })
         }

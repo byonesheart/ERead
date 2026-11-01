@@ -55,6 +55,7 @@ class ReaderSelectionMenuRobolectricTest {
         text.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
         val word = layouts.single().getBoundingBox(4).center
         text.performTouchInput { longClick(word) }
+        compose.onNodeWithTag("reader_action_translate").assertDoesNotExist()
         compose.onNodeWithTag("reader_action_note").assertIsDisplayed().performClick()
         compose.runOnIdle {
             assertEquals(AnnotationKind.NOTE, selectedKind)

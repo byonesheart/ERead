@@ -16,11 +16,11 @@ import com.eyue.reader.data.CloudRestoreSelection
 import com.eyue.reader.data.Book
 
 @Composable internal fun CloudRestoreDialog(conflicts: List<CloudRestoreConflict>, metered: Boolean, busy: Boolean,
-    onCancel: () -> Unit, onRestore: (Map<String, CloudRestoreSelection>, Boolean) -> Unit, uploading: Boolean = false) {
+    onCancel: () -> Unit, onRestore: (Map<String, CloudRestoreSelection>, Boolean) -> Unit, uploading: Boolean = false, defaultAllowMetered: Boolean = false) {
     var choices by remember(uploading, conflicts.map { it.remote.id to it.locals.map { local -> local.id } }) {
         mutableStateOf(conflicts.associate { it.remote.id to CloudRestoreSelection(it.locals.map { local -> local.id }.toSet(), true) })
     }
-    var useMetered by remember { mutableStateOf(false) }
+    var useMetered by remember(defaultAllowMetered) { mutableStateOf(defaultAllowMetered) }
     val valid = choices.values.all { it.keepRemote || it.keepLocalIds.isNotEmpty() }
     val changesCloud = uploading || choices.values.any { it.keepLocalIds.size + (if (it.keepRemote) 1 else 0) == 1 }
     AlertDialog(onDismissRequest = { if (!busy) onCancel() }, title = { Text("需要确认同名书籍") }, text = {

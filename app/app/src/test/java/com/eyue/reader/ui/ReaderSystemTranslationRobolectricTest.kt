@@ -59,12 +59,12 @@ class ReaderSystemTranslationRobolectricTest {
         val picker = readerTranslationPickerIntent(context)!!
         assertEquals(Intent.ACTION_PICK_ACTIVITY, picker.action)
         val query = picker.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)!!
-        assertEquals(Intent.ACTION_TRANSLATE, query.action)
+        assertEquals("com.eyue.reader.PICK_TRANSLATOR", query.action)
         assertNull(query.component)
         val selected = Intent(query).setComponent(android.content.ComponentName("test.second", "Translator"))
         rememberReaderTranslator(context, android.app.Activity.RESULT_CANCELED, selected)
         assertNull(context.getSharedPreferences("reader_translation", 0).getString("component", null))
-        rememberReaderTranslator(context, android.app.Activity.RESULT_OK, selected)
+        rememberReaderTranslator(context, android.app.Activity.RESULT_OK, Intent().putExtra(Intent.EXTRA_SHORTCUT_NAME, "翻译-second"))
         assertEquals("翻译-second", selectedReaderTranslatorLabel(context))
         openReaderTranslation(context, "再次选字")
         assertEquals("test.second", shadowOf(context).nextStartedActivity.component!!.packageName)
@@ -91,6 +91,23 @@ class ReaderSystemTranslationRobolectricTest {
         assertTrue(target.getBooleanExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, false))
         assertEquals(listOf("test.Browser"), chooser.getParcelableArrayExtra(Intent.EXTRA_EXCLUDE_COMPONENTS)!!
             .map { (it as android.content.ComponentName).packageName })
+    }
+
+    @Test fun nativePickerContainsOnlyCallableTranslatorsWithMatchingIcons() {
+        val context = RuntimeEnvironment.getApplication()
+        val process = Intent(Intent.ACTION_PROCESS_TEXT).setType("text/plain")
+        for (name in listOf("SystemTranslator", "Browser")) {
+            val info = ResolveInfo().apply { activityInfo = ActivityInfo().apply {
+                packageName = "eligible.$name"; this.name = name; exported = true
+                nonLocalizedLabel = name
+                applicationInfo = ApplicationInfo().apply { flags = ApplicationInfo.FLAG_SYSTEM }
+            } }
+            shadowOf(context.packageManager).addOrUpdateActivity(info.activityInfo)
+            shadowOf(context.packageManager).addResolveInfoForIntent(process, info)
+        }
+        val picker = readerTranslationPickerIntent(context)!!
+        assertEquals(listOf("SystemTranslator"), picker.getStringArrayListExtra(Intent.EXTRA_SHORTCUT_NAME))
+        assertEquals(1, picker.getParcelableArrayListExtra<Intent.ShortcutIconResource>(Intent.EXTRA_SHORTCUT_ICON_RESOURCE)!!.size)
     }
 
     @Test fun processTextFallbackExcludesBrowsersAndUsesOnlyTheSystemTranslator() {

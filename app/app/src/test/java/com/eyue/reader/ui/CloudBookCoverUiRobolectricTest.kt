@@ -44,6 +44,19 @@ class CloudBookCoverUiRobolectricTest {
         compose.onNodeWithText("云端书籍 · 点击云图标下载").assertDoesNotExist()
     }
 
+    @Test fun automaticReloadAndUploadAreBothVisibleOnTheCover() {
+        val book = Book(id = "active", title = "处理中", format = BookFormat.EPUB, mode = LibraryMode.NOVEL, chapters = emptyList())
+        compose.setContent { MaterialTheme {
+            androidx.compose.runtime.CompositionLocalProvider(LocalSourceReloadIds provides setOf(book.id)) {
+                BookCover(book, Modifier.width(120.dp).height(180.dp), cloudInProgress = true,
+                    cloudTaskLabel = "上传书籍", cloudFraction = .65f)
+            }
+        } }
+        compose.onNodeWithTag("source_reload_progress_active", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("cloud_book_progress_active").assertIsDisplayed()
+        compose.onNodeWithText("上传书籍").assertIsDisplayed()
+    }
+
     @Test fun cloudCoverLeavesTheDownloadActionAvailableAndClearsAfterDownload() {
         val book = mutableStateOf(Book(id = "remote", title = "待下载", format = BookFormat.EPUB,
             mode = LibraryMode.NOVEL, cloudOnly = true, chapters = emptyList()))

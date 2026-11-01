@@ -105,15 +105,16 @@ class CloudBackupAutomationRobolectricTest {
         assertEquals(WorkInfo.State.CANCELLED, manager.getWorkInfoById(request.id).get(10, TimeUnit.SECONDS)!!.state)
     }
 
-    @Test fun manualUploadPersistsIdentityAndRetriesOnAnyConnectedNetworkWithoutStoringPasswords() {
+    @Test fun manualUploadPersistsIdentityAndRequiresExplicitMeteredPermissionWithoutStoringPasswords() {
         val request = CloudBackupAutomation.uploadRequest(book(), "reader@example.com")
         val spec = request.workSpec
         val restoredInput = Data.fromByteArray(spec.input.toByteArray())
         assertEquals(book().id, restoredInput.getString(CloudBackupAutomation.KEY_BOOK))
         assertEquals("reader@example.com", restoredInput.getString(CloudBackupAutomation.KEY_ACCOUNT))
-        assertEquals(setOf("book", "account", "title"), restoredInput.keyValueMap.keys)
+        assertEquals(setOf("book", "account", "title", "allowMetered"), restoredInput.keyValueMap.keys)
         assertEquals(CloudBackupWorker::class.java.name, spec.workerClassName)
-        assertEquals(NetworkType.CONNECTED, spec.constraints.requiredNetworkType)
+        assertEquals(NetworkType.UNMETERED, spec.constraints.requiredNetworkType)
+        assertEquals(NetworkType.CONNECTED, CloudBackupAutomation.uploadRequest(book(), "reader@example.com", true).workSpec.constraints.requiredNetworkType)
         assertTrue(spec.expedited)
         assertEquals(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST, spec.outOfQuotaPolicy)
         assertEquals(BackoffPolicy.EXPONENTIAL, spec.backoffPolicy)
@@ -246,6 +247,28 @@ class CloudBackupAutomationRobolectricTest {
         assertTrue(manager.getWorkInfosForUniqueWork("cancel-contract").get(10, TimeUnit.SECONDS).all { it.state.isFinished })
     }
 
+    @Test fun automaticProgressIdentifiesTheBookWithoutManualUploadTags() {
+        val progress = androidx.work.workDataOf(CloudBackupAutomation.KEY_BOOK to book().id,
+            CloudBackupAutomation.KEY_STAGE to "上传书籍", CloudBackupAutomation.KEY_FRACTION to .65f)
+        val running = WorkInfo(java.util.UUID.randomUUID(), WorkInfo.State.RUNNING, emptySet(), progress = progress)
+        assertEquals(book().id, CloudBackupAutomation.bookId(running))
+        assertEquals(.65f, running.progress.getFloat(CloudBackupAutomation.KEY_FRACTION, -1f))
+    }
+    @Test fun configuringAutomaticBackupDoesNotSchedulePeriodicOrSaveTriggeredWork() {
+        val context = RuntimeEnvironment.getApplication()
+        val manager = runCatching { WorkManager.getInstance(context) }.getOrElse {
+            WorkManager.initialize(context, Configuration.Builder().build()); WorkManager.getInstance(context)
+        }
+        val before = manager.getWorkInfosForUniqueWork("eread-cloud-change").get(10, TimeUnit.SECONDS).map { it.id }.toSet()
+        CloudBackupAutomation.configure(context, true)
+        assertTrue(manager.getWorkInfosForUniqueWork("eread-cloud-periodic").get(10, TimeUnit.SECONDS).none { !it.state.isFinished })
+        assertEquals(before, manager.getWorkInfosForUniqueWork("eread-cloud-change").get(10, TimeUnit.SECONDS).map { it.id }.toSet())
+        val state = LibraryState(books = listOf(book().copy(cloudEnabled = true)), cloudAutoBackup = true)
+        CloudBackupAutomation.foreground(context, state, true)!!.result.get(10, TimeUnit.SECONDS)
+        assertEquals(1, manager.getWorkInfosForUniqueWork("eread-cloud-change").get(10, TimeUnit.SECONDS).count { !it.state.isFinished })
+        CloudBackupAutomation.configure(context, false)
+    }
+
     @Test fun automaticBackupUsesUnmeteredNetworkUnlessTheOptionIsEnabled() {
         assertEquals(NetworkType.UNMETERED, CloudBackupAutomation.automaticConstraints(false).requiredNetworkType)
         assertEquals(NetworkType.CONNECTED, CloudBackupAutomation.automaticConstraints(true).requiredNetworkType)
@@ -256,10 +279,10 @@ class CloudBackupAutomationRobolectricTest {
         val state = LibraryState(books = listOf(book().copy(cloudEnabled = true)), cloudAutoBackup = true,
             cloudAutoBackupMetered = false)
         CloudBackupAutomation.configure(context, true)
-        CloudBackupAutomation.changed(context, state, true)
+        CloudBackupAutomation.foreground(context, state, true)!!.result.get(10, TimeUnit.SECONDS)
         val original = manager.getWorkInfosForUniqueWork("eread-cloud-change").get(10, TimeUnit.SECONDS).single { !it.state.isFinished }
         CloudBackupAutomation.configure(context, true, true)
-        CloudBackupAutomation.changed(context, state.copy(cloudAutoBackupMetered = true), true)
+        CloudBackupAutomation.foreground(context, state.copy(cloudAutoBackupMetered = true), true)!!.result.get(10, TimeUnit.SECONDS)
         val changed = manager.getWorkInfosForUniqueWork("eread-cloud-change").get(10, TimeUnit.SECONDS).single { !it.state.isFinished }
         val previous = manager.getWorkInfoById(original.id).get(10, TimeUnit.SECONDS)
         assertTrue(previous == null || previous.state == WorkInfo.State.CANCELLED)

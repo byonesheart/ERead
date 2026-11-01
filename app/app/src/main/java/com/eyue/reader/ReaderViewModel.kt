@@ -83,7 +83,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val saves = LibrarySaveCoordinator(viewModelScope,
         currentState = { state.takeIf { storageReady } },
         writeStructure = { repository.save(it) }, writePositions = { repository.savePositions(it) },
-        onSaved = { CloudBackupAutomation.changed(application, it, cloudConfigured) },
+        onSaved = {},
         onError = { message = "阅读记录保存失败：${it.message ?: "请重试"}" })
     private data class ImportRequest(val id: String, val uris: List<Uri>, val mode: LibraryMode,
         val folder: Boolean = false, val external: Boolean = false, val mimeType: String? = null, val requestId: String? = null)
@@ -287,7 +287,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             }
             loading = false
             scanLocalSources()
-            refreshCloudConfiguration()
+            backupOnForeground()
             runCatching { refreshAiSpeechConfiguration() }
                 .onFailure { message = "AI 语音配置无法读取，请重新保存" }
         }
@@ -627,7 +627,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         foreground = true
         if (returning && !loading) scanLocalSources()
         if (activeBookId != null && sessionStarted == 0L) sessionStarted = System.currentTimeMillis()
-        if (!loading) viewModelScope.launch { refreshCloudConfiguration() }
+        if (returning && !loading) viewModelScope.launch { backupOnForeground() }
     }
 
     fun open(requested: Book) {
@@ -1096,6 +1096,14 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun clearHistory() = changed(state.copy(books = state.books.map { it.copy(lastReadAt = 0) }))
 
+    private suspend fun backupOnForeground() {
+        refreshCloudConfiguration()
+        if (cloudConfigured && storageReady) {
+            persistNow()
+            CloudBackupAutomation.foreground(getApplication(), state, true)
+        }
+    }
+
     private suspend fun refreshCloudConfiguration() {
         try {
             val service = CloudBackupService(getApplication())
@@ -1506,7 +1514,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         available.filter { it.cloudOnly }.forEach(::downloadCloudBook)
     }
 
-    fun uploadCloudBooks(books: List<Book>) {
+    var pendingMeteredBackupIds by mutableStateOf<Set<String>>(emptySet())
+        private set
+    fun cancelMeteredBackup() { pendingMeteredBackupIds = emptySet() }
+    fun confirmMeteredBackup(allowed: Boolean) {
+        val ids = pendingMeteredBackupIds
+        pendingMeteredBackupIds = emptySet()
+        if (allowed) uploadCloudBooks(state.books.filter { it.id in ids }, true)
+    }
+    fun uploadCloudBooks(books: List<Book>, allowMetered: Boolean? = null) {
         if (books.any { hasBookDraft(it.id) }) message = "请先保存或放弃已编辑书籍的修改，再上传该书"
         if (books.isNotEmpty() && books.all { hasBookDraft(it.id) }) return
         if (cloudBusy) return
@@ -1516,6 +1532,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             it.id !in editingBookIds && !hasBookDraft(it.id) && !(organizing && activeImportId == null && it.id == activeBookId) } }.distinctBy { it.id }
         val account = cloudIdentity ?: return
         if (selected.isEmpty()) return
+        if (meteredNetwork && allowMetered == null) { pendingMeteredBackupIds = selected.map { it.id }.toSet(); return }
+        val permittedMetered = allowMetered ?: state.cloudAutoBackupMetered
         selected.forEach { pendingCloudUploads = pendingCloudUploads + (it.id to CloudTransferProgress("检查同名云端书籍", cancellable = true)) }
         viewModelScope.launch {
             val submitted = mutableSetOf<String>()
@@ -1540,7 +1558,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     } else {
                         val targetId = cloudUploadTargetId(book, available, matches, cloudHistory.cloudBookId(account, book.id))
                         withContext(Dispatchers.IO) { cloudHistory.linkBook(account, book.id, targetId) }
-                        queueCloudUploads(listOf(book), account)
+                        queueCloudUploads(listOf(book), account, permittedMetered)
                         submitted += book.id
                     }
                 }
@@ -1550,7 +1568,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun queueCloudUploads(selected: List<Book>, account: String) {
+    private fun queueCloudUploads(selected: List<Book>, account: String, allowMetered: Boolean) {
         selected.forEach { book ->
             pendingCloudUploads = pendingCloudUploads + (book.id to CloudTransferProgress("准备上传《${book.title}》", cancellable = true))
             val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
@@ -1560,7 +1578,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         kotlinx.coroutines.currentCoroutineContext().ensureActive()
                         require(cloudIdentity == account) { "WebDAV 配置已变更，请重新上传" }
                         // Complete this book's DB submission before its cancellation removes the task.
-                        withContext(NonCancellable) { CloudBackupAutomation.upload(getApplication(), book, account) }
+                        withContext(NonCancellable) { CloudBackupAutomation.upload(getApplication(), book, account, allowMetered) }
                     }
                 } catch (error: CancellationException) { throw error }
                   catch (error: Exception) { message = error.message ?: "云端上传任务无法创建，请稍后重试" }

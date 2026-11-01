@@ -51,7 +51,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
     val systemDark = isSystemInDarkTheme()
     SideEffect { vm.updateSystemTheme(systemDark) }
     val dark = vm.state.themeMode.isDark(systemDark)
-    CompositionLocalProvider(LocalSourceChangeIds provides vm.localSourceChangedIds, LocalSourceReimport provides { book ->
+    CompositionLocalProvider(LocalSourceReloadIds provides vm.reloadingSourceIds, LocalSourceChangeIds provides vm.localSourceChangedIds, LocalSourceReimport provides { book ->
         vm.reloadLocalSource(book)
     }) {
     EReadTheme(dark = dark, eink = vm.state.einkMode, style = vm.state.appTheme) {
@@ -431,8 +431,10 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             })
         }
         if (vm.pendingImportConflict != null) ImportBookConflictDialog(requireNotNull(vm.pendingImportConflict), vm::resolveImportConflict)
+        else if (vm.pendingMeteredBackupIds.isNotEmpty()) MeteredBackupDialog(vm.state.cloudAutoBackupMetered,
+            vm::cancelMeteredBackup, vm::confirmMeteredBackup)
         else if (vm.pendingCloudUpload != null) CloudRestoreDialog(vm.cloudUploadConflicts, vm.meteredNetwork, vm.cloudBusy,
-            vm::cancelCloudUploadConflict, vm::resolveCloudUploadSelections, uploading = true)
+            vm::cancelCloudUploadConflict, vm::resolveCloudUploadSelections, uploading = true, defaultAllowMetered = vm.state.cloudAutoBackupMetered)
         else if (vm.pendingCloudRestore != null) CloudRestoreDialog(vm.cloudRestoreConflicts, vm.meteredNetwork, vm.cloudBusy,
             vm::cancelCloudRestore, vm::resolveCloudRestoreSelections)
         vm.duplicateImportTitle?.let { title ->

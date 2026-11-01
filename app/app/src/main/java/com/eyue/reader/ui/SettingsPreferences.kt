@@ -141,12 +141,14 @@ private enum class SettingsPage(val title: String) {
                     SettingsCard(Modifier.testTag("settings_services_card")) {
                         SettingsLink(Icons.Outlined.Cloud, "WebDAV 备份与还原", if (cloudConfigured) "已连接" else "未配置", "settings_cloud", { open(SettingsPage.CLOUD) })
                         SettingsSeparator()
+                        if (readerTranslationTargets(context, "").isNotEmpty()) {
                         SettingsLink(Icons.Outlined.Translate, "系统翻译应用", translatorLabel, "settings_translation", { readerTranslationPickerIntent(context)?.let { request ->
                             try { translationPicker.launch(request) }
                             catch (_: android.content.ActivityNotFoundException) { showMissingTranslation(context) }
                             catch (_: SecurityException) { showMissingTranslation(context) }
                         } })
                         SettingsSeparator()
+                        }
                         SettingsLink(Icons.Outlined.CleaningServices, "清理缓存", "", "settings_cache", { open(SettingsPage.CACHE) })
                         SettingsSeparator()
                         SettingsLink(Icons.Outlined.Feedback, "问题反馈", "", "settings_feedback", { open(SettingsPage.FEEDBACK) })
@@ -318,9 +320,9 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
                 Text(taskLabel, fontSize = 12.sp, modifier = Modifier.weight(1f).padding(start = 8.dp))
                 fraction?.let { Text("${(it.coerceIn(0f, 1f) * 100).toInt()}%", fontSize = 12.sp) }
             }
-            CloudPreferenceToggle("自动备份", "仅更新已手动上传的书籍及其记录", autoBackup, configured && !busy,
+            CloudPreferenceToggle("自动备份", "打开软件或返回前台时，检查并上传已开启云端上传的书籍及记录；阅读中不另行触发", autoBackup, configured && !busy,
                 "cloud_auto_backup", onAutoBackup)
-            CloudPreferenceToggle("允许计费网络自动备份", "可能使用移动数据", autoBackupMetered, configured && !busy,
+            CloudPreferenceToggle("允许计费网络备份", "同时用于手动和自动备份；手动确认时默认勾选，可能使用移动数据", autoBackupMetered, configured && !busy,
                 "cloud_auto_backup_metered", onAutoBackupMetered)
             HorizontalDivider(color = Line)
             Button(onClick = onRestore, enabled = configured && !busy && restoreProgress == null,

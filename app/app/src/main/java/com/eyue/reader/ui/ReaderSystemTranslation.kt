@@ -18,7 +18,8 @@ internal fun readerTranslationTargets(context: Context, text: String): List<Inte
     val manager = context.packageManager
     fun targets(intent: Intent, processText: Boolean) = manager.queryIntentActivities(intent, 0).mapNotNull { resolved ->
         val activity = resolved.activityInfo ?: return@mapNotNull null
-        if (!activity.exported) return@mapNotNull null
+        if (!activity.exported || !activity.permission.isNullOrBlank() &&
+            context.checkSelfPermission(activity.permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) return@mapNotNull null
         if (processText) {
             val system = (activity.applicationInfo?.flags ?: 0) and
                 (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
@@ -47,22 +48,48 @@ internal fun selectedReaderTranslatorLabel(context: Context): String {
         ?: "未选择 · 使用系统选择"
 }
 
-/** The platform picker owns app labels/icons and returns a component without translating empty text. */
-internal fun readerTranslationPickerIntent(context: Context): Intent? {
+private fun translatorChoices(context: Context): List<Pair<String, Intent>> {
     val targets = readerTranslationTargets(context, "")
-    if (targets.isEmpty()) { showMissingTranslation(context); return null }
-    val query = Intent(targets.first()).setComponent(null)
-    return Intent(Intent.ACTION_PICK_ACTIVITY).putExtra(Intent.EXTRA_INTENT, query)
-        .putExtra(Intent.EXTRA_TITLE, "默认翻译应用")
+    val labels = targets.map { target ->
+        runCatching { context.packageManager.getActivityInfo(target.component!!, 0).loadLabel(context.packageManager).toString() }
+            .getOrDefault(target.component!!.packageName)
+    }
+    return targets.mapIndexed { index, target ->
+        val label = labels[index]
+        (if (labels.count { it == label } > 1) "$label (${target.component!!.flattenToShortString()})" else label) to target
+    }
 }
 
+/** Supply only eligible choices to Android's icon-bearing activity picker, never all PROCESS_TEXT apps. */
+@Suppress("DEPRECATION")
+internal fun readerTranslationPickerIntent(context: Context): Intent? {
+    val choices = translatorChoices(context)
+    if (choices.isEmpty()) { showMissingTranslation(context); return null }
+    val icons = ArrayList(choices.map { (_, target) ->
+        runCatching {
+            val info = context.packageManager.getActivityInfo(target.component!!, 0)
+            val icon = info.icon.takeIf { it != 0 } ?: info.applicationInfo.icon
+            val resources = context.packageManager.getResourcesForApplication(info.applicationInfo)
+            Intent.ShortcutIconResource().apply { packageName = info.packageName; resourceName = resources.getResourceName(icon) }
+        }.getOrElse { Intent.ShortcutIconResource().apply {
+            packageName = "android"; resourceName = "android:drawable/sym_def_app_icon"
+        } }
+    })
+    return Intent(Intent.ACTION_PICK_ACTIVITY)
+        .putExtra(Intent.EXTRA_INTENT, Intent("com.eyue.reader.PICK_TRANSLATOR").setPackage(context.packageName))
+        .putExtra(Intent.EXTRA_TITLE, "默认翻译应用")
+        .putStringArrayListExtra(Intent.EXTRA_SHORTCUT_NAME, ArrayList(choices.map { it.first }))
+        .putParcelableArrayListExtra(Intent.EXTRA_SHORTCUT_ICON_RESOURCE, icons)
+}
+
+@Suppress("DEPRECATION")
 internal fun rememberReaderTranslator(context: Context, resultCode: Int, data: Intent?) {
     if (resultCode != android.app.Activity.RESULT_OK) return
-    val component = data?.component ?: return
-    if (readerTranslationTargets(context, "").none { it.component == component }) {
-        showMissingTranslation(context)
-        return
-    }
+    val choices = translatorChoices(context)
+    val component = data?.component ?: data?.getStringExtra(Intent.EXTRA_SHORTCUT_NAME)?.let { selected ->
+        choices.singleOrNull { it.first == selected }?.second?.component
+    } ?: return
+    if (choices.none { it.second.component == component }) { showMissingTranslation(context); return }
     context.getSharedPreferences(TRANSLATION_PREFERENCES, 0).edit()
         .putString(DEFAULT_TRANSLATOR, component.flattenToString()).apply()
 }

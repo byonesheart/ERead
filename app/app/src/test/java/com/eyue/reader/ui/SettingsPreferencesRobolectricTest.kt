@@ -67,6 +67,29 @@ class SettingsPreferencesRobolectricTest {
         compose.runOnIdle { assertTrue(auto) }
     }
 
+    @Test fun unavailableTranslationIsHiddenAndMeteredBackupDefaultsFollowTheSetting() {
+        compose.setContent { MaterialTheme { SettingsScreen(LibraryState(), {}, {}, {}, {}) } }
+        compose.onNodeWithTag("settings_translation").assertDoesNotExist()
+    }
+
+    @Test fun meteredBackupRequiresConsentAndCanStartPrechecked() {
+        var confirmed = false
+        compose.setContent { MaterialTheme { MeteredBackupDialog(true, {}, { confirmed = it }) } }
+        compose.onNodeWithTag("metered_backup_allowed").assertIsOn()
+        compose.onNodeWithTag("metered_backup_confirm").performClick()
+        compose.runOnIdle { assertTrue(confirmed) }
+    }
+
+    @Test fun meteredBackupWithoutTheGlobalPermissionStartsUnchecked() {
+        var confirmed = false
+        compose.setContent { MaterialTheme { MeteredBackupDialog(false, {}, { confirmed = it }) } }
+        compose.onNodeWithTag("metered_backup_allowed").assertIsOff()
+        compose.onNodeWithTag("metered_backup_confirm").assertIsNotEnabled()
+        compose.onNodeWithTag("metered_backup_allowed").performClick()
+        compose.onNodeWithTag("metered_backup_confirm").performClick()
+        compose.runOnIdle { assertTrue(confirmed) }
+    }
+
     @Test fun cacheActionsRequireConfirmationAndDispatchSeparately() {
         var history = 0; var audio = 0
         compose.setContent { MaterialTheme { SettingsScreen(LibraryState(), {}, {}, {}, { history++ }, onClearAiSpeechCaches = { audio++ }) } }

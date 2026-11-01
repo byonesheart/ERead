@@ -232,6 +232,7 @@ class CloudDownloadFeedbackRobolectricTest {
             chapters = listOf(Chapter(title = "第一章", textPath = restoredSource.absolutePath))), emptyList(), ReaderSettings(), null, 2345)
 
         vm.transferCloudBooks(listOf(local, remote, local.copy(title = "来自旧列表的重复条目")))
+        if (vm.pendingMeteredBackupIds.isNotEmpty()) vm.confirmMeteredBackup(true)
         await { DownloadServiceShadow.listCalls == 1 && DownloadServiceShadow.downloadCalls == 1 &&
             vm.state.books.single { it.id == remote.id }.cloudOnly == false && vm.cloudTransfers.keys == setOf(local.id) }
         assertNotNull(DownloadServiceShadow.pendingList)
@@ -257,6 +258,7 @@ class CloudDownloadFeedbackRobolectricTest {
         store.put("reader", vm)
         await { !vm.loading && vm.cloudConfigured }
         vm.uploadCloudBooks(vm.state.books)
+        if (vm.pendingMeteredBackupIds.isNotEmpty()) vm.confirmMeteredBackup(true)
         await { DownloadServiceShadow.pendingList != null }
         val cloud = CloudBookInfo(remote, emptyList(), ReaderSettings(), null, 1234, "revision", 1, "hash", emptyList())
         DownloadServiceShadow.pendingList!!.also { DownloadServiceShadow.pendingList = null; it.resumeWith(Result.success(listOf(cloud))) }

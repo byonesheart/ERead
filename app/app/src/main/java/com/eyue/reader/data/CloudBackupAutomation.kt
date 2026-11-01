@@ -13,14 +13,12 @@ import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.Data
-import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequest
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
-import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -148,43 +146,40 @@ internal object CloudBackupAutomation {
         val policy = context.getSharedPreferences("cloud_backup_network", Context.MODE_PRIVATE)
         val changed = policy.getBoolean("metered", false) != allowMetered
         policy.edit().putBoolean("metered", allowMetered).apply()
-        if (!enabled) {
-            manager.cancelUniqueWork(PERIODIC)
-            manager.cancelUniqueWork(CHANGE)
-        } else {
-            if (changed) manager.cancelUniqueWork(CHANGE)
-            manager.enqueueUniquePeriodicWork(PERIODIC,
-                if (changed) ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE else ExistingPeriodicWorkPolicy.UPDATE,
-                PeriodicWorkRequestBuilder<CloudBackupWorker>(15, TimeUnit.MINUTES)
-                    .setConstraints(automaticConstraints(allowMetered)).build())
-        }
+        // Retire periodic work from older versions. New automatic work is foreground-triggered.
+        manager.cancelUniqueWork(PERIODIC)
+        if (!enabled || changed) manager.cancelUniqueWork(CHANGE)
     }
 
-    fun changed(context: Context, state: LibraryState, configured: Boolean) {
-        if (!configured || cloudBackupBooks(state).isEmpty()) return
-        WorkManager.getInstance(context).enqueueUniqueWork(CHANGE, ExistingWorkPolicy.KEEP,
-            OneTimeWorkRequestBuilder<CloudBackupWorker>().setInitialDelay(20, TimeUnit.SECONDS)
+    fun foreground(context: Context, state: LibraryState, configured: Boolean): androidx.work.Operation? {
+        if (!configured || cloudBackupBooks(state).isEmpty()) return null
+        return WorkManager.getInstance(context).enqueueUniqueWork(CHANGE, ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<CloudBackupWorker>()
                 .setConstraints(automaticConstraints(state.cloudAutoBackupMetered)).build())
     }
 
-    internal fun uploadRequest(book: Book, account: String): OneTimeWorkRequest =
+    internal fun uploadRequest(book: Book, account: String, allowMetered: Boolean = false): OneTimeWorkRequest =
         OneTimeWorkRequestBuilder<CloudBackupWorker>()
-            .setInputData(workDataOf(KEY_BOOK to book.id, KEY_ACCOUNT to account, KEY_TITLE to book.title))
+            .setInputData(workDataOf(KEY_BOOK to book.id, KEY_ACCOUNT to account, KEY_TITLE to book.title, "allowMetered" to allowMetered))
             .addTag(BOOK_TAG + book.id)
             .addTag(MANUAL)
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setConstraints(automaticConstraints(allowMetered))
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST).build()
 
-    suspend fun upload(context: Context, book: Book, account: String) {
-        WorkManager.getInstance(context).enqueueUniqueWork("$MANUAL-${book.id}", ExistingWorkPolicy.KEEP, uploadRequest(book, account)).await()
+    suspend fun upload(context: Context, book: Book, account: String, allowMetered: Boolean = false) {
+        WorkManager.getInstance(context).enqueueUniqueWork("$MANUAL-${book.id}", ExistingWorkPolicy.KEEP, uploadRequest(book, account, allowMetered)).await()
     }
 
-    fun uploads(context: Context): Flow<List<WorkInfo>> =
-        kotlinx.coroutines.flow.combine(WorkManager.getInstance(context).getWorkInfosByTagFlow(MANUAL),
-            WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(MANUAL)) { current, legacy -> (current + legacy).distinctBy { it.id } }
+    fun uploads(context: Context): Flow<List<WorkInfo>> = kotlinx.coroutines.flow.combine(
+        WorkManager.getInstance(context).getWorkInfosByTagFlow(MANUAL),
+        WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(MANUAL),
+        WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(CHANGE)) { current, legacy, automatic ->
+            (current + legacy + automatic).distinctBy { it.id }
+        }
 
     fun bookId(info: WorkInfo): String? = info.tags.firstOrNull { it.startsWith(BOOK_TAG) }?.removePrefix(BOOK_TAG)
+        ?: info.progress.getString(KEY_BOOK)
 
     fun cancelUpload(context: Context, bookId: String) {
         WorkManager.getInstance(context).cancelAllWorkByTag(BOOK_TAG + bookId)
@@ -210,6 +205,8 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
     private var lastProgressAt = 0L
     private var lastStage = ""
     private val manualBookId get() = inputData.getString(CloudBackupAutomation.KEY_BOOK)
+    private var progressBookId: String? = null
+    private var progressTitle = ""
 
     override suspend fun getForegroundInfo(): ForegroundInfo = foregroundInfo("准备上传备份", null)
 
@@ -220,7 +217,7 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
         val open = PendingIntent.getActivity(applicationContext, 0, Intent(applicationContext, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(applicationContext, channel)
-            .setSmallIcon(android.R.drawable.stat_sys_upload).setContentTitle("上传《${inputData.getString(CloudBackupAutomation.KEY_TITLE).orEmpty()}》")
+            .setSmallIcon(android.R.drawable.stat_sys_upload).setContentTitle("上传《${progressTitle.ifEmpty { inputData.getString(CloudBackupAutomation.KEY_TITLE).orEmpty() }}》")
             .setContentText(stage).setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
             .setProgress(100, ((fraction ?: 0f) * 100).toInt().coerceIn(0, 100), fraction == null)
             .addAction(android.R.drawable.ic_delete, "取消上传", WorkManager.getInstance(applicationContext).createCancelPendingIntent(id))
@@ -231,17 +228,17 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
     }
 
     private fun report(progress: CloudOperationProgress) {
-        if (manualBookId == null || isStopped) return
+        if (progressBookId == null || isStopped) return
         val now = SystemClock.elapsedRealtime()
         if (progress.stage == lastStage && now - lastProgressAt < 500) return
         lastProgressAt = now
         lastStage = progress.stage
         setProgressAsync(progressData(progress.stage, progress.fraction))
-        setForegroundAsync(foregroundInfo(progress.stage, progress.fraction))
+        if (manualBookId != null) setForegroundAsync(foregroundInfo(progress.stage, progress.fraction))
     }
 
     private fun progressData(stage: String, fraction: Float?): Data = workDataOf(
-        CloudBackupAutomation.KEY_BOOK to manualBookId,
+        CloudBackupAutomation.KEY_BOOK to (progressBookId ?: manualBookId),
         CloudBackupAutomation.KEY_STAGE to stage.take(600),
         CloudBackupAutomation.KEY_FRACTION to (fraction ?: -1f))
 
@@ -262,6 +259,10 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
             val state = cloudBackupHistoryState(repository.load()) { history.backupAt(account, it) }
             if (state.cloudIdentity != null && state.cloudIdentity != account) return@withContext Result.success()
             val books = if (manualBookId == null) cloudBackupBooks(state) else state.books.filter { it.id == manualBookId && !it.cloudOnly }
+            if (books.isEmpty()) return@withContext Result.success()
+            val meteredAllowed = if (manualBookId == null) state.cloudAutoBackupMetered else inputData.getBoolean("allowMetered", false)
+            if (!meteredAllowed && (applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).isActiveNetworkMetered)
+                return@withContext Result.retry()
             if (manualBookId == null) history.error(null)
             for (book in books) uploadBook(service, repository, history, account, book.id)
             Result.success()
@@ -290,6 +291,9 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
             val book = currentBook(initial) ?: return
             if (manualBookId == null && (history.automaticPaused(account, bookId) ||
                 CloudBookFingerprint(repository, initial, book).matches(book, history.digest(account, bookId)))) return
+            progressBookId = book.id
+            progressTitle = book.title
+            setProgress(progressData("检查云端备份", null))
             val keys = cloudUploadIdentityKeys(account, hydrateBookSourceIdentity(applicationContext, book))
             var completed = false
             cloudOperationMutex.withUploadIdentity(keys) {

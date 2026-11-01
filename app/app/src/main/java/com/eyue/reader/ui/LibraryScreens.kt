@@ -158,10 +158,10 @@ import java.util.Locale
         BookCover(book, Modifier.width(if (xingcai) 56.dp else 53.dp).height(if (xingcai) 78.dp else 74.dp), onCloud, cloudBusy, cloudInProgress, cloudTaskLabel, cloudFraction,
             onCancelCloud, cloudCanCancel, cloudDirty)
         Column(Modifier.weight(1f).then(if (xingcai) Modifier.height(80.dp) else Modifier).padding(start = 15.dp)) {
-            Text(book.title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = if (xingcai) 2 else 1, overflow = TextOverflow.Ellipsis,
+            Text(book.title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 2, minLines = if (shelfLayout) 2 else 1, softWrap = true, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.testTag("shelf_book_title_${book.id}").then(if (onRename == null && !shelfLayout) Modifier else
                     Modifier.combinedClickable(onClick = onOpen,
-                        onLongClick = onRename)))
+                        onLongClick = onRename ?: longPress)))
             Text(listOf(book.displayAuthor, chapterLabel(book)).filter { it.isNotBlank() }.joinToString(" · "),
                 color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (xingcai) {
@@ -340,7 +340,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                                 onCloud?.let { { it(book) } }, cloudBusy || transfer(book) != null, transfer(book) != null,
                                 transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
                                 onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds)
-                            if (selectingBackup || book.id !in LocalSourceChangeIds.current) {
+                            if (selectingBackup || book.id !in LocalSourceChangeIds.current && book.id !in LocalSourceReloadIds.current) {
                                 Surface(Modifier.align(Alignment.TopStart).padding(8.dp), shape = appShape(5.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .9f)) {
                                     if (selectingBackup) Checkbox(book.id in backupSelection, { selectBackup(book) },
                                         modifier = Modifier.testTag("backup_select_${book.id}"))
@@ -352,10 +352,9 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                                 onClick = { actionBookId = book.id })
                         }
                         Text(book.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp,
-                            minLines = 2, maxLines = 2,
+                            minLines = 2, maxLines = 2, softWrap = true,
                             style = LocalTextStyle.current.copy(platformStyle = PlatformTextStyle(includeFontPadding = false)),
                             overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().padding(top = 11.dp)
-                                .requiredHeight(with(androidx.compose.ui.platform.LocalDensity.current) { 42.sp.toDp() })
                                 .testTag("shelf_book_title_${book.id}").combinedClickable(
                                 onClick = { if (selectingBackup) selectBackup(book) else onOpen(book) },
                                 onLongClick = { if (!selectingBackup && onRenameBook != null) rename(book) }))
@@ -704,6 +703,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
     }
 }
 
+internal val LocalSourceReloadIds = staticCompositionLocalOf<Set<String>> { emptySet() }
 internal val LocalSourceChangeIds = staticCompositionLocalOf<Set<String>> { emptySet() }
 internal val LocalSourceReimport = staticCompositionLocalOf<(Book) -> Unit> { {} }
 
@@ -716,6 +716,7 @@ internal val LocalSourceReimport = staticCompositionLocalOf<(Book) -> Unit> { {}
         text = { Text("将使用外部原文件更新本书正文缓存，可能覆盖应用内未保存的正文编辑。书签、笔记、标记、划线和阅读记录保留。") },
         confirmButton = { TextButton(onClick = { showSourceChange = false; reimportSource(book) }) { Text("同步原文件") } },
         dismissButton = { TextButton(onClick = { showSourceChange = false }) { Text("关闭") } })
+    val sourceReloading = book.id in LocalSourceReloadIds.current
     val sourceChanged = book.id in LocalSourceChangeIds.current
     val bitmap by rememberBookCoverBitmap(book)
     val colors = listOf(Color(0xFF63705D), Color(0xFF7F8972), Color(0xFF6E8290), Color(0xFF9A816A))
@@ -735,10 +736,12 @@ internal val LocalSourceReimport = staticCompositionLocalOf<(Book) -> Unit> { {}
                 Text(book.displayAuthor, color = Color.White.copy(alpha = .65f), fontSize = 8.sp)
             }
         }
-        if (sourceChanged) Surface(Modifier.align(Alignment.TopStart).padding(3.dp), shape = CircleShape,
+        if (sourceChanged || sourceReloading) Surface(Modifier.align(Alignment.TopStart).padding(3.dp), shape = CircleShape,
             color = MaterialTheme.colorScheme.surface.copy(alpha = .95f)) {
-            IconButton(onClick = { showSourceChange = true }, modifier = Modifier.size(30.dp).testTag("local_source_changed_${book.id}")) {
-                Icon(Icons.Outlined.Sync, "源文件有修改", Modifier.size(19.dp), tint = Olive)
+            IconButton(onClick = { showSourceChange = true }, enabled = !sourceReloading,
+                modifier = Modifier.size(30.dp).testTag("local_source_changed_${book.id}")) {
+                if (sourceReloading) SourceReloadIcon(book.id)
+                else Icon(Icons.Outlined.Sync, "源文件有修改", Modifier.size(19.dp), tint = Olive)
             }
         }
         if (book.cloudOnly) Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface.copy(alpha = .22f))
