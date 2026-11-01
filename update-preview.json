@@ -1,14 +1,14 @@
 {
-  "versionCode": 78,
-  "versionName": "1.11.25-beta.5",
+  "versionCode": 79,
+  "versionName": "1.11.25-beta.6",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.25-beta.5",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.25-beta.5/ERead-1.11.25-beta.5-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.25-beta.6",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.25-beta.6/ERead-1.11.25-beta.6-release.apk",
   "mirrors": [],
   "changelog": [
-    "优化文件授权保留，外部打开后仍可离线阅读。",
-    "修复本地源文件扫描，返回前台自动重查，并显示授权失效的书籍。",
-    "系统翻译使用原生应用选择界面，显示应用图标并支持选择默认应用。",
+    "本地修改扫描支持逐本选择、批量授权与文件夹授权。",
+    "新增后台自动重载，保留书签、笔记和阅读记录；当前阅读在重新打开时切换新正文。",
+    "调整三列书架书名显示，并显示当前选择的系统翻译应用。",
     "更多功能请自行体验。"
   ]
 }
