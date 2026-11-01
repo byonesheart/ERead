@@ -1,14 +1,14 @@
 {
-  "versionCode": 79,
-  "versionName": "1.11.25-beta.6",
+  "versionCode": 80,
+  "versionName": "1.11.25-beta.7",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.25-beta.6",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.25-beta.6/ERead-1.11.25-beta.6-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.25-beta.7",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.25-beta.7/ERead-1.11.25-beta.7-release.apk",
   "mirrors": [],
   "changelog": [
-    "本地修改扫描支持逐本选择、批量授权与文件夹授权。",
-    "新增后台自动重载，保留书签、笔记和阅读记录；当前阅读在重新打开时切换新正文。",
-    "调整三列书架书名显示，并显示当前选择的系统翻译应用。",
+    "完善两行书名显示，新增重载动画及自动备份封面进度。",
+    "自动备份改为打开软件或返回前台时触发，统一手动与自动备份的计费网络设置。",
+    "系统翻译仅显示可调用的应用，保留系统图标选择界面。",
     "更多功能请自行体验。"
   ]
 }
