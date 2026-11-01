@@ -6,8 +6,16 @@ import java.security.MessageDigest
 /** Background inspection never modifies reading caches or requests permission. */
 internal class LocalSourceChanges(private val context: Context) {
     private val preferences = context.getSharedPreferences("local_source_snapshots", 0)
-    private fun sources(book: Book): List<String> {
+    internal fun sourcePaths(book: Book): List<String> {
         if (book.format != BookFormat.IMAGES) return listOfNotNull(book.sourceUri ?: book.sourcePath)
+        val source = book.sourceUri ?: book.sourcePath
+        if (source != null) {
+            val directory = documentFile(source)?.takeIf { it.isDirectory }
+            val tree = android.net.Uri.parse(source).takeIf { android.provider.DocumentsContract.isTreeUri(it) && "document" !in it.pathSegments }
+            fun readable(name: String) = name.substringAfterLast('.', "").lowercase() in setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "avif", "heic", "heif", "tif", "tiff", "svg", "pdf")
+            if (directory != null) return directory.walkTopDown().filter { it.isFile && readable(it.name) }.map { it.path }.sorted().toList()
+            if (tree != null) return localSourceFolderFiles(context, tree).filterValues(::readable).keys.map { it.toString() }.sorted()
+        }
         val pages = book.chapters.flatMap { it.pages }.map { it.path }.distinct()
         return if (pages.size == 1 && book.sourceFileName != null && book.sourceUri != null) listOf(book.sourceUri) else pages
     }
@@ -31,7 +39,7 @@ internal class LocalSourceChanges(private val context: Context) {
 
     /** Reuse the digest from the import copy/TXT decode; metadata covers linked PDF/image imports. */
     fun imported(book: Book, digest: String? = null) {
-        val sources = sources(book)
+        val sources = sourcePaths(book)
         if (sources.isEmpty()) return
         // A completed copy remains a valid import even if its temporary source has disappeared.
         val metadata = if (digest == null) runCatching { identity(sources) }.getOrNull() else null
@@ -43,11 +51,11 @@ internal class LocalSourceChanges(private val context: Context) {
     }
     /** Only a successful source save or download may reset the accepted content baseline. */
     fun accepted(book: Book, check: () -> Unit = {}) {
-        imported(book, fingerprint(sources(book), check))
+        imported(book, fingerprint(sourcePaths(book), check))
     }
     fun changed(book: Book, check: () -> Unit = {}): Boolean {
         if (book.cloudOnly || book.isDemo) return false
-        val sources = sources(book)
+        val sources = sourcePaths(book)
         if (sources.isEmpty()) return false
         val current = fingerprint(sources, check)
         if (!preferences.contains(book.id + ":key"))

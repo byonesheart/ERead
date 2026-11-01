@@ -60,7 +60,7 @@ class DocumentImporter(private val context: Context) {
     }
 
     suspend fun importFiles(uris: List<Uri>, mode: LibraryMode, rule: String, mimeType: String? = null,
-                            forceCopy: Boolean = false, onBookImported: suspend (Book) -> Unit = {}): List<Book> = withContext(Dispatchers.IO) {
+                            forceCopy: Boolean = false, reloadBook: Book? = null, onBookImported: suspend (Book) -> Unit = {}): List<Book> = withContext(Dispatchers.IO) {
         val work = currentCoroutineContext()
         importTask {
             if (mode == LibraryMode.NOVEL) TextParser.validateRule(rule)
@@ -82,10 +82,10 @@ class DocumentImporter(private val context: Context) {
             val imageSources = sources.filter { !it.isDirectory && kind(it) == BookFormat.IMAGES }
             val imageUris = imageSources.map { it.uri }
             if (imageUris.isNotEmpty()) {
-                val imported = runCatching { importImages(imageUris, LibraryMode.COMIC) }
+                val imported = runCatching { importImages(imageUris, LibraryMode.COMIC, reloadBook) }
                     .onFailure { rethrowCancellation(it); failures += "图片：${it.message ?: "导入失败"}" }.getOrNull()
                 if (imported != null) {
-                    LocalSourceChanges(context).imported(imported)
+                    if (reloadBook == null) LocalSourceChanges(context).imported(imported)
                     onBookImported(imported)
                     books += imported
                 }
@@ -93,10 +93,10 @@ class DocumentImporter(private val context: Context) {
             sources.filterNot { it in imageSources }.forEach { item ->
                 work.ensureActive()
                 val imported = runCatching {
-                    if (item.isDirectory) return@runCatching importComicFolder(item)
+                    if (item.isDirectory) return@runCatching importComicFolder(item, reloadBook)
                     val format = kind(item) ?: throw IllegalArgumentException("不支持的文件格式")
-                    val id = UUID.randomUUID().toString()
-                    val directory = File(context.filesDir, "books/$id").apply { mkdirs() }
+                    val id = reloadBook?.id ?: UUID.randomUUID().toString()
+                    val directory = importDirectory(id, reloadBook != null)
                     val timing = ImportDiagnostics()
                     diagnostics = timing
                     var status = "failed"
@@ -125,7 +125,7 @@ class DocumentImporter(private val context: Context) {
                         timing.count("sourceBytes", imported.sourceFileBytes ?: 0)
                         imported.copy(sourcePath = documentFile(reference.path)?.absolutePath,
                             sourceUri = item.permissionUri.toString(), sourceLinked = reference.linked).also {
-                                LocalSourceChanges(context).imported(it, sourceDigest)
+                                if (reloadBook == null) LocalSourceChanges(context).imported(it, sourceDigest)
                             }
                     } catch (error: Throwable) {
                         status = if (error is CancellationException) "canceled" else "failed"
@@ -153,12 +153,17 @@ class DocumentImporter(private val context: Context) {
         }
     }
 
-    private fun importComicFolder(root: SourceItem): Book {
+    private fun importDirectory(id: String, reload: Boolean): File {
+        val root = File(context.filesDir, "books/$id")
+        return (if (reload) File(root, "source-${UUID.randomUUID()}") else root).apply { mkdirs() }
+    }
+
+    private fun importComicFolder(root: SourceItem, reloadBook: Book? = null): Book {
         require(root.isDirectory) { "请选择包含图片或 PDF 的漫画文件夹" }
-        val id = UUID.randomUUID().toString()
-        val directory = File(context.filesDir, "books/$id").apply { mkdirs() }
+        val id = reloadBook?.id ?: UUID.randomUUID().toString()
+        val directory = importDirectory(id, reloadBook != null)
         try {
-            val linkedRoot = retainDocumentReadPermission(context, root.permissionUri)
+            val linkedRoot = reloadBook == null && retainDocumentReadPermission(context, root.permissionUri)
             if (!linkedRoot) warn("${root.name}：来源未提供持久读取授权，漫画页面使用离线副本")
             val title = root.name
             val tree = mutableMapOf<String, List<SourceItem>>()
@@ -750,14 +755,14 @@ class DocumentImporter(private val context: Context) {
         return sections
     }
 
-    private fun importImages(uris: List<Uri>, mode: LibraryMode): Book {
-        val id = UUID.randomUUID().toString()
-        val directory = File(context.filesDir, "books/$id").apply { mkdirs() }
+    private fun importImages(uris: List<Uri>, mode: LibraryMode, reloadBook: Book? = null): Book {
+        val id = reloadBook?.id ?: UUID.randomUUID().toString()
+        val directory = importDirectory(id, reloadBook != null)
         try {
             val ordered = uris.sortedWith { a, b -> NaturalOrder.compare(displayName(a), displayName(b)) }
             val references = ordered.mapIndexed { index, uri ->
                 report("整理图片", displayName(uri), index, ordered.size)
-                reference(sourceInfo(uri), directory, "image-$index.${imageExtension(displayName(uri))}")
+                reference(sourceInfo(uri), directory, "image-$index.${imageExtension(displayName(uri))}", inheritedGrant = if (reloadBook != null) false else null)
             }
             val pages = references.mapIndexed { index, source ->
                 validateImage(source.path)

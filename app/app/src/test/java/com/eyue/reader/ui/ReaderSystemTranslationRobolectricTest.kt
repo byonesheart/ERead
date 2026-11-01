@@ -46,7 +46,9 @@ class ReaderSystemTranslationRobolectricTest {
         for (name in listOf("first", "second")) {
             val resolver = ResolveInfo().apply { activityInfo = ActivityInfo().apply {
                 packageName = "test.$name"; this.name = "Translator"; exported = true
+                nonLocalizedLabel = "翻译-$name"
             } }
+            shadowOf(context.packageManager).addOrUpdateActivity(resolver.activityInfo)
             shadowOf(context.packageManager).addResolveInfoForIntent(readerTranslationIntent("文字"), resolver)
         }
         openReaderTranslation(context, "文字")
@@ -63,6 +65,7 @@ class ReaderSystemTranslationRobolectricTest {
         rememberReaderTranslator(context, android.app.Activity.RESULT_CANCELED, selected)
         assertNull(context.getSharedPreferences("reader_translation", 0).getString("component", null))
         rememberReaderTranslator(context, android.app.Activity.RESULT_OK, selected)
+        assertEquals("翻译-second", selectedReaderTranslatorLabel(context))
         openReaderTranslation(context, "再次选字")
         assertEquals("test.second", shadowOf(context).nextStartedActivity.component!!.packageName)
     }

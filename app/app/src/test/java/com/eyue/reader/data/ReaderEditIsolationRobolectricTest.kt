@@ -186,6 +186,7 @@ class ReaderEditIsolationRobolectricTest {
         val book = original.copy(sourceFileName = "扫描授权.txt", chapters = listOf(original.chapters.single().copy(textPath = cached.path)))
         openLibrary(book)
         vm.resumeSession()
+        vm.setScannedBooks(setOf(book.id))
         vm.setScanLocalChanges(true)
         await { !vm.scanningLocalSources }
         // Wait for the actual IO job, not only its initial false state.
@@ -207,6 +208,90 @@ class ReaderEditIsolationRobolectricTest {
         vm.setScanLocalChanges(false)
         assertTrue(vm.localSourceChangedIds.isEmpty())
         assertTrue(vm.localSourceScanIssues.isEmpty())
+    }
+
+    @Test fun automaticReloadStagesAnOpenBookAndSharesItsNotesWithoutDuplicateImportPrompts() {
+        val original = textBook("后台同步", "第一章\n原始正文。")
+        val cached = File(app.filesDir, "books/${original.id}/old-cached.txt").apply { parentFile!!.mkdirs(); writeText("第一章\n原始正文。") }
+        val selected = original.copy(sourceUri = RenameFolderTestProvider(root, true).register(app).uri("后台同步.txt").toString(), sourceFileName = "后台同步.txt", chapters = listOf(original.chapters.single().copy(textPath = cached.path)))
+        val other = textBook("未选择", "第一章\n不要同步。")
+        openLibrary(selected, other)
+        val note = Annotation(bookId = selected.id, chapterIndex = 0, pageIndex = 0, quote = "正文", note = "要保留的笔记", createdAt = 12345L)
+        vm.annotate(note)
+        vm.setScannedBooks(setOf(selected.id))
+        vm.setScanLocalChanges(true)
+        await { app.getSharedPreferences("local_source_snapshots", 0).contains(selected.id) && !vm.scanningLocalSources }
+        vm.open(selected)
+        File(selected.sourcePath!!).writeText("第一章\n新的正文。")
+        File(other.sourcePath!!).writeText("第一章\n未选书的外部变化。")
+        vm.setAutoReloadSources(true)
+        await { selected.id in vm.pendingSourceReloadIds && selected.id !in vm.reloadingSourceIds }
+        assertEquals("第一章\n原始正文。", readChapterText(vm.activeReaderBook!!.chapters.single()))
+        assertNull(vm.pendingImportConflict)
+        assertNull(vm.duplicateImportTitle)
+        assertEquals(2, vm.state.books.size)
+        vm.progress(0, 0, 5, .4f)
+        vm.close()
+        await { selected.id !in vm.pendingSourceReloadIds && book(selected.id).contentVersion > selected.contentVersion }
+        assertTrue(readChapterText(book(selected.id).chapters.single()).contains("新的正文"))
+        assertEquals(.4f, book(selected.id).progress)
+        assertEquals(other.contentVersion, book(other.id).contentVersion)
+        val savedNote = vm.state.annotations.single { it.id == note.id }
+        assertEquals(note.note, savedNote.note)
+        assertEquals(note.createdAt, savedNote.createdAt)
+        assertEquals(note.bookId, savedNote.bookId)
+        vm.open(selected) // a callback holding an old shelf object must still open the new generation.
+        await { vm.activeReaderBook?.contentVersion?.let { it > selected.contentVersion } == true }
+        assertTrue(readChapterText(vm.activeReaderBook!!.chapters.single()).contains("新的正文"))
+        await { !cached.exists() }
+        assertEquals("第一章\n新的正文。", File(selected.sourcePath!!).readText())
+    }
+
+    @Test fun openingDiscoversADurableReloadEvenIfItsCompletionCallbackWasInterrupted() {
+        val original = textBook("落盘恢复", "第一章\n旧的正文。")
+        val cached = File(app.filesDir, "books/${original.id}/cached.txt").apply { parentFile!!.mkdirs(); writeText("第一章\n旧的正文。") }
+        val selected = original.copy(sourceUri = RenameFolderTestProvider(root, true).register(app).uri("落盘恢复.txt").toString(),
+            chapters = listOf(original.chapters.single().copy(textPath = cached.path)))
+        openLibrary(selected)
+        vm.open(selected)
+        File(selected.sourcePath!!).writeText("第一章\n已同步的正文。")
+        runBlocking { LocalSourceReloads(app).prepare(book(selected.id), DEFAULT_CHAPTER_RULE) }
+        assertTrue(vm.pendingSourceReloadIds.isEmpty())
+        vm.open(selected)
+        await { vm.activeReaderBook?.contentVersion?.let { it > selected.contentVersion } == true }
+        assertTrue(readChapterText(vm.activeReaderBook!!.chapters.single()).contains("已同步的正文"))
+    }
+
+    @Test fun aPreparedReloadSurvivesProcessRestartAndCannotEraseRecordsOrTheOriginalSource() {
+        val original = textBook("重启同步", "第一章\n旧的正文。")
+        val cached = File(app.filesDir, "books/${original.id}/restart-cache.txt").apply { parentFile!!.mkdirs(); writeText("第一章\n旧的正文。") }
+        val selected = original.copy(sourceUri = RenameFolderTestProvider(root, true).register(app).uri(File(original.sourcePath!!).name).toString(),
+            chapters = listOf(original.chapters.single().copy(textPath = cached.path)))
+        File(selected.sourcePath!!).writeText("第一章\n新正文。")
+        runBlocking { LocalSourceReloads(app).prepare(selected, DEFAULT_CHAPTER_RULE) }
+        openLibrary(selected)
+        assertEquals(selected.id, vm.state.books.single().id)
+        assertTrue(readChapterText(vm.state.books.single().chapters.single()).contains("新正文"))
+        assertTrue(File(selected.sourcePath!!).exists())
+        assertFalse(cached.exists())
+        assertEquals(vm.state.books.single().contentVersion, LibraryRepository(app).load().books.single().contentVersion)
+    }
+
+    @Test fun aFailedReloadKeepsTheOriginalLibraryReadableAndCanBeRetried() {
+        val original = textBook("失败重试", "第一章\n缓存仍可阅读。")
+        val cached = File(app.filesDir, "books/${original.id}/failure-cache.txt").apply { parentFile!!.mkdirs(); writeText("第一章\n缓存仍可阅读。") }
+        val selected = original.copy(sourceUri = RenameFolderTestProvider(root, true).register(app).uri(File(original.sourcePath!!).name).toString(),
+            chapters = listOf(original.chapters.single().copy(textPath = cached.path)))
+        openLibrary(selected)
+        File(selected.sourcePath!!).writeText("")
+        vm.reloadLocalSource(selected)
+        await { selected.id in vm.localSourceScanIssues && selected.id !in vm.reloadingSourceIds }
+        assertEquals(selected.contentVersion, book(selected.id).contentVersion)
+        assertTrue(readChapterText(book(selected.id).chapters.single()).contains("缓存仍可阅读"))
+        File(selected.sourcePath!!).writeText("第一章\n修复后的正文。")
+        vm.reloadLocalSource(selected)
+        await { book(selected.id).contentVersion > selected.contentVersion && selected.id !in vm.reloadingSourceIds }
+        assertTrue(readChapterText(book(selected.id).chapters.single()).contains("修复后的正文"))
     }
 
     @Test fun anEditWaitingForOneBookDoesNotBlockAnotherBooksEditOrCloudAction() {
@@ -368,7 +453,7 @@ class ReaderEditIsolationRobolectricTest {
     @Test fun missingSourceSaveFailureAndPermissionCancellationDoNotDiscardPreview() {
         val original = textBook("保留失败预览", "第一章\n旧正文。")
         // The independent read cache remains readable when the original source is temporarily unavailable.
-        val cache = File(root, "failure-cache.txt").apply { writeText(File(original.sourcePath!!).readText()) }
+        val cache = File(app.filesDir, "books/${original.id}/failure-cache.txt").apply { parentFile!!.mkdirs(); writeText(File(original.sourcePath!!).readText()) }
         openLibrary(original.copy(chapters = listOf(original.chapters.single().copy(textPath = cache.absolutePath))))
         vm.open(book(original.id))
         vm.editTxt(0, 4, 7, "失败后仍保留")
@@ -578,6 +663,6 @@ class ReaderEditIsolationRobolectricTest {
             if (condition()) return
             Thread.sleep(5)
         }
-        fail("Timed out waiting for isolated edit: ${vm.message}; editing=${vm.editingBookIds}")
+        fail("Timed out waiting for isolated edit: ${vm.message}; editing=${vm.editingBookIds}; sourceIssues=${vm.localSourceScanIssues}")
     }
 }

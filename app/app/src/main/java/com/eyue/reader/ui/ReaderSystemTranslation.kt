@@ -36,6 +36,17 @@ internal fun readerTranslationTargets(context: Context, text: String): List<Inte
 private const val TRANSLATION_PREFERENCES = "reader_translation"
 private const val DEFAULT_TRANSLATOR = "component"
 
+internal fun selectedReaderTranslatorLabel(context: Context): String {
+    val remembered = context.getSharedPreferences(TRANSLATION_PREFERENCES, 0).getString(DEFAULT_TRANSLATOR, null)
+    val targets = readerTranslationTargets(context, "")
+    val component = targets.firstOrNull { it.component?.flattenToString() == remembered }?.component
+        ?: context.packageManager.resolveActivity(readerTranslationIntent(""), android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo?.let { info -> ComponentName(info.packageName, info.name) }?.takeIf { resolved -> targets.any { it.component == resolved } }
+        ?: targets.singleOrNull()?.component
+    return component?.let { runCatching { context.packageManager.getActivityInfo(it, 0).loadLabel(context.packageManager).toString() }.getOrNull() }
+        ?: "未选择 · 使用系统选择"
+}
+
 /** The platform picker owns app labels/icons and returns a component without translating empty text. */
 internal fun readerTranslationPickerIntent(context: Context): Intent? {
     val targets = readerTranslationTargets(context, "")

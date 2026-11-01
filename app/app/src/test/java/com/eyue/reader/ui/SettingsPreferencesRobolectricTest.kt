@@ -43,6 +43,30 @@ class SettingsPreferencesRobolectricTest {
         compose.onNodeWithText("版本 ${BuildConfig.VERSION_NAME}").assertDoesNotExist()
     }
 
+    @Test fun sourceScanningIsPerBookAndAutomaticReloadRequiresItsWarning() {
+        val book = Book(id = "selected", title = "书籍", mode = LibraryMode.NOVEL, format = BookFormat.TXT, chapters = emptyList())
+        var selected by mutableStateOf(emptySet<String>())
+        var auto by mutableStateOf(false)
+        var granted = emptySet<String>()
+        var folders = 0
+        compose.setContent { MaterialTheme { SettingsScreen(LibraryState(books = listOf(book), scannedBookIds = selected, autoReloadSources = auto),
+            {}, {}, {}, {}, sourceAuthorizations = mapOf(book.id to false), onScannedBooks = { selected = it },
+            onAutoReload = { auto = it }, onGrantScanBooks = { granted = it }, onGrantScanFolder = { folders++ }) } }
+        compose.onNodeWithTag("settings_scan_local_changes").performScrollTo().performClick()
+        compose.onNodeWithTag("source_access_selected").assertTextEquals("未授权")
+        compose.onNodeWithTag("source_scan_book_selected").performClick()
+        compose.runOnIdle { assertEquals(setOf(book.id), selected) }
+        compose.onNodeWithTag("source_grant_batch").performClick()
+        compose.runOnIdle { assertEquals(selected, granted) }
+        compose.onNodeWithTag("source_grant_folder").performClick()
+        compose.runOnIdle { assertEquals(1, folders) }
+        compose.onNodeWithTag("source_auto_reload").performClick()
+        compose.runOnIdle { assertFalse(auto) }
+        compose.onNodeWithTag("source_reload_warning").assertExists()
+        compose.onNodeWithTag("source_reload_confirm").performClick()
+        compose.runOnIdle { assertTrue(auto) }
+    }
+
     @Test fun cacheActionsRequireConfirmationAndDispatchSeparately() {
         var history = 0; var audio = 0
         compose.setContent { MaterialTheme { SettingsScreen(LibraryState(), {}, {}, {}, { history++ }, onClearAiSpeechCaches = { audio++ }) } }

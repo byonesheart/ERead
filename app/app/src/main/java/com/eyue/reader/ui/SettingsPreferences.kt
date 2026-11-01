@@ -46,7 +46,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 private enum class SettingsPage(val title: String) {
-    APP_THEME("主题"),
+    APP_THEME("主题"), SOURCE_SCAN("扫描本地修改"),
     SPEECH("朗读引擎"), CLOUD("WebDAV 备份与还原"), CACHE("清理缓存"),
     FEEDBACK("问题反馈"), SUPPORT("支持作者"), ABOUT("关于"), AUTHOR("作者"),
     PRIVACY("隐私政策"), TERMS("用户协议"), OPEN_SOURCE("开源相关"), CHANGELOG("更新日志"),
@@ -77,14 +77,20 @@ private enum class SettingsPage(val title: String) {
     availableUpdate: AppUpdateResult? = null, onShowRecentReading: (Boolean) -> Unit = {},
     developerMode: Boolean = false, onEnableDeveloperMode: () -> Unit = {}, onScanLocalChanges: (Boolean) -> Unit = {},
     localSourceScanIssues: Map<String, String> = emptyMap(), scanningLocalSources: Boolean = false,
-    onGrantScanSource: (Book) -> Unit = {}) {
+    sourceAuthorizations: Map<String, Boolean> = emptyMap(),
+    sourceSyncing: Set<String> = emptySet(), sourcePending: Set<String> = emptySet(),
+    onScannedBooks: (Set<String>) -> Unit = {}, onAutoReload: (Boolean) -> Unit = {},
+    onGrantScanBooks: (Set<String>) -> Unit = {}, onGrantScanFolder: () -> Unit = {}) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
     val page = pages.lastOrNull()
     val pageScroll = remember(page) { ScrollState(0) }
     val context = LocalContext.current
+    var translatorRevision by remember { mutableIntStateOf(0) }
+    val translatorLabel = remember(translatorRevision) { selectedReaderTranslatorLabel(context) }
     val translationPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         rememberReaderTranslator(context, result.resultCode, result.data)
+        translatorRevision++
     }
 
     val cleanupUsage by produceState<Result<LibraryCleanupUsage>?>(null, state, speechCacheRevision, page == SettingsPage.CACHE) {
@@ -104,7 +110,7 @@ private enum class SettingsPage(val title: String) {
             }
             Text(page.title, style = MaterialTheme.typography.titleMedium)
         }
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(pageScroll).padding(16.dp),
+        Column(Modifier.weight(1f).fillMaxWidth().then(if (page == SettingsPage.SOURCE_SCAN) Modifier else Modifier.verticalScroll(pageScroll)).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             when (page) {
                 null -> {
@@ -124,18 +130,8 @@ private enum class SettingsPage(val title: String) {
                         SettingsSeparator()
                         SettingsToggle("墨水屏模式", "高对比度显示，关闭翻页动画", state.einkMode, onEinkMode, "settings_eink_mode", Icons.Outlined.Contrast)
                         SettingsSeparator()
-                        SettingsToggle("扫描本地修改", "启动及返回前台时检查源文件，在封面显示更新标识", state.scanLocalChanges, onScanLocalChanges,
-                            "settings_scan_local_changes", Icons.Outlined.Sync)
-                        if (state.scanLocalChanges) {
-                            if (scanningLocalSources) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("source_scan_progress"))
-                            localSourceScanIssues.forEach { (id, issue) ->
-                                state.books.firstOrNull { it.id == id }?.let { book ->
-                                    SettingsLink(Icons.Outlined.FolderOpen, book.title, "源文件不可读取 · 重新选择",
-                                        "source_scan_access_$id", { onGrantScanSource(book) })
-                                    Text(issue, Modifier.padding(horizontal = 16.dp), fontSize = 12.sp)
-                                }
-                            }
-                        }
+                        SettingsLink(Icons.Outlined.Sync, "扫描本地修改", if (state.scanLocalChanges) "已开启 · ${state.books.count { it.id in state.scannedBookIds && !it.cloudOnly && !it.isDemo }} 本" else "已关闭",
+                            "settings_scan_local_changes", { open(SettingsPage.SOURCE_SCAN) })
                         SettingsSeparator()
                         SettingsToggle("平板横屏双页", "宽屏横向翻页时并排显示两页", state.tabletDualPage, onTabletDualPage, "settings_tablet_dual_page", Icons.AutoMirrored.Outlined.MenuBook)
                         SettingsSeparator()
@@ -145,7 +141,7 @@ private enum class SettingsPage(val title: String) {
                     SettingsCard(Modifier.testTag("settings_services_card")) {
                         SettingsLink(Icons.Outlined.Cloud, "WebDAV 备份与还原", if (cloudConfigured) "已连接" else "未配置", "settings_cloud", { open(SettingsPage.CLOUD) })
                         SettingsSeparator()
-                        SettingsLink(Icons.Outlined.Translate, "系统翻译应用", "", "settings_translation", { readerTranslationPickerIntent(context)?.let { request ->
+                        SettingsLink(Icons.Outlined.Translate, "系统翻译应用", translatorLabel, "settings_translation", { readerTranslationPickerIntent(context)?.let { request ->
                             try { translationPicker.launch(request) }
                             catch (_: android.content.ActivityNotFoundException) { showMissingTranslation(context) }
                             catch (_: SecurityException) { showMissingTranslation(context) }
@@ -160,6 +156,9 @@ private enum class SettingsPage(val title: String) {
                         SettingsLink(Icons.Outlined.Info, "关于", if (availableUpdate?.available == true) "待更新" else "", "settings_about", { open(SettingsPage.ABOUT) })
                     }
                 }
+                SettingsPage.SOURCE_SCAN -> SourceScanSettings(state, sourceAuthorizations, localSourceScanIssues,
+                    scanningLocalSources, sourceSyncing, sourcePending, onScanLocalChanges, onScannedBooks, onAutoReload,
+                    onGrantScanBooks, onGrantScanFolder)
                 SettingsPage.APP_THEME -> AppThemeSettingsPage(state.appTheme, onAppTheme)
                 SettingsPage.SPEECH -> {
                     SpeechEngineSettings(state.speechEngine, aiSpeechConfig, onSpeechEngine, onSaveAiSpeech,

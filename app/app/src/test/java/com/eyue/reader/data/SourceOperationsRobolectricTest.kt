@@ -136,6 +136,64 @@ class SourceOperationsRobolectricTest {
         it.attachInfo(context, ProviderInfo().apply { this.authority = authority; exported = true; grantUriPermissions = true })
         ShadowContentResolver.registerProviderInternal(authority, it)
     }
+    @Test fun epubReloadPreservesTheCompletePackageAndMovesRecordsWithoutCreatingAnotherBook() {
+        val source = File(root, "novel.epub")
+        fun write(text: String) {
+            java.util.zip.ZipOutputStream(source.outputStream()).use { zip ->
+                val entries = mapOf("META-INF/container.xml" to "<container><rootfile full-path='OPS/book.opf'/></container>",
+                    "OPS/book.opf" to "<package><metadata><title>书</title></metadata><manifest><item id='body' href='body.xhtml'/></manifest><spine><itemref idref='body'/></spine></package>",
+                    "OPS/body.xhtml" to "<html><head><link rel='stylesheet' href='book.css'/></head><body><h1>第一章</h1><p>$text</p></body></html>",
+                    "OPS/book.css" to "@font-face{font-family:book;src:url(font.woff)} p{margin:1em}", "OPS/font.woff" to "original-font-bytes")
+                entries.forEach { (name, content) -> zip.putNextEntry(java.util.zip.ZipEntry(name)); zip.write(content.toByteArray()); zip.closeEntry() }
+            }
+        }
+        write("独立笔记")
+        val provider = RenameFolderTestProvider(root, true).register(context)
+        val original = kotlinx.coroutines.runBlocking { DocumentImporter(context).importFiles(listOf(provider.uri(source.name)), LibraryMode.NOVEL, DEFAULT_CHAPTER_RULE).single() }
+        val note = Annotation(bookId = original.id, chapterIndex = 0, pageIndex = 0, quote = "独立笔记", note = "我的记录", createdAt = 123L)
+        write("外部新增文字，独立笔记")
+        val store = LocalSourceReloads(context)
+        val prepared = kotlinx.coroutines.runBlocking { store.prepare(original, DEFAULT_CHAPTER_RULE) }
+        assertEquals(original.id, prepared.id)
+        assertTrue(File(original.sourcePath!!).exists())
+        assertArrayEquals(source.readBytes(), File(prepared.sourcePath!!).readBytes())
+        val updated = store.recover(LibraryState(books = listOf(original), annotations = listOf(note)))
+        assertEquals(1, updated.books.size)
+        assertEquals(note.id, updated.annotations.single().id)
+        assertEquals(note.note, updated.annotations.single().note)
+        assertEquals(note.createdAt, updated.annotations.single().createdAt)
+        assertTrue(readChapterText(updated.books.single().chapters.first()).contains("外部新增文字"))
+        LibraryRepository(context).save(updated)
+        store.finish(updated.books.single(), updated.annotations)
+        assertTrue(source.isFile)
+        assertTrue(File(prepared.sourcePath!!).isFile)
+        assertFalse(File(original.sourcePath!!).exists())
+    }
+    @Test fun batchAndFolderAuthorizationMatchChangedSourcesWithoutComparingTheirContents() {
+        val book = book().copy(sourceFileName = "original.epub", sourceUri = "content://expired/original.epub")
+        File(root, "original.epub").writeText("different edited source contents")
+        val second = File(root, "second.txt").apply { writeText("also edited") }
+        val other = book.copy(id = "second", sourceFileName = second.name, sourceUri = "content://expired/second.txt")
+        val provider = RenameFolderTestProvider(root, supported = true).register(context)
+        val folder = book.copy(id = "comic-folder", format = BookFormat.IMAGES, sourceUri = provider.tree.toString(), sourceFileName = "folder", sourceFileBytes = null)
+        assertEquals(provider.tree, localSourceGrantMatches(context, listOf(folder), listOf(provider.tree))[folder.id])
+        val matched = localSourceGrantMatches(context, listOf(book, other), listOf(provider.tree))
+        assertEquals(setOf(book.id, other.id), matched.keys)
+        assertTrue(matched.values.all { DocumentsContract.isTreeUri(it) })
+        com.eyue.reader.ui.retainBookAccess(context, provider.tree)
+        assertTrue(localSourceAuthorized(context, book.copy(sourceUri = matched.getValue(book.id).toString())))
+        val direct = localSourceGrantMatches(context, listOf(book, other), listOf(provider.uri("original.epub"), provider.uri("second.txt")))
+        assertEquals(setOf(book.id, other.id), direct.keys)
+        val ambiguous = localSourceGrantMatches(context, listOf(book, book.copy(id = "duplicate")), listOf(provider.tree))
+        assertTrue(ambiguous.isEmpty())
+    }
+    @Test fun scanSelectionAndAutoReloadPersistIndependently() {
+        val state = LibraryState(books = listOf(book()), scanLocalChanges = true, scannedBookIds = setOf("source-test"), autoReloadSources = true)
+        LibraryRepository(context).save(state)
+        val loaded = LibraryRepository(context).load()
+        assertEquals(state.scannedBookIds, loaded.scannedBookIds)
+        assertTrue(loaded.autoReloadSources)
+    }
     @Test fun systemDownloadsPublishesOnlyTheOriginalAndPreservesPrivateRenderingAssets() {
         val provider = provider("media")
         val book = book()

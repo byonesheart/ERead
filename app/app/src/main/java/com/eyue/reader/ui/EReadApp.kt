@@ -52,7 +52,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
     SideEffect { vm.updateSystemTheme(systemDark) }
     val dark = vm.state.themeMode.isDark(systemDark)
     CompositionLocalProvider(LocalSourceChangeIds provides vm.localSourceChangedIds, LocalSourceReimport provides { book ->
-        (book.sourceUri ?: book.sourcePath)?.let { vm.importFiles(listOf(android.net.Uri.parse(it)), book.mode) }
+        vm.reloadLocalSource(book)
     }) {
     EReadTheme(dark = dark, eink = vm.state.einkMode, style = vm.state.appTheme) {
         val state = vm.state.withResolvedTheme(systemDark)
@@ -128,13 +128,16 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             if (it.isNotEmpty()) vm.mode = selectedImportMode
             vm.importFiles(it, selectedImportMode)
         }
-        var scanSourceBookId by rememberSaveable { mutableStateOf<String?>(null) }
-        val scanSourceAccess = rememberLauncherForActivityResult(GrantBookWriteAccess(write = false)) { uri ->
-            val bookId = scanSourceBookId
-            scanSourceBookId = null
-            if (uri != null && bookId != null) {
+        var scanSourceBookIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
+        val scanSourceAccess = rememberLauncherForActivityResult(OpenBookDocuments()) { uris ->
+            uris.forEach { retainBookAccess(context, it) }
+            vm.grantScanSources(scanSourceBookIds.toSet(), uris)
+            scanSourceBookIds = emptyList()
+        }
+        val scanFolderAccess = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri != null) {
                 retainBookAccess(context, uri)
-                vm.grantScanSource(bookId, uri)
+                vm.grantScanSources(vm.state.books.filterNot { it.cloudOnly || it.isDemo }.map { it.id }.toSet(), listOf(uri))
             }
         }
         val sourceWriteAccess = rememberLauncherForActivityResult(GrantBookWriteAccess()) { uri ->
@@ -373,10 +376,11 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                     onAppTheme = vm::setAppTheme, availableUpdate = updateSession.availableUpdate,
                                     onCheckUpdate = updateSession::checkNow, onShowRecentReading = vm::setShowRecentReading, onScanLocalChanges = vm::setScanLocalChanges,
                                     localSourceScanIssues = vm.localSourceScanIssues, scanningLocalSources = vm.scanningLocalSources,
-                                    onGrantScanSource = { book ->
-                                        scanSourceBookId = book.id
-                                        scanSourceAccess.launch(book.sourceUri ?: book.sourcePath.orEmpty())
-                                    },
+                                    sourceAuthorizations = vm.sourceAuthorizations, sourceSyncing = vm.reloadingSourceIds,
+                                    sourcePending = vm.pendingSourceReloadIds, onScannedBooks = vm::setScannedBooks,
+                                    onAutoReload = vm::setAutoReloadSources,
+                                    onGrantScanBooks = { ids -> scanSourceBookIds = ids.toList(); scanSourceAccess.launch(arrayOf("*/*")) },
+                                    onGrantScanFolder = { scanFolderAccess.launch(null) },
                                     developerMode = updateSession.developerMode, onEnableDeveloperMode = {
                                         runCatching { developerPreferences.enable() }.onSuccess {
                                             updateSession.configureDeveloperMode(true)

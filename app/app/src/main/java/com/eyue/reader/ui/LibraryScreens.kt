@@ -355,7 +355,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                             minLines = 2, maxLines = 2,
                             style = LocalTextStyle.current.copy(platformStyle = PlatformTextStyle(includeFontPadding = false)),
                             overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().padding(top = 11.dp)
-                                .height(with(androidx.compose.ui.platform.LocalDensity.current) { 40.sp.toDp() })
+                                .requiredHeight(with(androidx.compose.ui.platform.LocalDensity.current) { 42.sp.toDp() })
                                 .testTag("shelf_book_title_${book.id}").combinedClickable(
                                 onClick = { if (selectingBackup) selectBackup(book) else onOpen(book) },
                                 onLongClick = { if (!selectingBackup && onRenameBook != null) rename(book) }))
@@ -713,8 +713,8 @@ internal val LocalSourceReimport = staticCompositionLocalOf<(Book) -> Unit> { {}
     var showSourceChange by remember(book.id) { mutableStateOf(false) }
     val reimportSource = LocalSourceReimport.current
     if (showSourceChange) AlertDialog(onDismissRequest = { showSourceChange = false }, title = { Text("源文件已修改") },
-        text = { Text("书架中的副本和阅读记录尚未更改。重新导入后，可在同名书籍确认中选择保留的版本。") },
-        confirmButton = { TextButton(onClick = { showSourceChange = false; reimportSource(book) }) { Text("重新导入") } },
+        text = { Text("将使用外部原文件更新本书正文缓存，可能覆盖应用内未保存的正文编辑。书签、笔记、标记、划线和阅读记录保留。") },
+        confirmButton = { TextButton(onClick = { showSourceChange = false; reimportSource(book) }) { Text("同步原文件") } },
         dismissButton = { TextButton(onClick = { showSourceChange = false }) { Text("关闭") } })
     val sourceChanged = book.id in LocalSourceChangeIds.current
     val bitmap by rememberBookCoverBitmap(book)
