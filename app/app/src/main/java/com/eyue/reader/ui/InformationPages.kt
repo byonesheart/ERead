@@ -187,7 +187,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent(onHistory: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 优化覆盖、滑动和仿真翻页及拖拽响应，稳定模式切换时的阅读位置。\n• 自动翻页／滚动支持快捷启动、运行时调速，展开工具栏不中断自动阅读。\n• 完善长按选字、系统翻译及跨页选取，简化阅读设置。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 完善 EPUB／MOBI 编辑预览与原书排版，保存写回源文件，重命名同步修改文件名。\n• 优化外部打开、导入和文件授权，修复保存后持续加载等问题。\n• 本地修改扫描支持逐本选择、批量及文件夹授权，可后台重载并保留书签、笔记和阅读记录。\n• 完善个人 WebDAV 备份与下载目录、封面上传进度；自动备份在启动和返回前台时触发，统一计费网络设置。\n• 系统翻译支持筛选可调用应用、图标选择及默认应用，完善两行书名和重载状态显示。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton(onClick = onHistory, modifier = Modifier.testTag("settings_history_changelog")) { Text("历史更新日志") }
     }
