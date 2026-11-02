@@ -33,9 +33,9 @@ class ReaderSourceCssSettingsRobolectricTest {
         val reset = LibraryState(settings = saved).resetReaderPreferences(LibraryMode.NOVEL)
         assertTrue(reset.settings.continuousEbookScroll)
     }
-    @Test fun sourceCssDefaultsOffPersistsIndependentlyAndIsNotChangedByAppearanceProfiles() {
+    @Test fun sourceCssDefaultsOnPreservesExplicitChoicesAndIsNotChangedByAppearanceProfiles() {
         val repository = LibraryRepository(RuntimeEnvironment.getApplication())
-        assertFalse(repository.readSettings(JSONObject()).useSourceCss)
+        assertTrue(repository.readSettings(JSONObject()).useSourceCss)
         val novel = repository.readSettings(repository.writeSettings(ReaderSettings(useSourceCss = true)))
         val comic = repository.readSettings(repository.writeSettings(ReaderSettings(useSourceCss = false)))
         assertTrue(novel.useSourceCss)
@@ -43,7 +43,7 @@ class ReaderSourceCssSettingsRobolectricTest {
         val profile = novel.saveAppearanceProfile().appearanceProfiles.single()
         assertTrue(novel.applyAppearanceProfile(profile).useSourceCss)
         val reset = LibraryState(settings = novel, comicSettings = comic).resetReaderPreferences(LibraryMode.NOVEL)
-        assertFalse(reset.settings.useSourceCss)
+        assertTrue(reset.settings.useSourceCss)
         assertSame(comic, reset.comicSettings)
     }
 

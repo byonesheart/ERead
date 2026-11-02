@@ -696,6 +696,14 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         activeBookId = null
         if (closedId in pendingSourceReloadIds) viewModelScope.launch { applySourceReload(requireNotNull(closedId)) }
         sessionStarted = 0L
+        if (closedId != null && storageReady && cloudConfigured && state.cloudAutoBackup &&
+            state.books.any { it.id == closedId && it.cloudEnabled && !it.cloudOnly }) viewModelScope.launch {
+            try {
+                persistNow()
+                CloudBackupAutomation.bookClosed(getApplication(), state, cloudConfigured, closedId)
+            } catch (cancelled: CancellationException) { throw cancelled }
+              catch (failure: Exception) { message = failure.message ?: "自动备份检查失败" }
+        }
     }
 
     fun progress(chapter: Int, page: Int, offset: Int, progress: Float, bookId: String? = activeBookId,
@@ -787,6 +795,14 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         sourceWatchJob?.cancel(); sourceWatchJob = null
         scanLocalSources()
     }
+    fun setSourceScanMode(mode: SourceScanMode) {
+        if (!storageReady) return
+        changed(state.copy(scanLocalChanges = mode != SourceScanMode.OFF, sourceScanAutomatic = mode == SourceScanMode.AUTO))
+        sourceWatchJob?.cancel(); sourceWatchJob = null
+        sourceScanJob?.cancel(); scanningLocalSources = false
+        scanLocalSources()
+    }
+    fun scanLocalSourcesNow() = scanLocalSources(manual = true)
     fun refreshSourceAccess() {
         sourceAccessJob?.cancel()
         sourceAccessJob = viewModelScope.launch {
@@ -794,11 +810,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             sourceAuthorizations = withContext(Dispatchers.IO) { books.associate { it.id to localSourceAuthorized(getApplication(), it) } }
         }
     }
-    private fun scanLocalSources() {
+    private fun scanLocalSources(manual: Boolean = false) {
         refreshSourceAccess()
-        if (state.scanLocalChanges && state.autoReloadSources && sourceWatchJob?.isActive != true) sourceWatchJob = viewModelScope.launch {
+        if (state.sourceScanMode == SourceScanMode.AUTO && state.autoReloadSources && sourceWatchJob?.isActive != true) sourceWatchJob = viewModelScope.launch {
             while (true) { delay(30_000); if (sourceScanJob?.isActive != true) scanLocalSources() }
         }
+        if (state.sourceScanMode == SourceScanMode.MANUAL && !manual) return
         val generation = ++sourceScanGeneration
         sourceScanJob?.cancel()
         if (!state.scanLocalChanges) { localSourceChangedIds = emptySet(); localSourceScanIssues = emptyMap(); scanningLocalSources = false; return }

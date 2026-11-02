@@ -128,6 +128,9 @@
                 style.fontStyle !== 'normal' || Number(style.fontWeight) >= 600 ||
                 (text.length <= 80 && (size > bodySize * 1.15 || size < bodySize * .85));
             if (special) return;
+            if (!node.closest('ul,ol,li,dl,dt,dd') && parseFloat(style.textIndent) >= 0 &&
+                !/^(?:flex|inline-flex|grid|inline-grid)$/.test(style.display) && style.cssFloat === 'none' &&
+                /^(?:static|relative)$/.test(style.position)) node.dataset.ereadIndent = '1';
             // Keep emphasis and note markers, while ordinary EPUB span/font wrappers
             // inherit the software body size instead of pinning the publisher's size.
             node.dataset.ereadBody = '1';
@@ -616,7 +619,8 @@
             node.style.setProperty('margin-block-end', Math.max(0, Number(config.paragraphGap) || 0) + 'px', 'important');
             node.style.setProperty('line-height', config.lineHeight + 'px', 'important');
             node.style.setProperty('letter-spacing', config.letterSpacing + 'px', 'important');
-            node.style.setProperty('text-indent', (Number.isFinite(config.indent) ? config.indent : 2) + 'em', 'important');
+            if (node.dataset.ereadIndent) node.style.setProperty('text-indent',
+                (Number.isFinite(config.indent) ? config.indent : 2) + 'em', 'important');
             // Inline publisher spans can otherwise retain their own !important metrics.
             node.querySelectorAll('*:not(sup):not(sub):not(rt):not(ruby)').forEach(child => {
                 if (child.closest('sup,sub,ruby,rt,code,kbd')) return;

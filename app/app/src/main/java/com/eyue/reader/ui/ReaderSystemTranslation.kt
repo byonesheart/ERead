@@ -37,6 +37,15 @@ internal fun readerTranslationTargets(context: Context, text: String): List<Inte
 private const val TRANSLATION_PREFERENCES = "reader_translation"
 private const val DEFAULT_TRANSLATOR = "component"
 
+private fun translatorLabel(context: Context, component: ComponentName): String = runCatching {
+    val info = context.packageManager.getActivityInfo(component, 0)
+    val app = info.applicationInfo
+    val name = if (app != null && (app.nonLocalizedLabel != null || app.labelRes != 0)) app.loadLabel(context.packageManager)
+        else info.loadLabel(context.packageManager)
+    name.toString().replace(Regex("\\s*[(（]?\\s*(?:https?://|www\\.)\\S+.*$", RegexOption.IGNORE_CASE), "")
+        .trim().trimEnd('-', '—', '|', '(', '（').trim().ifBlank { "翻译应用" }
+}.getOrDefault("翻译应用")
+
 internal fun selectedReaderTranslatorLabel(context: Context): String {
     val remembered = context.getSharedPreferences(TRANSLATION_PREFERENCES, 0).getString(DEFAULT_TRANSLATOR, null)
     val targets = readerTranslationTargets(context, "")
@@ -44,19 +53,16 @@ internal fun selectedReaderTranslatorLabel(context: Context): String {
         ?: context.packageManager.resolveActivity(readerTranslationIntent(""), android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
             ?.activityInfo?.let { info -> ComponentName(info.packageName, info.name) }?.takeIf { resolved -> targets.any { it.component == resolved } }
         ?: targets.singleOrNull()?.component
-    return component?.let { runCatching { context.packageManager.getActivityInfo(it, 0).loadLabel(context.packageManager).toString() }.getOrNull() }
+    return component?.let { translatorLabel(context, it) }
         ?: "未选择 · 使用系统选择"
 }
 
 private fun translatorChoices(context: Context): List<Pair<String, Intent>> {
     val targets = readerTranslationTargets(context, "")
-    val labels = targets.map { target ->
-        runCatching { context.packageManager.getActivityInfo(target.component!!, 0).loadLabel(context.packageManager).toString() }
-            .getOrDefault(target.component!!.packageName)
-    }
+    val labels = targets.map { target -> translatorLabel(context, target.component!!) }
     return targets.mapIndexed { index, target ->
         val label = labels[index]
-        (if (labels.count { it == label } > 1) "$label (${target.component!!.flattenToShortString()})" else label) to target
+        (if (labels.count { it == label } > 1) "$label（${labels.take(index + 1).count { it == label }}）" else label) to target
     }
 }
 

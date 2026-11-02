@@ -470,7 +470,9 @@ private fun ebookSourceOffsets(html: String, canonical: String, offsets: List<In
     }
     var cursor = 0
     fun append(until: Int) {
-        if (until <= cursor || visible.substring(cursor, until) != html.substring(cursor, until)) return
+        if (until <= cursor) return
+        val text = html.substring(cursor, until)
+        if (text.isBlank() || visible.substring(cursor, until) != text) return
         var at = cursor
         boundary(at)
         while (at < until) {

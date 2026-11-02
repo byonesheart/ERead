@@ -158,6 +158,14 @@ internal object CloudBackupAutomation {
                 .setConstraints(automaticConstraints(state.cloudAutoBackupMetered)).build())
     }
 
+    fun bookClosed(context: Context, state: LibraryState, configured: Boolean, bookId: String): androidx.work.Operation? {
+        if (!configured || cloudBackupBooks(state).none { it.id == bookId }) return null
+        // A running check may have already read the old position. Queue a follow-up, without cancelling its upload.
+        return WorkManager.getInstance(context).enqueueUniqueWork(CHANGE, ExistingWorkPolicy.APPEND_OR_REPLACE,
+            OneTimeWorkRequestBuilder<CloudBackupWorker>()
+                .setConstraints(automaticConstraints(state.cloudAutoBackupMetered)).build())
+    }
+
     internal fun uploadRequest(book: Book, account: String, allowMetered: Boolean = false): OneTimeWorkRequest =
         OneTimeWorkRequestBuilder<CloudBackupWorker>()
             .setInputData(workDataOf(KEY_BOOK to book.id, KEY_ACCOUNT to account, KEY_TITLE to book.title, "allowMetered" to allowMetered))

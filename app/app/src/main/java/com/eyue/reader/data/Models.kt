@@ -12,6 +12,7 @@ enum class ReaderBackground { PAPER, WHITE, GREEN, DARK, IMAGE, PARCHMENT, MIST_
 enum class AnnotationKind { BOOKMARK, NOTE, HIGHLIGHT, UNDERLINE }
 enum class UnderlineStyle { STRAIGHT, WAVY }
 enum class SpeechEngine { SYSTEM, AI }
+enum class SourceScanMode(val displayName: String) { AUTO("自动"), MANUAL("手动"), OFF("关闭") }
 
 data class ShelfGroup(val name: String, val mode: LibraryMode, val id: String = UUID.randomUUID().toString())
 
@@ -125,7 +126,7 @@ data class ReaderSettings(
     val appearanceProfiles: List<ReaderThemeProfile> = emptyList(),
     val activeAppearanceProfileId: String? = null,
     val hierarchicalContents: Boolean = true,
-    val useSourceCss: Boolean = false,
+    val useSourceCss: Boolean = true,
     val marginLeft: Float = 24f,
     val marginRight: Float = 24f,
     val marginTop: Float = 18f,
@@ -167,5 +168,9 @@ data class LibraryState(
     val showRecentReading: Boolean = true,
     val scanLocalChanges: Boolean = false,
     val scannedBookIds: Set<String> = emptySet(),
-    val autoReloadSources: Boolean = false
-)
+    val autoReloadSources: Boolean = false,
+    val sourceScanAutomatic: Boolean = true
+) {
+    val sourceScanMode: SourceScanMode get() = if (!scanLocalChanges) SourceScanMode.OFF
+        else if (sourceScanAutomatic) SourceScanMode.AUTO else SourceScanMode.MANUAL
+}

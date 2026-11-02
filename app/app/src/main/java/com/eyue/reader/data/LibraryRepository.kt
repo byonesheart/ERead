@@ -59,6 +59,7 @@ class LibraryRepository(private val context: Context) {
                 } else if (json.optBoolean("scanLocalChanges", false)) json.array("books").objects()
                     .filterNot { it.optBoolean("cloudOnly") || it.optBoolean("isDemo") }.map { it.getString("id") }.toSet() else emptySet(),
                 autoReloadSources = json.optBoolean("autoReloadSources", false),
+                sourceScanAutomatic = json.optBoolean("sourceScanAutomatic", true),
                 commonVoiceRoles = if (json.has("commonVoiceRoles")) json.array("commonVoiceRoles").objects().map(BookVoiceRole::fromJson)
                     else defaultCommonVoiceRoles()
             )
@@ -88,6 +89,7 @@ class LibraryRepository(private val context: Context) {
             .put("appTheme", state.appTheme.name)
             .put("showRecentReading", state.showRecentReading)
             .put("scanLocalChanges", state.scanLocalChanges)
+            .put("sourceScanAutomatic", state.sourceScanAutomatic)
             .put("scannedBookIds", JSONArray(state.scannedBookIds.toList())).put("autoReloadSources", state.autoReloadSources)
             .put("commonVoiceRoles", JSONArray(state.commonVoiceRoles.map { it.toJson() }))
         val output = stateFile.startWrite()

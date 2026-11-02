@@ -75,12 +75,13 @@ private enum class SettingsPage(val title: String) {
     onCheckUpdate: (suspend () -> AppUpdateResult)? = null,
     restoreProgress: CloudOperationProgress? = null, onAppTheme: (AppThemeStyle) -> Unit = {},
     availableUpdate: AppUpdateResult? = null, onShowRecentReading: (Boolean) -> Unit = {},
-    developerMode: Boolean = false, onEnableDeveloperMode: () -> Unit = {}, onScanLocalChanges: (Boolean) -> Unit = {},
+    developerMode: Boolean = false, onEnableDeveloperMode: () -> Unit = {},
     localSourceScanIssues: Map<String, String> = emptyMap(), scanningLocalSources: Boolean = false,
     sourceAuthorizations: Map<String, Boolean> = emptyMap(),
     sourceSyncing: Set<String> = emptySet(), sourcePending: Set<String> = emptySet(),
     onScannedBooks: (Set<String>) -> Unit = {}, onAutoReload: (Boolean) -> Unit = {},
-    onGrantScanBooks: (Set<String>) -> Unit = {}, onGrantScanFolder: () -> Unit = {}) {
+    onGrantScanBooks: (Set<String>) -> Unit = {}, onGrantScanFolder: () -> Unit = {},
+    onSourceScanMode: (SourceScanMode) -> Unit = {}, onScanSourcesNow: () -> Unit = {}) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
     val page = pages.lastOrNull()
@@ -130,13 +131,13 @@ private enum class SettingsPage(val title: String) {
                         SettingsSeparator()
                         SettingsToggle("墨水屏模式", "高对比度显示，关闭翻页动画", state.einkMode, onEinkMode, "settings_eink_mode", Icons.Outlined.Contrast)
                         SettingsSeparator()
-                        SettingsLink(Icons.Outlined.Sync, "扫描本地修改", if (state.scanLocalChanges) "已开启 · ${state.books.count { it.id in state.scannedBookIds && !it.cloudOnly && !it.isDemo }} 本" else "已关闭",
-                            "settings_scan_local_changes", { open(SettingsPage.SOURCE_SCAN) })
-                        SettingsSeparator()
                         SettingsToggle("平板横屏双页", "宽屏横向翻页时并排显示两页", state.tabletDualPage, onTabletDualPage, "settings_tablet_dual_page", Icons.AutoMirrored.Outlined.MenuBook)
                         SettingsSeparator()
                         SettingsLink(Icons.Outlined.Headphones, "朗读引擎", if (state.speechEngine == SpeechEngine.AI) "AI 语音" else "系统语音",
                             "settings_speech", { open(SettingsPage.SPEECH) })
+                        SettingsSeparator()
+                        SettingsLink(Icons.Outlined.Sync, "扫描本地修改", state.sourceScanMode.displayName,
+                            "settings_scan_local_changes", { open(SettingsPage.SOURCE_SCAN) })
                     }
                     SettingsCard(Modifier.testTag("settings_services_card")) {
                         SettingsLink(Icons.Outlined.Cloud, "WebDAV 备份与还原", if (cloudConfigured) "已连接" else "未配置", "settings_cloud", { open(SettingsPage.CLOUD) })
@@ -159,8 +160,8 @@ private enum class SettingsPage(val title: String) {
                     }
                 }
                 SettingsPage.SOURCE_SCAN -> SourceScanSettings(state, sourceAuthorizations, localSourceScanIssues,
-                    scanningLocalSources, sourceSyncing, sourcePending, onScanLocalChanges, onScannedBooks, onAutoReload,
-                    onGrantScanBooks, onGrantScanFolder)
+                    scanningLocalSources, sourceSyncing, sourcePending, onScannedBooks, onAutoReload,
+                    onGrantScanBooks, onGrantScanFolder, onSourceScanMode, onScanSourcesNow)
                 SettingsPage.APP_THEME -> AppThemeSettingsPage(state.appTheme, onAppTheme)
                 SettingsPage.SPEECH -> {
                     SpeechEngineSettings(state.speechEngine, aiSpeechConfig, onSpeechEngine, onSaveAiSpeech,
@@ -320,7 +321,7 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
                 Text(taskLabel, fontSize = 12.sp, modifier = Modifier.weight(1f).padding(start = 8.dp))
                 fraction?.let { Text("${(it.coerceIn(0f, 1f) * 100).toInt()}%", fontSize = 12.sp) }
             }
-            CloudPreferenceToggle("自动备份", "打开软件或返回前台时，检查并上传已开启云端上传的书籍及记录；阅读中不另行触发", autoBackup, configured && !busy,
+            CloudPreferenceToggle("自动备份", "打开软件、返回前台或退出书籍时，检查进度并上传已开启云端上传的书籍及记录；无变化则跳过", autoBackup, configured && !busy,
                 "cloud_auto_backup", onAutoBackup)
             CloudPreferenceToggle("允许计费网络备份", "同时用于手动和自动备份；手动确认时默认勾选，可能使用移动数据", autoBackupMetered, configured && !busy,
                 "cloud_auto_backup_metered", onAutoBackupMetered)

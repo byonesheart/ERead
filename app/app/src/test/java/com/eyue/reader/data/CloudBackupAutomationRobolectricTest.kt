@@ -289,6 +289,26 @@ class CloudBackupAutomationRobolectricTest {
         assertNotEquals(original.id, changed.id)
         CloudBackupAutomation.configure(context, false, true)
     }
+    @Test fun leavingABookQueuesAFreshSnapshotWithoutCancellingAnExistingUpload() {
+        val context = RuntimeEnvironment.getApplication()
+        val manager = runCatching { WorkManager.getInstance(context) }.getOrElse {
+            WorkManager.initialize(context, Configuration.Builder().build()); WorkManager.getInstance(context)
+        }
+        val state = LibraryState(books = listOf(book().copy(cloudEnabled = true)), cloudAutoBackup = true)
+        manager.cancelUniqueWork("eread-cloud-change").result.get(10, TimeUnit.SECONDS)
+        CloudBackupAutomation.foreground(context, state, true)!!.result.get(10, TimeUnit.SECONDS)
+        val first = manager.getWorkInfosForUniqueWork("eread-cloud-change").get(10, TimeUnit.SECONDS).single { !it.state.isFinished }
+        CloudBackupAutomation.bookClosed(context, state.copy(books = state.books.map { it.copy(progress = .8f) }), true, book().id)!!
+            .result.get(10, TimeUnit.SECONDS)
+        val queued = manager.getWorkInfosForUniqueWork("eread-cloud-change").get(10, TimeUnit.SECONDS).filterNot { it.state.isFinished }
+        assertEquals(2, queued.size)
+        assertTrue(queued.any { it.id == first.id && it.state != WorkInfo.State.CANCELLED })
+        assertTrue(queued.any { it.id != first.id && it.state == WorkInfo.State.BLOCKED })
+        assertNull(CloudBackupAutomation.bookClosed(context, state.copy(cloudAutoBackup = false), true, book().id))
+        assertNull(CloudBackupAutomation.bookClosed(context, state, false, book().id))
+        assertNull(CloudBackupAutomation.bookClosed(context, state, true, "not-enabled"))
+        manager.cancelUniqueWork("eread-cloud-change").result.get(10, TimeUnit.SECONDS)
+    }
 
     @Test fun historyAndQueueIdentityAreIsolatedByServerAsWellAsAccount() {
         val context = RuntimeEnvironment.getApplication()

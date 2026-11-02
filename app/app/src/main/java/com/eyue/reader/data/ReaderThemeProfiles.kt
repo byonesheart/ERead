@@ -113,7 +113,7 @@ fun ReaderSettings.resetInterface(raster: Boolean = false): ReaderSettings {
         marginTop = 0f, marginBottom = 0f) else it }.copy(showTime = showTime, showBattery = showBattery, showChapter = showChapter)
     val selected = ensureActiveAppearanceProfile()
     return selected.applyAppearanceProfile(ReaderThemeProfile(selected.activeAppearanceProfileId!!, "", defaults))
-        .copy(chineseConversion = ChineseConversion.ORIGINAL, useSourceCss = false, pdfCrop = PdfCrop())
+        .copy(chineseConversion = ChineseConversion.ORIGINAL, useSourceCss = ReaderSettings().useSourceCss, pdfCrop = PdfCrop())
         .autosaveAppearanceProfile()
 }
 

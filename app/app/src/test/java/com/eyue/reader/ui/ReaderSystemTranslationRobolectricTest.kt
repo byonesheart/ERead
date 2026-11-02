@@ -109,6 +109,23 @@ class ReaderSystemTranslationRobolectricTest {
         assertEquals(listOf("SystemTranslator"), picker.getStringArrayListExtra(Intent.EXTRA_SHORTCUT_NAME))
         assertEquals(1, picker.getParcelableArrayListExtra<Intent.ShortcutIconResource>(Intent.EXTRA_SHORTCUT_ICON_RESOURCE)!!.size)
     }
+    @Test fun translatorNamesUseTheApplicationLabelWithoutWebAddressesOrComponentSuffixes() {
+        val context = RuntimeEnvironment.getApplication()
+        context.getSharedPreferences("reader_translation", 0).edit().clear().commit()
+        for (name in listOf("First", "Second")) {
+            val resolver = ResolveInfo().apply { activityInfo = ActivityInfo().apply {
+                packageName = "translator.$name"; this.name = "Translate"; exported = true
+                nonLocalizedLabel = "翻译 https://example.invalid/translate"
+                applicationInfo = ApplicationInfo().apply { nonLocalizedLabel = "系统翻译" }
+            } }
+            shadowOf(context.packageManager).addOrUpdateActivity(resolver.activityInfo)
+            shadowOf(context.packageManager).addResolveInfoForIntent(readerTranslationIntent(""), resolver)
+        }
+        val labels = readerTranslationPickerIntent(context)!!.getStringArrayListExtra(Intent.EXTRA_SHORTCUT_NAME)!!
+        assertEquals(listOf("系统翻译（1）", "系统翻译（2）"), labels)
+        rememberReaderTranslator(context, android.app.Activity.RESULT_OK, Intent().putExtra(Intent.EXTRA_SHORTCUT_NAME, labels[1]))
+        assertEquals("系统翻译", selectedReaderTranslatorLabel(context))
+    }
 
     @Test fun processTextFallbackExcludesBrowsersAndUsesOnlyTheSystemTranslator() {
         val context = RuntimeEnvironment.getApplication()

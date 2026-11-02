@@ -134,7 +134,10 @@ internal object SourceHtmlEdit {
         val spans = mutableListOf<IntRange>()
         var cursor = 0
         fun add(end: Int) {
-            if (end > cursor && visible.substring(cursor, end) == html.substring(cursor, end)) spans += cursor until end
+            if (end <= cursor) return
+            val text = html.substring(cursor, end)
+            // Masked head/style/comment whitespace can equal the original whitespace, yet a probe there is discarded.
+            if (text.isNotBlank() && visible.substring(cursor, end) == text) spans += cursor until end
         }
         sourceHtmlTags(html, checkActive).forEach { tag -> add(tag.start); cursor = tag.end }
         add(html.length)

@@ -85,6 +85,36 @@ class EbookSourceWritebackRobolectricTest {
         }
     }
 
+    @Test fun sourceEditsCanInsertBreaksAndEditTextAcrossExistingLineBreaks() {
+        val html = "<html><head><style>.body{color:blue}</style></head><body>" +
+            "<p class='body'>第一行<br/>第二行</p><p id='last'>末段</p></body></html>"
+        val original = SourceHtmlEdit.plain(html) { null }
+        val targets = listOf(original.replace("第一行", "第一\n新行"),
+            original.replace("第一行\n第二行", "新的第一行\n新的第二行"),
+            original.replace("第二行", "第二行\n新增段落"),
+            original.replace("第二行\n\n末段", "第二行改写\n\n末段修改"))
+        targets.forEach { target ->
+            val edited = SourceHtmlEdit.replace(html, target) { null }
+            assertEquals(target, SourceHtmlEdit.plain(edited.html) { null })
+            assertTrue(edited.html.contains("<style>.body{color:blue}</style>"))
+            assertTrue(edited.html.contains("<p class='body'>"))
+            assertTrue(edited.html.contains("<p id='last'>"))
+        }
+    }
+
+    @Test fun formattedWhitespaceInHiddenHeadAndStylesIsNeverAVisibleEditBoundary() {
+        val sources = listOf(
+            "<html><head><style>" + " ".repeat(300) + "</style><title>书名</title></head><body><p>旧正文</p></body></html>",
+            "<html>\n<head>\n" + "<meta charset='utf-8'/>\n".repeat(40) + "</head>\n<body>\n<p>第一段<br/>第二行</p>\n<p>末段</p>\n</body></html>",
+            "<html><head>\r\n<title>书名</title>\r\n</head><body><p>甲<span>\r\n旧正文\r\n</span>乙</p>\r\n</body></html>")
+        sources.forEach { html ->
+            val original = SourceHtmlEdit.plain(html) { null }
+            val target = original.replace("旧正文", "新\n正文").replace("第二行", "第二行\n新增行")
+            val result = SourceHtmlEdit.replace(html, target) { null }
+            assertEquals(target, SourceHtmlEdit.plain(result.html) { null })
+        }
+    }
+
     @Test fun migratedEpubWritesTheExternalOriginalAndPrivateCopyOnlyWhenCommitted() {
         val source = epubFixture()
         val external = File(root, "external.epub").apply { source.copyTo(this) }
@@ -197,6 +227,24 @@ class EbookSourceWritebackRobolectricTest {
         assertEquals(1, reopened.images.size)
         assertTrue("旧目录记录不能在每次保存时累加", source.length() <= firstSize + 128)
         assertTrue("非图片嵌入资源必须保留", source.readBytes().toString(Charsets.ISO_8859_1).contains("FONT-resource-preserved"))
+    }
+
+    @Test fun epubAndMobiSaveNewlinesToTheOriginalAndCanBeEditedAgain() {
+        val mobi = mobiFixture()
+        val books = listOf(epubBook(epubFixture()), mobiBook(mobi, MobiArchive.read(mobi)))
+        books.forEach { before ->
+            val chapter = before.chapters.indexOfFirst { readChapterText(it).contains("旧🙂正文") }
+            val first = change(before, chapter, "旧🙂正文", "新🙂第一行\n新增第二行")
+            EbookSourceWriteback.prepare(context, before, first, folder("newline-${before.format}")).apply { commit(); finish() }
+            val second = change(first, chapter, "新增第二行", "再次修改\n第三行")
+            EbookSourceWriteback.prepare(context, first, second, folder("newline-again-${before.format}")).apply { commit(); finish() }
+            val source = File(before.sourcePath!!)
+            val sections = if (before.format == BookFormat.EPUB) EpubArchive.read(source).sections.map { it.html }
+                else MobiArchive.read(source).sections.map { it.html }
+            val reopened = sections.map { SourceHtmlEdit.plain(it) { "image" } }
+            assertEquals(second.chapters.map(::readChapterText), reopened)
+            assertTrue(sections.any { it.contains("<br/>") })
+        }
     }
 
     @Test fun sourceChangedBetweenPrepareAndCommitIsNotOverwritten() {

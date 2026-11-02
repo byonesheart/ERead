@@ -13,18 +13,22 @@ import androidx.compose.ui.unit.dp
 import com.eyue.reader.data.*
 
 @Composable internal fun SourceScanSettings(state: LibraryState, access: Map<String, Boolean>, issues: Map<String, String>,
-    scanning: Boolean, syncing: Set<String>, pending: Set<String>, onEnabled: (Boolean) -> Unit,
+    scanning: Boolean, syncing: Set<String>, pending: Set<String>,
     onBooks: (Set<String>) -> Unit, onAutoReload: (Boolean) -> Unit, onGrant: (Set<String>) -> Unit,
-    onFolder: () -> Unit) {
+    onFolder: () -> Unit, onMode: (SourceScanMode) -> Unit, onScan: () -> Unit) {
     val books = state.books.filterNot { it.cloudOnly || it.isDemo }
     var warn by remember { mutableStateOf(false) }
     LazyColumn(Modifier.fillMaxSize().testTag("source_scan_page"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("扫描本地修改", Modifier.weight(1f))
-                Switch(state.scanLocalChanges, onEnabled, Modifier.testTag("source_scan_enabled"))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                SourceScanMode.entries.forEach { mode ->
+                    FilterChip(state.sourceScanMode == mode, { onMode(mode) }, label = { Text(mode.displayName) },
+                        modifier = Modifier.weight(1f).testTag("source_scan_mode_${mode.name}"))
+                }
             }
-            Text("仅扫描下方勾选的书籍；启动、返回前台时检查。自动重载启用后，运行期间也会定期检查。", style = MaterialTheme.typography.bodySmall)
+            Text("仅扫描下方勾选的书籍。自动：启动、返回前台时检查，启用自动重载后运行期间也会定期检查。手动：点击下方按钮检查。关闭：不检查本地修改。", style = MaterialTheme.typography.bodySmall)
+            if (state.sourceScanMode == SourceScanMode.MANUAL) OutlinedButton(onScan, enabled = !scanning,
+                modifier = Modifier.testTag("source_scan_now")) { Text("立即扫描") }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("自动重载", Modifier.weight(1f))
                 Switch(state.autoReloadSources, { if (it) warn = true else onAutoReload(false) },

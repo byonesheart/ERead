@@ -404,6 +404,30 @@ try {
     return { original, software };
   });
 
+  await test('paragraph-indent-preserves-publisher-special-layouts', async () => {
+    const parts = ['书名标题', '普通正文继续阅读。', '悬挂缩进段落', '居中文字', '原书引用', '列表文字', '表格文字'];
+    await open({ indent: 3, authorCss: true }, { source: {
+      baseUrl: 'https://eread.local/book/archive/chapter.html', canonicalText: parts.join('\n\n'), images: [], noteTargets: {},
+      html: '<!doctype html><html><head><style>.title{font-size:32px;font-weight:bold;text-indent:0}' +
+        '.hanging{text-indent:-12px;padding-left:12px}</style></head><body>' +
+        '<p id="special-title" class="title">书名标题</p><p id="ordinary-indent">普通正文继续阅读。</p>' +
+        '<p id="hanging" class="hanging">悬挂缩进段落</p><div style="text-align:center"><p id="centered">居中文字</p></div>' +
+        '<blockquote><p id="quoted" style="text-indent:8px">原书引用</p></blockquote>' +
+        '<ul><li><p id="listed" style="text-indent:6px">列表文字</p></li></ul>' +
+        '<table><tr><td><p id="tabular" style="text-indent:4px">表格文字</p></td></tr></table></body></html>'
+    } });
+    for (const indent of [3, 0, 4]) for (const authorCss of [true, false]) {
+      await command({ type: 'configure', config: { ...baseConfig, indent, authorCss } });
+      const values = await page.evaluate(() => Object.fromEntries(['special-title', 'ordinary-indent', 'hanging', 'centered', 'quoted', 'listed', 'tabular'].map(id => {
+        const style = getComputedStyle(document.getElementById(id));
+        return [id, { indent: parseFloat(style.textIndent), size: parseFloat(style.fontSize) }];
+      })));
+      assert.equal(values['ordinary-indent'].indent, indent * values['ordinary-indent'].size);
+      for (const [id, expected] of [['special-title', 0], ['hanging', -12], ['centered', 0], ['quoted', 8], ['listed', 6], ['tabular', 4]])
+        assert.equal(values[id].indent, expected, `${id} must retain the publisher's indentation`);
+    }
+    return { ordinaryIndentAdjustable: true, titleHangingCenteredQuoteListTablePreserved: true };
+  });
   await test('paragraph-gap-overrides-inline-important-margins-in-both-css-and-writing-modes', async () => {
     const paragraphs = ['第一段正文。', '第二段正文。', '第三段正文。'];
     const source = { baseUrl:'https://eread.local/book/archive/chapter.html', canonicalText:paragraphs.join('\n\n'),

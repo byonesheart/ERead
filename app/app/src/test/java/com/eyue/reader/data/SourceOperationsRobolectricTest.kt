@@ -194,6 +194,21 @@ class SourceOperationsRobolectricTest {
         assertEquals(state.scannedBookIds, loaded.scannedBookIds)
         assertTrue(loaded.autoReloadSources)
     }
+    @Test fun manualAutomaticAndOffScanModesRoundTripWithoutChangingBookSelection() {
+        for (mode in SourceScanMode.entries) {
+            val selected = LibraryState(books = listOf(book()), scanLocalChanges = mode != SourceScanMode.OFF,
+                sourceScanAutomatic = mode == SourceScanMode.AUTO, scannedBookIds = setOf("source-test"), autoReloadSources = true)
+            LibraryRepository(context).save(selected)
+            val loaded = LibraryRepository(context).load()
+            assertEquals(mode, loaded.sourceScanMode)
+            assertEquals(selected.scannedBookIds, loaded.scannedBookIds)
+            assertTrue(loaded.autoReloadSources)
+        }
+        val legacy = File(context.filesDir, "library.json")
+        val json = org.json.JSONObject(legacy.readText()).apply { remove("sourceScanAutomatic"); put("scanLocalChanges", true) }
+        legacy.writeText(json.toString())
+        assertEquals(SourceScanMode.AUTO, LibraryRepository(context).load().sourceScanMode)
+    }
     @Test fun systemDownloadsPublishesOnlyTheOriginalAndPreservesPrivateRenderingAssets() {
         val provider = provider("media")
         val book = book()
