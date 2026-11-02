@@ -1,15 +1,13 @@
 {
-  "versionCode": 82,
-  "versionName": "1.11.26-beta.1",
+  "versionCode": 83,
+  "versionName": "1.11.26-beta.2",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.26-beta.1",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.26-beta.1/ERead-1.11.26-beta.1-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.26-beta.2",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.26-beta.2/ERead-1.11.26-beta.2-release.apk",
   "mirrors": [],
   "changelog": [
-    "本地修改扫描支持自动、手动、关闭，调整扫描设置位置。",
-    "自动云同步增加退出书籍时的进度检查与上传，无变化则跳过。",
-    "修复 EPUB／MOBI 换行编辑定位及特殊格式缩进，默认启用原书 CSS。",
-    "修正系统翻译应用名称显示。",
-    "更多功能请自行体验。"
+    "优化 EPUB／MOBI 字距与行距覆盖，保留标题、注音和图表样式。",
+    "修复亮度拖动卡顿，支持实时预览、松手保存。",
+    "移除书籍时按实际云端备份显示占用，新增可选删除本地原文件。"
   ]
 }
