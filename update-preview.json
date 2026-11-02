@@ -1,14 +1,15 @@
 {
-  "versionCode": 80,
-  "versionName": "1.11.25-beta.7",
+  "versionCode": 82,
+  "versionName": "1.11.26-beta.1",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.25-beta.7",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.25-beta.7/ERead-1.11.25-beta.7-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.26-beta.1",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.26-beta.1/ERead-1.11.26-beta.1-release.apk",
   "mirrors": [],
   "changelog": [
-    "完善两行书名显示，新增重载动画及自动备份封面进度。",
-    "自动备份改为打开软件或返回前台时触发，统一手动与自动备份的计费网络设置。",
-    "系统翻译仅显示可调用的应用，保留系统图标选择界面。",
+    "本地修改扫描支持自动、手动、关闭，调整扫描设置位置。",
+    "自动云同步增加退出书籍时的进度检查与上传，无变化则跳过。",
+    "修复 EPUB／MOBI 换行编辑定位及特殊格式缩进，默认启用原书 CSS。",
+    "修正系统翻译应用名称显示。",
     "更多功能请自行体验。"
   ]
 }
