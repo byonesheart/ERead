@@ -90,7 +90,7 @@ class CleanupDialogRobolectricTest {
         var legacyRemovals = 0
         compose.setContent { MaterialTheme { Bookshelf(listOf(book), "", {}, {}, { legacyRemovals++ }, {},
             onRemoveWithCloud = { value, cloud -> removed += value.id to cloud },
-            onClearSpeechWithCloud = { value, cloud -> audio += value.id to cloud }, cloudConfigured = true, meteredNetwork = true) } }
+            onClearSpeechWithCloud = { value, cloud -> audio += value.id to cloud }, cloudConfigured = true, meteredNetwork = true, onRemovalCloudBytes = { mapOf(book.id to 4096L) }) } }
         compose.onNodeWithTag("shelf_book_more_cleanup-book").performClick()
         compose.onNodeWithText("移出书架").performClick()
         compose.onNodeWithTag("shelf_remove_book_cloud").assertIsOff().performClick()

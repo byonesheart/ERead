@@ -231,6 +231,26 @@ class CloudBackupService(
         } finally { cancellationWatcher.cancel(); transport.cancel() }
     } }
 
+    suspend fun bookStorageBytes(ids: Set<String>): Map<String, Long> = withContext(Dispatchers.IO) {
+        val credentials = requireNotNull(credentialStore.read()) { "请先配置 WebDAV 网盘" }
+        val work = currentCoroutineContext()
+        val transport = transportFactory(credentials) {
+            work.ensureActive()
+            require(credentialStore.read()?.identity == credentials.identity) { "WebDAV 配置已更改，请重新打开删除确认" }
+        }
+        try {
+            buildMap {
+                for (id in ids) {
+                    CloudArchive.safeId(id)
+                    val bytes = transport.metadata("books/$id/manifest.json") ?: continue
+                    val manifest = readManifest(bytes, id)
+                    val coverBytes = manifest.cover?.let { transport.metadata("books/$id/$it", 4 * 1024 * 1024)?.size } ?: 0
+                    put(id, manifest.info.archiveBytes + bytes.size + coverBytes)
+                }
+            }
+        } finally { transport.cancel() }
+    }
+
     suspend fun list(expectedIdentity: String? = null): List<CloudBookInfo> = withContext(Dispatchers.IO) {
         val job = currentCoroutineContext()
         val credentials = requireNotNull(credentialStore.read()) { "请先配置 WebDAV 服务器、账户与密码" }

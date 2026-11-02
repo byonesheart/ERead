@@ -1008,13 +1008,18 @@ internal fun ReaderScreen(
             controller?.isAppearanceLightNavigationBars = !latestNightMode
         }
     }
-    DisposableEffect(activity, settings.brightness) {
+    DisposableEffect(activity) {
         val window = activity?.window
         val previous = window?.attributes?.screenBrightness
         window?.let { owner -> owner.attributes = owner.attributes.apply {
             screenBrightness = if (settings.brightness < 0f) -1f else settings.brightness.coerceIn(0.01f, 1f)
         } }
         onDispose { if (window != null && previous != null) window.attributes = window.attributes.apply { screenBrightness = previous } }
+    }
+    LaunchedEffect(activity, settings.brightness) {
+        activity?.window?.let { window -> window.attributes = window.attributes.apply {
+            screenBrightness = if (settings.brightness < 0f) -1f else settings.brightness.coerceIn(.01f, 1f)
+        } }
     }
     LaunchedEffect(importedBook.id, importedBook.chapters, nativeSourceCss, documentAttempt) {
         document = null
@@ -1682,7 +1687,10 @@ internal fun ReaderScreen(
                         autoControlsVisible || autoReading -> autoControlsHeight + floatingActionsHeight
                         speechSession.active -> speechBarHeight + floatingActionsHeight
                         else -> 0
-                    }).toDp() } + if (autoControlsVisible || autoReading || speechSession.active) 24.dp else 12.dp))
+                    }).toDp() } + if (autoControlsVisible || autoReading || speechSession.active) 24.dp else 12.dp),
+                onPreview = { brightness -> activity?.window?.let { window -> window.attributes = window.attributes.apply {
+                    screenBrightness = if (brightness < 0) -1f else brightness.coerceIn(.01f, 1f)
+                } } })
             ReaderFloatingActions(autoReading, speechSession.active, onAuto = {
                 if (autoReading) autoControlsVisible = true
                 else { stopSpeech(); autoReading = true; autoPaused = false; autoControlsVisible = false; chromeVisible = false }

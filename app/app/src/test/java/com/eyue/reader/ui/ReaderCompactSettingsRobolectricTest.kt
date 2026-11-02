@@ -134,10 +134,12 @@ class ReaderCompactSettingsRobolectricTest {
     @Test fun verticalBrightnessOnlyCommitsOnReleaseAndCanReturnToTheSystemSetting() {
         var brightness by mutableStateOf(-1f)
         var commits = 0
-        compose.setContent { MaterialTheme { ReaderBrightnessControl(brightness, { brightness = it; commits++ }) } }
+        val previews = mutableListOf<Float>()
+        compose.setContent { MaterialTheme { ReaderBrightnessControl(brightness, { brightness = it; commits++ }, onPreview = { previews += it }) } }
         val slider = compose.onNodeWithContentDescription("阅读亮度")
         slider.performTouchInput { down(center); moveBy(Offset(0f, -height * .2f)) }
-        compose.runOnIdle { assertEquals(0, commits); assertEquals(-1f, brightness) }
+        compose.mainClock.advanceTimeBy(64)
+        compose.runOnIdle { assertEquals(0, commits); assertEquals(-1f, brightness); assertTrue(previews.last() > .5f) }
         slider.performTouchInput { up() }
         compose.runOnIdle { assertEquals(1, commits); assertTrue(brightness > .5f) }
         compose.onNodeWithContentDescription("亮度跟随系统").performClick()

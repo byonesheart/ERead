@@ -200,7 +200,9 @@ private const val UNGROUPED_FILTER = "@ungrouped"
     pendingImports: List<PendingImport> = listOfNotNull(pending),
     onRemoveBatch: ((List<Book>, Boolean) -> Unit)? = null,
     restoreProgress: CloudOperationProgress? = null,
-    onRenameBook: ((String, String) -> Boolean)? = null) {
+    onRenameBook: ((String, String) -> Boolean)? = null,
+    onRemovalCloudBytes: (suspend (List<Book>) -> Map<String, Long>)? = null,
+    onRemoveOriginal: ((List<Book>, Set<String>, Boolean) -> Unit)? = null) {
     fun transfer(book: Book) = cloudTransfers[book.id] ?: if (cloudBookId == book.id)
         CloudTransferProgress(cloudTaskLabel, cloudFraction, cloudCanCancel) else null
     var selectingBackup by remember { mutableStateOf(false) }
@@ -429,11 +431,12 @@ private const val UNGROUPED_FILTER = "@ungrouped"
             }, dismissButton = { TextButton(onClick = { renaming = null }) { Text("取消") } })
     }
     deletingBatch?.let { selected ->
-        BatchRemoveBooksDialog(selected, speechCacheRevision, cloudConfigured && onRemoveBatch != null, meteredNetwork,
-            onConfirm = { includeCloud ->
-                onRemoveBatch?.invoke(selected, includeCloud)
+        BatchRemoveBooksDialog(selected, speechCacheRevision, cloudConfigured, meteredNetwork,
+            onConfirm = { cloudIds, original ->
+                if (onRemoveOriginal != null) onRemoveOriginal(selected, cloudIds, original)
+                else onRemoveBatch?.invoke(selected, cloudIds.isNotEmpty())
                 deletingBatch = null; selectingBackup = false; backupSelection = emptySet()
-            }, onDismiss = { deletingBatch = null })
+            }, onDismiss = { deletingBatch = null }, onCloudBytes = onRemovalCloudBytes, canDeleteOriginal = onRemoveOriginal != null)
     }
     if (managingGroups) {
         AlertDialog(onDismissRequest = { managingGroups = false }, modifier = Modifier.testTag("shelf_groups_dialog"),
@@ -545,18 +548,13 @@ private const val UNGROUPED_FILTER = "@ungrouped"
             dismissButton = { TextButton(onClick = { details = null; deleting = book }) { Text("移出书架", color = MaterialTheme.colorScheme.error) } })
     }
     deleting?.let { book ->
-        val context = LocalContext.current
-        val bytes by produceState<Result<Long>?>(null, book.id, book.contentVersion, speechCacheRevision) {
-            value = try { Result.success(withContext(Dispatchers.IO) { localBookStorageBytes(context, book) }) }
-            catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { Result.failure(failure) }
-        }
-        CleanupDialog("移出《${book.title}》？", "删除本应用中的书籍缓存、AI 音频、阅读进度及标注。原始外部文件保留，不计入本地占用。",
-            bytes?.getOrNull(), cloudConfigured && onRemoveWithCloud != null, meteredNetwork,
-            "勾选后删除该书整本云端备份，包括书籍文件及其阅读记录。", onConfirm = { cloud ->
-                if (onRemoveWithCloud != null) onRemoveWithCloud(book, cloud) else onDelete(book)
+        BatchRemoveBooksDialog(listOf(book), speechCacheRevision, cloudConfigured, meteredNetwork,
+            onConfirm = { cloudIds, original ->
+                if (onRemoveOriginal != null) onRemoveOriginal(listOf(book), cloudIds, original)
+                else if (onRemoveWithCloud != null) onRemoveWithCloud(book, cloudIds.isNotEmpty()) else onDelete(book)
                 deleting = null
-            }, onDismiss = { deleting = null }, tag = "shelf_remove_book", confirmLabel = "移出", sizeError = bytes?.isFailure == true)
+            }, onDismiss = { deleting = null }, onCloudBytes = onRemovalCloudBytes,
+            canDeleteOriginal = onRemoveOriginal != null, tag = "shelf_remove_book")
     }
     locating?.let { book -> BookLocationDialog(book) { locating = null } }
     deletingCloud?.let { book ->
@@ -584,74 +582,6 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 clearingAiSpeech = null
             }, onDismiss = { clearingAiSpeech = null }, tag = "shelf_clear_ai_speech", sizeError = bytes?.isFailure == true)
     }
-}
-
-@Composable private fun BatchRemoveBooksDialog(books: List<Book>, speechCacheRevision: Int, cloudConfigured: Boolean,
-    meteredNetwork: Boolean, onConfirm: (Boolean) -> Unit, onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    var includeCloud by remember(books) { mutableStateOf(false) }
-    var allowMetered by remember(books) { mutableStateOf(false) }
-    val sizes by produceState<Map<String, Result<Long>>?>(null, books, speechCacheRevision) {
-        value = withContext(Dispatchers.IO) {
-            books.associate { book -> book.id to try { Result.success(localBookStorageBytes(context, book)) }
-                catch (cancelled: CancellationException) { throw cancelled }
-                catch (failure: Exception) { Result.failure(failure) } }
-        }
-    }
-    val ready = sizes?.let { measured -> books.all { measured[it.id]?.isSuccess == true } } == true
-    val cloud = includeCloud && cloudConfigured
-    val canRemove = ready && (!cloud || !meteredNetwork || allowMetered)
-    fun sizeLabel(bytes: Result<Long>?): String = when {
-        bytes == null -> "统计中…"
-        bytes.isFailure -> "统计失败"
-        else -> android.text.format.Formatter.formatShortFileSize(context, bytes.getOrThrow())
-    }
-    AlertDialog(onDismissRequest = onDismiss, modifier = Modifier.testTag("shelf_batch_remove_dialog"),
-        title = { Text("删除选中的 ${books.size} 本书？") }, text = {
-            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                item { Text("删除本应用中的书籍缓存、AI 音频、阅读进度及标注。原始外部文件保留，不计入本地占用。",
-                    style = MaterialTheme.typography.bodySmall) }
-                items(books, key = { it.id }) { book ->
-                    Column(Modifier.fillMaxWidth()) {
-                        Text(book.title, style = MaterialTheme.typography.bodyMedium)
-                        Text("本地占用：${sizeLabel(sizes?.get(book.id))}", style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.testTag("shelf_batch_remove_${book.id}_space"), color = Muted)
-                        if (book.cloudOnly) Text("待下载占位：仅统计本地占位缓存，云端原文件未计入本地占用。",
-                            style = MaterialTheme.typography.bodySmall, color = Muted)
-                    }
-                }
-                item {
-                    Text("本地占用合计：" + when {
-                        sizes == null -> "统计中…"
-                        !ready -> "统计失败，请取消后重试"
-                        else -> android.text.format.Formatter.formatShortFileSize(context, sizes!!.values.sumOf { it.getOrThrow() })
-                    }, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("shelf_batch_remove_space"))
-                }
-                item {
-                    Row(Modifier.fillMaxWidth().clickable(enabled = cloudConfigured) { includeCloud = !includeCloud; allowMetered = false },
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(cloud, { includeCloud = it; allowMetered = false }, enabled = cloudConfigured,
-                            modifier = Modifier.testTag("shelf_batch_remove_cloud"))
-                        Text("同时删除云端备份", style = MaterialTheme.typography.bodyMedium)
-                    }
-                    Text(if (cloud) "同时删除所选书籍的云端正文和阅读记录，并关闭其自动备份。"
-                        else "仅移除本地书籍及记录，云端正文和记录保留。", style = MaterialTheme.typography.bodySmall, color = Muted)
-                    if (!cloudConfigured) Text("配置 WebDAV 网盘后可同步删除云端备份。", style = MaterialTheme.typography.bodySmall, color = Muted)
-                }
-                if (cloud && meteredNetwork) item {
-                    Row(Modifier.fillMaxWidth().clickable { allowMetered = !allowMetered }, verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(allowMetered, { allowMetered = it }, modifier = Modifier.testTag("shelf_batch_remove_metered"))
-                        Text("当前为计费网络，允许本次云端操作", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
-        }, confirmButton = {
-            TextButton(enabled = canRemove, onClick = { onConfirm(cloud) }, modifier = Modifier.testTag("shelf_batch_remove_confirm")) {
-                Text("删除", color = if (canRemove) MaterialTheme.colorScheme.error else Muted)
-            }
-        }, dismissButton = {
-            TextButton(onClick = onDismiss, modifier = Modifier.testTag("shelf_batch_remove_cancel")) { Text("取消") }
-        })
 }
 
 @Composable private fun PendingShelfBook(pending: PendingImport, grid: Boolean, coverHeight: androidx.compose.ui.unit.Dp? = null) {

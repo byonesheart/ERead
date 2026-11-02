@@ -157,11 +157,11 @@ class BookshelfBatchBackupRobolectricTest {
         waitForSizes(local, remote)
         compose.onNodeWithTag("shelf_batch_remove_${local.id}_space").assertTextEquals("本地占用：" + size(local))
         compose.onNodeWithTag("shelf_batch_remove_${remote.id}_space").assertTextEquals("本地占用：" + size(remote))
-        compose.onNodeWithText("待下载占位：仅统计本地占位缓存，云端原文件未计入本地占用。").assertExists()
+        compose.onNodeWithTag("shelf_batch_remove_${remote.id}_cloud_space").assertExists()
         capture("bookshelf-batch-delete", dialog = true)
         compose.onNodeWithTag("shelf_batch_remove_cloud").performScrollTo().assertIsOff().performClick()
         compose.onNodeWithTag("shelf_batch_remove_confirm").assertIsNotEnabled()
-        compose.onNodeWithText("同时删除所选书籍的云端正文和阅读记录，并关闭其自动备份。").assertExists()
+        compose.onNodeWithText("同时清空云端数据").assertExists()
         compose.onNodeWithTag("shelf_batch_remove_metered").performScrollTo().performClick()
         compose.onNodeWithTag("shelf_batch_remove_confirm").assertIsEnabled().performClick()
         compose.runOnIdle { assertEquals(listOf(local.id, remote.id) to true, removed) }
@@ -176,7 +176,7 @@ class BookshelfBatchBackupRobolectricTest {
         compose.onNodeWithTag("backup_select_${local.id}").performClick()
         compose.onNodeWithTag("shelf_batch_delete").performClick()
         waitForSizes(local)
-        compose.onNodeWithTag("shelf_batch_remove_cloud").performScrollTo().assertIsOff().assertIsNotEnabled()
+        compose.onNodeWithTag("shelf_batch_remove_cloud").assertDoesNotExist()
         compose.onNodeWithTag("shelf_batch_remove_cancel").performClick()
         compose.onNodeWithTag("shelf_batch_remove_dialog").assertDoesNotExist()
         compose.onNodeWithTag("backup_select_${local.id}").assertIsOn()
@@ -229,7 +229,8 @@ class BookshelfBatchBackupRobolectricTest {
         compose.setContent {
             host.set(LocalView.current)
             MaterialTheme { Bookshelf(books, "", {}, {}, {}, {}, onCloudBatch = onUpload, cloudBusy = cloudBusy,
-                onRestoreCloudBookInfo = onRestore, onRemoveBatch = onRemove, cloudConfigured = cloudConfigured, meteredNetwork = meteredNetwork) }
+                onRestoreCloudBookInfo = onRestore, onRemoveBatch = onRemove, cloudConfigured = cloudConfigured, meteredNetwork = meteredNetwork,
+                onRemovalCloudBytes = { selected -> if (cloudConfigured) selected.associate { it.id to 4096L } else emptyMap() }) }
         }
     }
 

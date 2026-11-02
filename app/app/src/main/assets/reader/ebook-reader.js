@@ -84,6 +84,41 @@
     const sourceFontRatios = new Set();
     const textByParent = new Map(), visibleTextParents = new Set();
     let paragraphObserver;
+    const proseMetrics = new Set(), proseBlocks = new Set(), protectedMetrics = [], proseAlignment = new Map();
+    function captureProseMetrics() {
+        const excluded = 'h1,h2,h3,h4,h5,h6,header,footer,nav,figure,figcaption,table,pre,code,ruby,rt,rp,sup,sub,svg,math,script,style,noscript,template,button,input,textarea,select,[aria-hidden="true"]';
+        const boundaries = new Set(), walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        let text;
+        while ((text = walker.nextNode())) {
+            if (!text.nodeValue.trim()) continue;
+            const element = text.parentElement;
+            let boundary = element.closest(excluded);
+            const block = element.closest('p,li,blockquote,dd,dt,div,section,article,body');
+            if (!block) continue;
+            for (let node = element; !boundary && node && node !== document.body; node = node.parentElement) {
+                const css = getComputedStyle(node);
+                if (css.position === 'absolute' || css.position === 'fixed' || css.cssFloat !== 'none' ||
+                    css.backgroundImage !== 'none' || /^(?:center|right|end|-webkit-center|-webkit-right)$/.test(css.textAlign) ||
+                    /^(?:doc-noteref|doc-footnote|doc-endnote|heading)$/.test(node.getAttribute('role') || '')) boundary = node;
+            }
+            if (boundary) { boundaries.add(boundary); continue; }
+            proseBlocks.add(block);
+            for (let node = element; node; node = node.parentElement) {
+                proseMetrics.add(node);
+                if (node === block) break;
+            }
+        }
+        boundaries.forEach(node => {
+            for (let parent = node.parentElement; parent; parent = parent.parentElement) if (proseMetrics.has(parent)) {
+                const css = getComputedStyle(node);
+                protectedMetrics.push({node, leading:css.lineHeight, tracking:css.letterSpacing}); break;
+            }
+        });
+        proseBlocks.forEach(node => {
+            if (getComputedStyle(node).textAlign === 'justify') proseAlignment.set(node,
+                ['text-align','text-align-last'].map(name => [node.style.getPropertyValue(name), node.style.getPropertyPriority(name)]));
+        });
+    }
     let pageAnimation = null;
     let pageTransition = null;
     const continuousHost = window.parent !== window ? window.parent.EReadContinuous : null;
@@ -100,6 +135,7 @@
     function fail(error) { send('error', {message: '原书排版失败：' + (error.message || String(error))}); }
     function whitespace(c) { return /[\s\u00a0\u200b\ufeff]/.test(c); }
     function markBodyParagraphs() {
+        captureProseMetrics();
         const structural = 'h1,h2,h3,h4,h5,h6,blockquote,pre,table,aside,figure,figcaption,header,footer,nav';
         const candidates = Array.from(document.querySelectorAll('p,div')).filter(node => node.textContent.trim() &&
             !node.closest(structural) && !node.querySelector('p,div,' + structural));
@@ -617,16 +653,23 @@
         document.querySelectorAll('[data-eread-paragraph]').forEach(node => {
             node.style.setProperty('margin-block-start', '0px', 'important');
             node.style.setProperty('margin-block-end', Math.max(0, Number(config.paragraphGap) || 0) + 'px', 'important');
-            node.style.setProperty('line-height', config.lineHeight + 'px', 'important');
-            node.style.setProperty('letter-spacing', config.letterSpacing + 'px', 'important');
             if (node.dataset.ereadIndent) node.style.setProperty('text-indent',
                 (Number.isFinite(config.indent) ? config.indent : 2) + 'em', 'important');
-            // Inline publisher spans can otherwise retain their own !important metrics.
-            node.querySelectorAll('*:not(sup):not(sub):not(rt):not(ruby)').forEach(child => {
-                if (child.closest('sup,sub,ruby,rt,code,kbd')) return;
-                child.style.setProperty('line-height', 'inherit', 'important');
-                child.style.setProperty('letter-spacing', 'inherit', 'important');
+        });
+        proseMetrics.forEach(node => {
+            node.style.setProperty('line-height', String(config.lineHeight / Math.max(1, config.fontSize)), 'important');
+            node.style.setProperty('letter-spacing', config.letterSpacing + 'px', 'important');
+        });
+        proseAlignment.forEach((original, node) => {
+            ['text-align','text-align-last'].forEach((name, index) => {
+                if (Number(config.letterSpacing) !== 0) node.style.setProperty(name, index ? 'auto' : 'start', 'important');
+                else if (original[index][0]) node.style.setProperty(name, original[index][0], original[index][1]);
+                else node.style.removeProperty(name);
             });
+        });
+        protectedMetrics.forEach(({node, leading, tracking}) => {
+            node.style.setProperty('line-height', leading, 'important');
+            node.style.setProperty('letter-spacing', tracking, 'important');
         });
         applyPublicationAppearance();
         applyImageCrop();

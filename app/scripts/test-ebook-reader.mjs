@@ -404,6 +404,34 @@ try {
     return { original, software };
   });
 
+  await test('prose-spacing-reaches-nested-text-without-changing-source-ornaments', async () => {
+    const body = '松散正文<section>容器正文<article><p id="prose" style="text-align:justify!important">普通文字' +
+      '<span id="nested" style="letter-spacing:9px!important;line-height:70px!important"><b id="bold">加粗文字</b></span>' +
+      '<ruby id="ruby">读<rt>du</rt></ruby></p><div>嵌套正文<div><span id="deep">更深正文</span></div></div>' +
+      '<ul><li id="list">列表正文</li></ul><blockquote id="quote">引用正文</blockquote>' +
+      '<p style="text-align:center" id="centered">居中标题</p><h1 id="heading">章节标题</h1>' +
+      '<table><tr><td id="table-text">图表文字</td></tr></table></article></section>';
+    const plain = body.replace(/<[^>]*>/g, '');
+    await open({ authorCss: true, letterSpacing: 1.3, lineHeight: 38, fontSize: 19 }, { source: {
+      baseUrl: 'https://eread.local/book/archive/chapter.html', canonicalText: plain, images: [], noteTargets: {},
+      html: '<!doctype html><html><body>' + body + '</body></html>'
+    } });
+    for (const authorCss of [true, false]) for (const [spacing, leading] of [[1.3, 2], [.2, 1.4], [0, 1.8]]) {
+      await command({ type:'configure', config:{ ...baseConfig, authorCss, letterSpacing:spacing, lineHeight:leading * 19 } });
+      const result = await page.evaluate(() => Object.fromEntries(['nested','bold','deep','list','quote','ruby','heading','table-text','centered'].map(id => {
+        const css = getComputedStyle(document.getElementById(id));
+        return [id, { tracking:css.letterSpacing, leading:parseFloat(css.lineHeight) / parseFloat(css.fontSize) }];
+      })));
+      for (const id of ['nested','bold','deep','list','quote']) {
+        assert.ok(Math.abs((result[id].tracking === 'normal' ? 0 : parseFloat(result[id].tracking)) - spacing) < .01, `${id} tracking: ${JSON.stringify(result)}`);
+        assert.ok(Math.abs(result[id].leading - leading) < .01, `${id} leading`);
+      }
+      for (const id of ['ruby','heading','table-text','centered']) assert.equal(result[id].tracking, 'normal', `${id} protected tracking`);
+    }
+    assert.equal(await page.locator('#prose').evaluate(node => getComputedStyle(node).textAlign), 'justify');
+    assert.ok(await page.locator('#bold').evaluate(node => Number(getComputedStyle(node).fontWeight) >= 600));
+    return { nestedInlineAndBlockSpacing:true, protectedLayouts:true, originalJustificationRestored:true };
+  });
   await test('paragraph-indent-preserves-publisher-special-layouts', async () => {
     const parts = ['书名标题', '普通正文继续阅读。', '悬挂缩进段落', '居中文字', '原书引用', '列表文字', '表格文字'];
     await open({ indent: 3, authorCss: true }, { source: {

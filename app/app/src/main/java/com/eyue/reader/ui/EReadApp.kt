@@ -351,6 +351,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                         speechCacheRevision = vm.aiSpeechCacheRevision, cloudTransfers = vm.cloudTransfers,
                                         cloudDirtyBookIds = vm.cloudDirtyBookIds, pendingImports = vm.pendingImports.filter { it.mode == vm.mode },
                                         onRemoveBatch = vm::removeBooks, restoreProgress = vm.cloudRestoreProgress,
+                                        onRemovalCloudBytes = vm::removalCloudBytes, onRemoveOriginal = vm::removeBooksWithOriginal,
                                         onRenameBook = vm::renameBook)
                                 }
                                 else -> SettingsScreen(state, { vm.settings(vm.readerSettings.copy(nightMode = it.nightMode)) }, vm::saveChapterRule,

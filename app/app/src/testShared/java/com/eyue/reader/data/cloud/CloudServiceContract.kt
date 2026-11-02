@@ -54,6 +54,17 @@ abstract class CloudServiceContract {
 
     @After fun cleanup() { root.deleteRecursively() }
 
+    @Test fun removalSpaceOnlyReportsCommittedBackupsAndDoesNotDownloadBookParts() = runBlocking {
+        val (book, state) = novel()
+        assertTrue(service.bookStorageBytes(setOf(book.id)).isEmpty())
+        val uploaded = service.upload(state, book)
+        val measured = service.bookStorageBytes(setOf(book.id, "not-uploaded"))
+        assertEquals(setOf(book.id), measured.keys)
+        assertTrue(measured.getValue(book.id) > uploaded.archiveBytes)
+        service.deleteBook(book.id)
+        assertTrue(service.bookStorageBytes(setOf(book.id)).isEmpty())
+    }
+
     @Test fun readiumSpineIndexRecoversAtomicBackupAndSurvivesMetadataOnlyProgressUpdate() = runBlocking {
         val (original, originalState) = novel()
         val book = original.copy(format = BookFormat.EPUB, contentVersion = 8)

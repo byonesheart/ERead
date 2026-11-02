@@ -187,7 +187,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent(onHistory: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 本地修改扫描支持自动、手动、关闭，调整扫描设置位置。\n• 自动云同步增加退出书籍时的进度检查与上传，无变化则跳过。\n• 修复 EPUB／MOBI 换行编辑定位及特殊格式缩进，默认启用原书 CSS。\n• 修正系统翻译应用名称显示。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 优化 EPUB／MOBI 字距与行距覆盖，保留标题、注音和图表样式。\n• 修复亮度拖动卡顿，支持实时预览、松手保存。\n• 移除书籍时按实际云端备份显示占用，新增可选删除本地原文件。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton(onClick = onHistory, modifier = Modifier.testTag("settings_history_changelog")) { Text("历史更新日志") }
     }

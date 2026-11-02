@@ -1045,7 +1045,21 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun deleteBook(book: Book) = removeBook(book, false)
 
-    fun removeBooks(books: List<Book>, removeCloud: Boolean) {
+    suspend fun removalCloudBytes(books: List<Book>): Map<String, Long> = withContext(Dispatchers.IO) {
+        val service = CloudBackupService(getApplication())
+        val account = service.identity() ?: return@withContext emptyMap()
+        val ids = books.associate { it.id to cloudHistory.cloudBookId(account, it.id) }
+        val sizes = service.bookStorageBytes(ids.values.toSet())
+        ids.mapNotNull { (id, remote) -> sizes[remote]?.let { id to it } }.toMap()
+    }
+
+    fun removeBooksWithOriginal(books: List<Book>, cloudIds: Set<String>, removeOriginal: Boolean) {
+        removeBooks(books, cloudIds.isNotEmpty(), removeOriginal, cloudIds)
+    }
+
+    fun removeBooks(books: List<Book>, removeCloud: Boolean) = removeBooks(books, removeCloud, false, null)
+
+    private fun removeBooks(books: List<Book>, removeCloud: Boolean, removeOriginal: Boolean, cloudIds: Set<String>?) {
         val ids = books.map { it.id }.toSet()
         val selected = state.books.filter { it.id in ids }
         if (selected.isEmpty()) return
@@ -1055,10 +1069,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             message = "所选书籍仍在处理中，请完成或取消后再批量删除"; return
         }
         if (removeCloud && selected.any { it.cloudEnabled || it.cloudOnly } && !cloudConfigured) { message = "请先配置 WebDAV 网盘"; return }
-        selected.forEach { removeBook(it, removeCloud && (it.cloudEnabled || it.cloudOnly)) }
+        selected.forEach { removeBook(it, cloudIds?.contains(it.id) ?: (removeCloud && (it.cloudEnabled || it.cloudOnly)), removeOriginal) }
     }
 
-    fun removeBook(book: Book, removeCloud: Boolean) {
+    fun removeBook(book: Book, removeCloud: Boolean) = removeBook(book, removeCloud, false)
+
+    private fun removeBook(book: Book, removeCloud: Boolean, removeOriginal: Boolean) {
         if (hasBookDraft(book.id)) { message = "请先保存或放弃这本书的修改"; return }
         if (book.id in editingBookIds || book.id in cloudTransfers) { message = "请等待或取消这本书的当前操作后再移除"; return }
         if (state.books.none { it.id == book.id }) return
@@ -1072,6 +1088,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 require(!meteredNetwork || allowMetered) { "网络已切换为计费网络，请重新确认" }
                 service.deleteBook(service.identity()?.let { cloudHistory.cloudBookId(it, book.id) } ?: book.id)
                 service.identity()?.let { account -> withContext(Dispatchers.IO) { cloudHistory.forget(account, book.id) } }
+                if (removeOriginal) withContext(Dispatchers.IO) { deleteBookOriginal(getApplication(), book) }
                 removeLocalBook(book)
             }
         } else {
@@ -1080,7 +1097,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 try {
                     stopAiSpeechConversion(book.id)
                     stopCloudUploadSubmission(book.id)
-                    cloudOperationMutex.withBook(book.id) { removeLocalBook(book) }
+                    cloudOperationMutex.withBook(book.id) {
+                        if (removeOriginal) withContext(Dispatchers.IO) { deleteBookOriginal(getApplication(), book) }
+                        removeLocalBook(book)
+                    }
                 }
                 catch (error: CancellationException) { throw error }
                 catch (error: Exception) { message = error.message ?: "移除书籍失败" }
