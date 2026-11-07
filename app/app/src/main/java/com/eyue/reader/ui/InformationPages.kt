@@ -192,7 +192,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent(onHistory: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 恢复本地修改扫描开关，默认手动重载，支持按需启用自动重载。\n• 修复 EPUB 行末追加文字时的源文件定位。\n• GitHub 更新支持应用内后台下载、暂停、继续和取消，下载完成后提示安装。", style = MaterialTheme.typography.bodyMedium)
+        Text("• GitHub 更新支持应用内后台下载、暂停、继续和取消，下载完成后提示安装。\n• 恢复本地修改扫描开关，默认手动重载，支持按需启用自动重载。\n• 修复 EPUB／MOBI 换行和 EPUB 行末追加文字时的源文件定位，默认启用原书 CSS。\n• 优化 EPUB／MOBI 正文字距、行距与亮度拖动，保留标题、注音和图表样式。\n• 优化退出阅读时的自动云同步，移除书籍时显示实际云端占用，并可选择删除本地原文件。\n• 修正系统翻译应用名称显示。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton(onClick = onHistory, modifier = Modifier.testTag("settings_history_changelog")) { Text("历史更新日志") }
     }
