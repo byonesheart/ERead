@@ -47,7 +47,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
-fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpdateSession = viewModel()) {
+fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpdateSession = viewModel(),
+    openUpdateDownload: String? = null) {
     val systemDark = isSystemInDarkTheme()
     SideEffect { vm.updateSystemTheme(systemDark) }
     val dark = vm.state.themeMode.isDark(systemDark)
@@ -55,6 +56,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
         vm.reloadLocalSource(book)
     }) {
     EReadTheme(dark = dark, eink = vm.state.einkMode, style = vm.state.appTheme) {
+    UpdateDownloadHost(openUpdateDownload) {
         val state = vm.state.withResolvedTheme(systemDark)
         val settings = vm.readerSettings.copy(nightMode = dark)
         val density = LocalDensity.current
@@ -376,7 +378,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                     restoreProgress = vm.cloudRestoreProgress,
                                     onAppTheme = vm::setAppTheme, availableUpdate = updateSession.availableUpdate,
                                     onCheckUpdate = updateSession::checkNow, onShowRecentReading = vm::setShowRecentReading,
-                                    onSourceScanMode = vm::setSourceScanMode, onScanSourcesNow = vm::scanLocalSourcesNow,
+                                    onScanLocalChanges = vm::setScanLocalChanges, onScanSourcesNow = vm::scanLocalSourcesNow,
                                     localSourceScanIssues = vm.localSourceScanIssues, scanningLocalSources = vm.scanningLocalSources,
                                     sourceAuthorizations = vm.sourceAuthorizations, sourceSyncing = vm.reloadingSourceIds,
                                     sourcePending = vm.pendingSourceReloadIds, onScannedBooks = vm::setScannedBooks,
@@ -469,6 +471,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             onCancel = { leavingDraftIds = emptyList() },
             preparing = leavingDraftIds.any { it in vm.editingBookIds && it !in vm.bookSaveProgress },
             progress = leavingDraftIds.firstNotNullOfOrNull { vm.bookSaveProgress[it] })
+    }
     }
     }
 }

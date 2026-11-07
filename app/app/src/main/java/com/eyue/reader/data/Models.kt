@@ -166,11 +166,10 @@ data class LibraryState(
     val tabletDualPage: Boolean = false,
     val appTheme: AppThemeStyle = AppThemeStyle.CLASSIC,
     val showRecentReading: Boolean = true,
-    val scanLocalChanges: Boolean = false,
+    val scanLocalChanges: Boolean = true,
     val scannedBookIds: Set<String> = emptySet(),
-    val autoReloadSources: Boolean = false,
-    val sourceScanAutomatic: Boolean = true
+    val autoReloadSources: Boolean = false
 ) {
     val sourceScanMode: SourceScanMode get() = if (!scanLocalChanges) SourceScanMode.OFF
-        else if (sourceScanAutomatic) SourceScanMode.AUTO else SourceScanMode.MANUAL
+        else if (autoReloadSources) SourceScanMode.AUTO else SourceScanMode.MANUAL
 }

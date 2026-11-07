@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -28,22 +29,28 @@ import org.robolectric.annotation.LooperMode
 class AboutUpdateRobolectricTest {
     @get:Rule val compose = createComposeRule()
 
-    private fun update() = AppUpdateResult(true, "next", 99, "核心功能更新", null,
+    private fun update() = AppUpdateResult(true, "next", 99, "核心功能更新",
+        "https://github.com/byonesheart/ERead/releases/download/vNext/ERead.apk",
         "https://github.com/byonesheart/ERead/releases", mirrors = listOf(
             AppUpdateMirror("百度网盘", "https://pan.baidu.com/s/example", "READ")))
 
     @Test fun startupResultsShowTheirDownloadLinksWithoutAnotherCheck() {
         var checks = 0
+        var download: AppUpdateResult? = null
+        val controls = UpdateDownloadControls(null, false, { download = it }, {}, {}, {}, {})
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    AboutIntro(onCheckUpdate = { checks++; update() }, availableUpdate = update())
+                CompositionLocalProvider(LocalUpdateDownloadControls provides controls) {
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        AboutIntro(onCheckUpdate = { checks++; update() }, availableUpdate = update())
+                    }
                 }
             }
         }
-        compose.onNodeWithTag("update_github_download").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("update_github_download").performScrollTo()
+            .assertTextEquals("GitHub 下载（需网络支持）").performClick()
         compose.onNodeWithTag("update_mirror_0").performScrollTo().assertTextContains("提取码 READ", substring = true)
-        compose.runOnIdle { assertEquals(0, checks) }
+        compose.runOnIdle { assertEquals(0, checks); assertEquals(update(), download) }
     }
 
     @Test fun aLateStartupResultAppearsOnTheAlreadyOpenAboutPage() {

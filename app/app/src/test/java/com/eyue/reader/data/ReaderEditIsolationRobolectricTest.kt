@@ -247,21 +247,18 @@ class ReaderEditIsolationRobolectricTest {
         assertEquals("第一章\n新的正文。", File(selected.sourcePath!!).readText())
     }
 
-    @Test fun manualScanWaitsForAnExplicitActionAndOffNeverScans() {
+    @Test fun manualReloadDetectsChangesOnReturnWithoutReplacingTheBookAndOffNeverScans() {
         val original = textBook("手动扫描", "第一章\n原始正文。")
         openLibrary(original)
         vm.setScannedBooks(setOf(original.id))
-        vm.setSourceScanMode(SourceScanMode.AUTO)
         await { app.getSharedPreferences("local_source_snapshots", 0).contains(original.id) && !vm.scanningLocalSources }
-        vm.setSourceScanMode(SourceScanMode.MANUAL)
         File(original.sourcePath!!).writeText("第一章\n外部修改。")
         vm.pauseSession(); vm.resumeSession()
-        assertFalse(vm.scanningLocalSources)
-        assertTrue(vm.localSourceChangedIds.isEmpty())
-        vm.scanLocalSourcesNow()
-        vm.pauseSession(); vm.resumeSession()
         await { original.id in vm.localSourceChangedIds && !vm.scanningLocalSources }
-        vm.setSourceScanMode(SourceScanMode.OFF)
+        assertEquals(original.contentVersion, book(original.id).contentVersion)
+        vm.setScanLocalChanges(false)
+        vm.setAutoReloadSources(true)
+        assertFalse(vm.state.autoReloadSources)
         vm.scanLocalSourcesNow()
         assertFalse(vm.scanningLocalSources)
         assertTrue(vm.localSourceChangedIds.isEmpty())

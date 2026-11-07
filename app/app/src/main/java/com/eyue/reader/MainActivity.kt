@@ -8,9 +8,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.Lifecycle
 import androidx.activity.ComponentActivity
 import com.eyue.reader.data.ConsentStore
+import com.eyue.reader.data.OPEN_UPDATE_DOWNLOAD
 import com.eyue.reader.ui.ConsentGate
 import com.eyue.reader.ui.EReadApp
 import kotlinx.coroutines.channels.BufferOverflow
@@ -22,6 +24,7 @@ class MainActivity : ComponentActivity() {
     private val volumeEvents = MutableSharedFlow<Int>(extraBufferCapacity = 8, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     private var externalRequestId: String? = null
     private var readerReady = false
+    private val updateDownloadRequest = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Old navigator Fragment state has no owner in the Compose-only activity.
@@ -29,11 +32,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         externalRequestId = savedInstanceState?.getString(EXTERNAL_REQUEST_ID)
+        if (savedInstanceState == null) handleUpdateNotification(intent)
         setContent {
             ConsentGate(onExit = ::finish) {
                 LaunchedEffect(Unit) { initializeReader() }
                 LaunchedEffect(reader.state.einkMode) { requestHighRefreshRate() }
-                EReadApp(reader, volumeEvents)
+                EReadApp(reader, volumeEvents, openUpdateDownload = updateDownloadRequest.value)
             }
         }
     }
@@ -42,7 +46,12 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         externalRequestId = null
+        handleUpdateNotification(intent)
         if (readerReady) openExternalIntent(intent)
+    }
+
+    private fun handleUpdateNotification(intent: Intent?) {
+        if (intent?.action == OPEN_UPDATE_DOWNLOAD) updateDownloadRequest.value = UUID.randomUUID().toString()
     }
 
     private fun initializeReader() {

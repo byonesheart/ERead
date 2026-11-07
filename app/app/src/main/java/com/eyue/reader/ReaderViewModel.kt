@@ -767,6 +767,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         scanLocalSources()
     }
     fun setAutoReloadSources(enabled: Boolean) {
+        if (!storageReady || !state.scanLocalChanges) return
         changed(state.copy(autoReloadSources = enabled))
         sourceWatchJob?.cancel(); sourceWatchJob = null
         scanLocalSources()
@@ -791,18 +792,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun setScanLocalChanges(enabled: Boolean) {
         if (!storageReady) return
-        changed(state.copy(scanLocalChanges = enabled))
-        sourceWatchJob?.cancel(); sourceWatchJob = null
-        scanLocalSources()
-    }
-    fun setSourceScanMode(mode: SourceScanMode) {
-        if (!storageReady) return
-        changed(state.copy(scanLocalChanges = mode != SourceScanMode.OFF, sourceScanAutomatic = mode == SourceScanMode.AUTO))
+        changed(state.copy(scanLocalChanges = enabled, autoReloadSources = enabled && state.autoReloadSources))
         sourceWatchJob?.cancel(); sourceWatchJob = null
         sourceScanJob?.cancel(); scanningLocalSources = false
         scanLocalSources()
     }
-    fun scanLocalSourcesNow() = scanLocalSources(manual = true)
+    fun scanLocalSourcesNow() = scanLocalSources()
     fun refreshSourceAccess() {
         sourceAccessJob?.cancel()
         sourceAccessJob = viewModelScope.launch {
@@ -810,12 +805,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             sourceAuthorizations = withContext(Dispatchers.IO) { books.associate { it.id to localSourceAuthorized(getApplication(), it) } }
         }
     }
-    private fun scanLocalSources(manual: Boolean = false) {
+    private fun scanLocalSources() {
         refreshSourceAccess()
-        if (state.sourceScanMode == SourceScanMode.AUTO && state.autoReloadSources && sourceWatchJob?.isActive != true) sourceWatchJob = viewModelScope.launch {
+        if (state.sourceScanMode == SourceScanMode.AUTO && sourceWatchJob?.isActive != true) sourceWatchJob = viewModelScope.launch {
             while (true) { delay(30_000); if (sourceScanJob?.isActive != true) scanLocalSources() }
         }
-        if (state.sourceScanMode == SourceScanMode.MANUAL && !manual) return
         val generation = ++sourceScanGeneration
         sourceScanJob?.cancel()
         if (!state.scanLocalChanges) { localSourceChangedIds = emptySet(); localSourceScanIssues = emptyMap(); scanningLocalSources = false; return }

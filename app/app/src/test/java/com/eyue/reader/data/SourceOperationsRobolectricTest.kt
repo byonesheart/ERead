@@ -118,11 +118,11 @@ class SourceOperationsRobolectricTest {
         assertEquals("same content", File(retained.sourcePath!!).readText())
         requireBookSourceAvailable(context, retained)
     }
-    @Test fun startupScanIsOptInAndPersists() {
+    @Test fun startupScanDefaultsToManualAndPersistsAnExplicitOptOut() {
         val repository = LibraryRepository(context)
-        assertFalse(repository.load().scanLocalChanges)
-        repository.save(LibraryState(scanLocalChanges = true))
-        assertTrue(repository.load().scanLocalChanges)
+        assertEquals(SourceScanMode.MANUAL, repository.load().sourceScanMode)
+        repository.save(LibraryState(scanLocalChanges = false))
+        assertEquals(SourceScanMode.OFF, repository.load().sourceScanMode)
     }
     @Test fun indexedComicFilesAreScannedWithoutTryingToOpenTheFolderAsAFile() {
         val image = File(root, "page.jpg").apply { writeText("image-bytes") }
@@ -197,17 +197,21 @@ class SourceOperationsRobolectricTest {
     @Test fun manualAutomaticAndOffScanModesRoundTripWithoutChangingBookSelection() {
         for (mode in SourceScanMode.entries) {
             val selected = LibraryState(books = listOf(book()), scanLocalChanges = mode != SourceScanMode.OFF,
-                sourceScanAutomatic = mode == SourceScanMode.AUTO, scannedBookIds = setOf("source-test"), autoReloadSources = true)
+                scannedBookIds = setOf("source-test"), autoReloadSources = mode == SourceScanMode.AUTO)
             LibraryRepository(context).save(selected)
             val loaded = LibraryRepository(context).load()
             assertEquals(mode, loaded.sourceScanMode)
             assertEquals(selected.scannedBookIds, loaded.scannedBookIds)
-            assertTrue(loaded.autoReloadSources)
+            assertEquals(mode == SourceScanMode.AUTO, loaded.autoReloadSources)
         }
         val legacy = File(context.filesDir, "library.json")
-        val json = org.json.JSONObject(legacy.readText()).apply { remove("sourceScanAutomatic"); put("scanLocalChanges", true) }
+        val json = org.json.JSONObject(legacy.readText()).apply {
+            put("sourceScanAutomatic", false)
+            put("scanLocalChanges", true)
+            put("autoReloadSources", true)
+        }
         legacy.writeText(json.toString())
-        assertEquals(SourceScanMode.AUTO, LibraryRepository(context).load().sourceScanMode)
+        assertEquals(SourceScanMode.MANUAL, LibraryRepository(context).load().sourceScanMode)
     }
     @Test fun systemDownloadsPublishesOnlyTheOriginalAndPreservesPrivateRenderingAssets() {
         val provider = provider("media")

@@ -71,21 +71,26 @@ class SettingsPreferencesRobolectricTest {
         compose.setContent { MaterialTheme { SettingsScreen(LibraryState(), {}, {}, {}, {}) } }
         compose.onNodeWithTag("settings_translation").assertDoesNotExist()
     }
-    @Test fun scanModeChoicesExposeManualScanWithoutStartingItAutomatically() {
+    @Test fun scanSwitchDefaultsToManualAndGatesAutomaticReload() {
         var state by mutableStateOf(LibraryState())
         var scans = 0
         compose.setContent { MaterialTheme { SettingsScreen(state, {}, {}, {}, {},
-            onSourceScanMode = { mode -> state = state.copy(scanLocalChanges = mode != SourceScanMode.OFF,
-                sourceScanAutomatic = mode == SourceScanMode.AUTO) }, onScanSourcesNow = { scans++ }) } }
+            onScanLocalChanges = { enabled -> state = state.copy(scanLocalChanges = enabled,
+                autoReloadSources = enabled && state.autoReloadSources) },
+            onAutoReload = { state = state.copy(autoReloadSources = it) }, onScanSourcesNow = { scans++ }) } }
         compose.onNodeWithTag("settings_scan_local_changes").performScrollTo().performClick()
-        compose.onNodeWithTag("source_scan_mode_OFF").assertIsSelected()
+        compose.onNodeWithTag("source_scan_enabled").assertIsOn()
+        compose.onNodeWithTag("source_auto_reload").assertIsOff()
+        compose.onNodeWithTag("source_scan_enabled").performClick()
+        compose.onNodeWithTag("source_auto_reload").assertIsNotEnabled()
         compose.onNodeWithTag("source_scan_now").assertDoesNotExist()
-        compose.onNodeWithTag("source_scan_mode_MANUAL").performClick()
+        compose.onNodeWithTag("source_scan_enabled").performClick()
         compose.runOnIdle { assertEquals(SourceScanMode.MANUAL, state.sourceScanMode); assertEquals(0, scans) }
         compose.onNodeWithTag("source_scan_now").performClick()
         compose.runOnIdle { assertEquals(1, scans) }
-        compose.onNodeWithTag("source_scan_mode_AUTO").performClick()
-        compose.onNodeWithTag("source_scan_now").assertDoesNotExist()
+        compose.onNodeWithTag("source_auto_reload").performClick()
+        compose.onNodeWithTag("source_reload_confirm").performClick()
+        compose.runOnIdle { assertEquals(SourceScanMode.AUTO, state.sourceScanMode) }
     }
 
     @Test fun meteredBackupRequiresConsentAndCanStartPrechecked() {

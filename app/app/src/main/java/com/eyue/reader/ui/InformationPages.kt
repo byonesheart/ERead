@@ -137,6 +137,7 @@ internal fun openAuthorLink(context: Context, url: String) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val client = remember { AppUpdateClient() }
+    val downloads = LocalUpdateDownloadControls.current
     var checking by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<AppUpdateResult?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -170,7 +171,10 @@ internal fun openAuthorLink(context: Context, url: String) {
                     }
                     if (update.available) {
                         if (update.changelog.isNotBlank()) Text(update.changelog, style = MaterialTheme.typography.bodySmall)
-                        BrowserLink("GitHub Releases · 下载", update.downloadUrl ?: update.releaseUrl, "update_github_download")
+                        if (update.downloadUrl != null) TextButton(onClick = { downloads?.start?.invoke(update) },
+                            enabled = downloads?.canStart == true, modifier = Modifier.testTag("update_github_download")) {
+                            Text("GitHub 下载（需网络支持）")
+                        } else BrowserLink("查看 GitHub 发布页", update.releaseUrl, "update_github_release")
                         if (!update.prerelease) update.mirrors.forEachIndexed { index, mirror ->
                             BrowserLink(mirror.name + if (mirror.extractionCode.isBlank()) "" else " · 提取码 ${mirror.extractionCode}",
                                 mirror.url, "update_mirror_$index")
@@ -179,6 +183,7 @@ internal fun openAuthorLink(context: Context, url: String) {
                 }
             }
         }
+        downloads?.let { UpdateDownloadPanel(it) }
         Text("本地小说与漫画阅读器，支持 EPUB、TXT、MOBI、PDF、图片和漫画文件夹。管理个人书架，记录书签笔记，使用系统或 AI 语音朗读，并可选用 WebDAV 备份。", style = MaterialTheme.typography.bodyMedium)
         OutlinedButton(onClick = onOpenChangelog, modifier = Modifier.testTag("settings_open_changelog")) { Text("更新日志") }
     }
@@ -187,7 +192,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent(onHistory: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 优化 EPUB／MOBI 字距与行距覆盖，保留标题、注音和图表样式。\n• 修复亮度拖动卡顿，支持实时预览、松手保存。\n• 移除书籍时按实际云端备份显示占用，新增可选删除本地原文件。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 恢复本地修改扫描开关，默认手动重载，支持按需启用自动重载。\n• 修复 EPUB 行末追加文字时的源文件定位。\n• GitHub 更新支持应用内后台下载、暂停、继续和取消，下载完成后提示安装。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton(onClick = onHistory, modifier = Modifier.testTag("settings_history_changelog")) { Text("历史更新日志") }
     }

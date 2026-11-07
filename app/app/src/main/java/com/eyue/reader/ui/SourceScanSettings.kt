@@ -15,24 +15,22 @@ import com.eyue.reader.data.*
 @Composable internal fun SourceScanSettings(state: LibraryState, access: Map<String, Boolean>, issues: Map<String, String>,
     scanning: Boolean, syncing: Set<String>, pending: Set<String>,
     onBooks: (Set<String>) -> Unit, onAutoReload: (Boolean) -> Unit, onGrant: (Set<String>) -> Unit,
-    onFolder: () -> Unit, onMode: (SourceScanMode) -> Unit, onScan: () -> Unit) {
+    onFolder: () -> Unit, onEnabled: (Boolean) -> Unit, onScan: () -> Unit) {
     val books = state.books.filterNot { it.cloudOnly || it.isDemo }
     var warn by remember { mutableStateOf(false) }
     LazyColumn(Modifier.fillMaxSize().testTag("source_scan_page"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                SourceScanMode.entries.forEach { mode ->
-                    FilterChip(state.sourceScanMode == mode, { onMode(mode) }, label = { Text(mode.displayName) },
-                        modifier = Modifier.weight(1f).testTag("source_scan_mode_${mode.name}"))
-                }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("扫描本地修改", Modifier.weight(1f))
+                Switch(state.scanLocalChanges, onEnabled, Modifier.testTag("source_scan_enabled"))
             }
-            Text("仅扫描下方勾选的书籍。自动：启动、返回前台时检查，启用自动重载后运行期间也会定期检查。手动：点击下方按钮检查。关闭：不检查本地修改。", style = MaterialTheme.typography.bodySmall)
-            if (state.sourceScanMode == SourceScanMode.MANUAL) OutlinedButton(onScan, enabled = !scanning,
+            Text("启动和返回前台时检查所选书籍。启用自动重载后，运行期间也会定期检查并重载。", style = MaterialTheme.typography.bodySmall)
+            if (state.scanLocalChanges) OutlinedButton(onScan, enabled = !scanning,
                 modifier = Modifier.testTag("source_scan_now")) { Text("立即扫描") }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("自动重载", Modifier.weight(1f))
                 Switch(state.autoReloadSources, { if (it) warn = true else onAutoReload(false) },
-                    Modifier.testTag("source_auto_reload"))
+                    Modifier.testTag("source_auto_reload"), enabled = state.scanLocalChanges)
             }
             Text("同步保留书签、笔记、标记、划线和阅读记录。正在阅读的书，下次打开时使用新正文。", style = MaterialTheme.typography.bodySmall)
             if (scanning) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("source_scan_progress"))

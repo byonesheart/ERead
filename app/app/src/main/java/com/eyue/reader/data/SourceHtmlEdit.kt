@@ -4,6 +4,10 @@ import java.util.UUID
 
 /** Edits literal text only: CSS, attributes, links, images and surrounding tags stay byte-for-byte intact. */
 internal object SourceHtmlEdit {
+    private val nonTextMarkup = Regex(
+        "<!--[\\s\\S]*?(?:-->|$)|<\\?[\\s\\S]*?\\?>|<!DOCTYPE(?:\"[^\"]*\"|'[^']*'|\\[[\\s\\S]*?]|[^>'\"\\[])*>",
+        RegexOption.IGNORE_CASE
+    )
     data class Change(val start: Int, val end: Int, val replacement: String)
     data class Result(val html: String, val changes: List<Change>) {
         fun offset(original: Int): Int {
@@ -105,7 +109,10 @@ internal object SourceHtmlEdit {
         } else listOf(Change(start, end, target.substring(start, targetEnd)))
         val changes = textChanges.flatMap { change ->
             checkActive()
-            val from = locate(change.start, last = true)
+            val lineEndInsertion = change.start == change.end && original.getOrNull(change.start).let {
+                it == null || it == '\n'
+            }
+            val from = locate(change.start, last = !lineEndInsertion)
             val until = if (change.end == change.start) from else locate(change.end)
             val inserted = escape(change.replacement).replace("\n", "<br/>")
             spans.mapNotNull { span ->
@@ -136,10 +143,26 @@ internal object SourceHtmlEdit {
         fun add(end: Int) {
             if (end <= cursor) return
             val text = html.substring(cursor, end)
-            // Masked head/style/comment whitespace can equal the original whitespace, yet a probe there is discarded.
-            if (text.isNotBlank() && visible.substring(cursor, end) == text) spans += cursor until end
+            // Hidden markup and formatting-only whitespace are never edit boundaries.
+            if (text.isNotBlank() && visible.regionMatches(cursor, text, 0, text.length)) spans += cursor until end
         }
-        sourceHtmlTags(html, checkActive).forEach { tag -> add(tag.start); cursor = tag.end }
+        val ignored = nonTextMarkup.findAll(html).iterator()
+        var next = if (ignored.hasNext()) ignored.next().range else null
+        fun skipMarkupBefore(end: Int) {
+            while (true) {
+                val range = next ?: return
+                if (range.first >= end) return
+                add(range.first)
+                cursor = maxOf(cursor, range.last + 1)
+                next = if (ignored.hasNext()) ignored.next().range else null
+            }
+        }
+        sourceHtmlTags(html, checkActive).forEach { tag ->
+            skipMarkupBefore(tag.start)
+            add(tag.start)
+            cursor = maxOf(cursor, tag.end)
+        }
+        skipMarkupBefore(html.length)
         add(html.length)
         return spans
     }

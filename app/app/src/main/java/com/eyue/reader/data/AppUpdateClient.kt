@@ -137,7 +137,7 @@ private fun safeMirrorLink(value: String): Boolean = runCatching {
         uri.path.startsWith("/s/") && uri.path.length > 3 && !uri.path.split('/').any { it == "." || it == ".." }
 }.getOrDefault(false)
 
-private fun safeUpdateLink(value: String, download: Boolean): Boolean = runCatching {
+internal fun safeUpdateLink(value: String, download: Boolean): Boolean = runCatching {
     val uri = java.net.URI(value)
     val path = uri.path.orEmpty()
     uri.scheme == "https" && uri.host == "github.com" && uri.rawUserInfo == null && uri.port == -1 &&

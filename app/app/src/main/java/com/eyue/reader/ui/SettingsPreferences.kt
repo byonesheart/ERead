@@ -81,7 +81,7 @@ private enum class SettingsPage(val title: String) {
     sourceSyncing: Set<String> = emptySet(), sourcePending: Set<String> = emptySet(),
     onScannedBooks: (Set<String>) -> Unit = {}, onAutoReload: (Boolean) -> Unit = {},
     onGrantScanBooks: (Set<String>) -> Unit = {}, onGrantScanFolder: () -> Unit = {},
-    onSourceScanMode: (SourceScanMode) -> Unit = {}, onScanSourcesNow: () -> Unit = {}) {
+    onScanLocalChanges: (Boolean) -> Unit = {}, onScanSourcesNow: () -> Unit = {}) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
     val page = pages.lastOrNull()
@@ -161,7 +161,7 @@ private enum class SettingsPage(val title: String) {
                 }
                 SettingsPage.SOURCE_SCAN -> SourceScanSettings(state, sourceAuthorizations, localSourceScanIssues,
                     scanningLocalSources, sourceSyncing, sourcePending, onScannedBooks, onAutoReload,
-                    onGrantScanBooks, onGrantScanFolder, onSourceScanMode, onScanSourcesNow)
+                    onGrantScanBooks, onGrantScanFolder, onScanLocalChanges, onScanSourcesNow)
                 SettingsPage.APP_THEME -> AppThemeSettingsPage(state.appTheme, onAppTheme)
                 SettingsPage.SPEECH -> {
                     SpeechEngineSettings(state.speechEngine, aiSpeechConfig, onSpeechEngine, onSaveAiSpeech,

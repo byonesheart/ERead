@@ -102,6 +102,16 @@ class EbookSourceWritebackRobolectricTest {
         }
     }
 
+    @Test fun lineEndInsertionsSkipCommentsAndXmlMarkupWithoutMovingParagraphs() {
+        val html = "<?xml version='1.0'?><html><body><p>第一行<!-- 注释 --><br/>第二行</p>\n" +
+            "<p id='last'><strong>末段</strong>  </p></body></html><?end keep?>"
+        val original = SourceHtmlEdit.plain(html) { null }
+        val target = original.replace("第一行", "第一行追加").replace("第二行", "第二行追加").replace("末段", "末段追加")
+        val result = SourceHtmlEdit.replace(html, target) { null }
+        assertEquals(target, SourceHtmlEdit.plain(result.html) { null })
+        assertEquals(html.replace("第一行", "第一行追加").replace("第二行", "第二行追加").replace("末段", "末段追加"), result.html)
+    }
+
     @Test fun formattedWhitespaceInHiddenHeadAndStylesIsNeverAVisibleEditBoundary() {
         val sources = listOf(
             "<html><head><style>" + " ".repeat(300) + "</style><title>书名</title></head><body><p>旧正文</p></body></html>",

@@ -97,7 +97,8 @@ class EReadAppStartupRobolectricTest {
             store.put("reader", vm)
         }
         val updates = AppUpdateSession(checker = { com.eyue.reader.data.AppUpdateResult(true, "next",
-            com.eyue.reader.BuildConfig.VERSION_CODE + 1, "测试核心更新", null, "https://github.com/byonesheart/ERead/releases") })
+            com.eyue.reader.BuildConfig.VERSION_CODE + 1, "测试核心更新",
+            "https://github.com/byonesheart/ERead/releases/download/vNext/ERead.apk", "https://github.com/byonesheart/ERead/releases") })
         val host = java.util.concurrent.atomic.AtomicReference<android.view.View>()
         compose.setContent { host.set(LocalView.current); EReadApp(vm, emptyFlow(), updates) }
         awaitState(30_000) { !vm.loading && vm.state.books.isNotEmpty() }

@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <queries>
         <intent><action android:name="android.intent.action.TRANSLATE" /><data android:mimeType="text/plain" /></intent>
         <intent>
@@ -25,6 +26,11 @@
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.ERead">
+        <provider android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/update_apk_paths" />
+        </provider>
         <service android:name=".ui.ReaderAudioService" android:exported="false" android:foregroundServiceType="mediaPlayback" />
         <receiver android:name=".ui.ReaderMediaButtonReceiver" android:exported="false">
             <intent-filter><action android:name="android.intent.action.MEDIA_BUTTON" /></intent-filter>
