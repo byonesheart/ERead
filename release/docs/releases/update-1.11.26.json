@@ -1,0 +1,27 @@
+{
+  "versionCode": 85,
+  "versionName": "1.11.26",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.26",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.26/ERead-1.11.26-release.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1KKlOgddA4VpWfuYJaIOemA?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/d3c74406952a",
+      "extractionCode": "LP81"
+    }
+  ],
+  "changelog": [
+    "GitHub 更新支持应用内后台下载、暂停、继续和取消，下载完成后提示安装。",
+    "恢复本地修改扫描开关，默认手动重载，支持按需启用自动重载。",
+    "修复 EPUB／MOBI 换行和 EPUB 行末追加文字时的源文件定位，默认启用原书 CSS。",
+    "优化 EPUB／MOBI 正文字距、行距与亮度拖动，保留标题、注音和图表样式。",
+    "优化退出阅读时的自动云同步，移除书籍时显示实际云端占用，并可选择删除本地原文件。",
+    "修正系统翻译应用名称显示。",
+    "更多功能请自行体验。"
+  ]
+}
