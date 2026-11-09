@@ -123,6 +123,7 @@ internal fun EbookContinuousSurface(
         browser = view
         view.documentGeneration = generation
         val reuse = view.loadedKey == key && view.pageReady
+        if (!reuse) view.appliedConverter = latestConverter
         val initial = controller.initialNavigation(chapterIndex) ?: JSONObject().put("type", "navigate")
             .put("chapter", chapterIndex).put("offset", initialOffset).put("image", initialImage)
         val image = initial.optString("image").takeIf(String::isNotEmpty)
@@ -222,7 +223,13 @@ internal fun EbookContinuousSurface(
         controller.consumePending()
     } }
     LaunchedEffect(converter, ready) { if (ready) {
-        invoke(JSONObject().put("type", "convert")); controller.consumePending()
+        browser?.let { view ->
+            if (view.appliedConverter !== converter) {
+                view.appliedConverter = converter
+                invoke(JSONObject().put("type", "convert"))
+            }
+        }
+        controller.consumePending()
     } }
     LaunchedEffect(annotations, search, spoken, chapterIndex, ready) { if (ready) documents.keys.toList().forEach { index ->
         invoke(JSONObject().put("type", "decorateChapter").put("chapter", index).put("decorations", decorations(index)))

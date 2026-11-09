@@ -29,7 +29,7 @@
         }
         autoScrollFrame = requestAnimationFrame(tick);
     }
-    let configurationGeneration = 0, activeFont = null;
+    let configurationGeneration = 0, resumeGeneration = 0, activeFont = null;
     const loadedFonts = new Map(), sourceMappings = [];
     const imageCrops = new Map();
     // Adapted from 7Mrlan/ebook build.66: a publication canvas belongs to the
@@ -516,13 +516,15 @@
             }
         });
         // Whitespace immediately before a sampled glyph belongs to the same paragraph.
-        let start = points.length ? Math.min.apply(null, points) : 0;
+        const anchorOffset = points.length ? Math.min.apply(null, points) : 0;
+        let start = anchorOffset;
         let end = points.length ? Math.max.apply(null, points) : canonical.length;
         while (start > 0 && whitespace(canonical[start - 1])) start--;
         while (end < canonical.length && whitespace(canonical[end])) end++;
         const horizontal = pageHorizontal(), position = horizontal ? scrollX : continuousHost ? view.top : scrollY;
         const extent = horizontal ? document.documentElement.scrollWidth : document.documentElement.scrollHeight;
         return {offset: start, endOffset: imageOnly && imageIndex !== undefined ? start : end,
+            anchorOffset, positionOnly: points.length === 0 && config.mode !== 'SCROLL',
             imageIndex, page: continuousHost ? Math.floor(position / pageStride()) : pageIndex(), pages: pageCount(), images: shownImages, scrolling: manual,
             atStart: position <= 1, atEnd: position + (horizontal ? innerWidth : view.height) >= extent - 1};
     }
@@ -535,6 +537,18 @@
         const state = viewport(), signature = JSON.stringify(state);
         if (force || signature !== lastViewport) { lastViewport = signature; send('viewport', state); }
         drawDecorations();
+    }
+    function readingAnchor() {
+        if (reflowAnchor) return reflowAnchor;
+        const current = viewport(), anchor = navigationAnchor;
+        const fallback = config.mode === 'SCROLL' ? current : {...current, offset:current.anchorOffset};
+        if (!anchor) return fallback;
+        if (anchor.lastPage) return current.atEnd ? anchor : fallback;
+        if (anchor.imageIndex !== undefined) return anchor.imageIndex === current.imageIndex ? anchor : fallback;
+        if (anchor.image) return current.images.includes(anchor.image) ? anchor : fallback;
+        if (anchor.positionOnly) return current.positionOnly && current.page === anchor.page ? anchor : fallback;
+        const range = rangeFor(anchor.offset, Math.min(canonical.length, anchor.offset + 1));
+        return Array.from(range.getClientRects()).some(visible) ? anchor : fallback;
     }
     function schedule() {
         if (!frame) frame = requestAnimationFrame(function () { frame = 0; if (!getSelection().isCollapsed) alignPagedSelection(); report(false); });
@@ -554,25 +568,30 @@
         const target = Math.floor(Math.max(0, Math.min(pageCount() - 1, page)) / span) * span;
         automatic = true;
         scrollToPage(target);
-        requestAnimationFrame(function () { automatic = false; report(true); });
+        if (started) requestAnimationFrame(function () { automatic = false; report(true); });
+        else automatic = false;
     }
     function navigate(command, reflow) {
         if (!reflow) reflowAnchor = null;
         finishPageAnimation();
+        navigationAnchor = {offset: command.offset || 0, image: command.image, imageIndex: command.imageIndex,
+            lastPage: command.lastPage, positionOnly: command.positionOnly, page: command.page};
+        if (!continuousHost && (command.lastPage || command.positionOnly && config.mode !== 'SCROLL')) {
+            moveToPage(command.lastPage ? pageCount() - 1 : command.page);
+            return;
+        }
         const targetImage = command.imageIndex === undefined ?
             command.image && images.reduce((nearest, image) => image.path === command.image &&
                 (!nearest || Math.abs(image.offset - (command.offset || 0)) < Math.abs(nearest.offset - (command.offset || 0))) ?
                 image : nearest, null) : images[command.imageIndex];
         const range = targetImage ? null : rangeFor(command.offset || 0, Math.min(canonical.length, (command.offset || 0) + 1));
         const rect = targetImage ? imageBounds(targetImage) : range.getBoundingClientRect();
-        navigationAnchor = {offset: command.offset || 0, image: command.image, imageIndex: command.imageIndex};
         if (continuousHost) {
             measureChapter();
             const y = command.lastPage ? Math.max(0, document.body.scrollHeight - viewBounds().height) : rect.top + scrollY - (config.top || 0);
             continuousHost.navigateLocal(frameChapter, y, command.ensureVisible); return;
         }
         if (command.ensureVisible && visible(rect)) { report(true); return; }
-        if (command.lastPage) { moveToPage(pageCount() - 1); return; }
         if (config.mode === 'SCROLL') {
             automatic = true;
             scrollTo(0, Math.max(0, rect.top + scrollY - (config.top || 0)));
@@ -752,9 +771,8 @@
             if (generation !== configurationGeneration) return;
         }
         finishPageAnimation();
-        const old = preserve && started && (!continuousHost || continuousHost.isActive(frameChapter)) ? viewport() : null;
-        const anchor = reflowAnchor || ((old && navigationAnchor && (navigationAnchor.image || Array.from(rangeFor(navigationAnchor.offset,
-            Math.min(canonical.length, navigationAnchor.offset + 1)).getClientRects()).some(visible))) ? navigationAnchor : old);
+        keepPagedViewport();
+        const anchor = preserve && started && (!continuousHost || continuousHost.isActive(frameChapter)) ? readingAnchor() : null;
         if (anchor && !reflowAnchor) reflowAnchor = {...anchor};
         if (next.mode === 'SCROLL' || next.mode !== config.mode || next.vertical !== config.vertical) pagedPosition = null;
         config = next;
@@ -851,7 +869,7 @@
         fitPageBoundary();
         measureChapter();
         if (anchor && (!continuousHost || continuousHost.isActive(frameChapter)))
-            navigate({offset: anchor.offset, image: anchor.image, imageIndex: anchor.imageIndex}, true);
+            navigate(anchor, true);
         requestAnimationFrame(() => { if (generation === configurationGeneration) report(true); });
     }
     function rectsFor(start, end) {
@@ -916,6 +934,7 @@
         const page = Math.max(0, Math.min(pageCount() - 1, getSelection().isCollapsed && pagedPosition !== null ?
             pagedPosition : Math.round(scrollX / (pageStride() * span)) * span));
         const target = page * pageStride();
+        if (pagedPosition !== null && page !== pagedPosition) { navigationAnchor = null; reflowAnchor = null; }
         pagedPosition = page;
         if (Math.abs(scrollX - target) > .5 || scrollY !== 0) scrollToPage(page);
     }
@@ -976,16 +995,22 @@
         });
         convertText();
     }
+    let hasForwardMapping = false;
     function convertText() {
-        const anchor = started ? reflowAnchor || navigationAnchor || viewport() : null;
         const all = entries.map(entry => entry.original).join('');
         const converted = JSON.parse(bridge.convert(all));
         const forward = converted.forward;
         const displayOffset = offset => forward ? forward[Math.max(0, Math.min(forward.length - 1, offset))] : offset;
+        const display = entries.map(entry => converted.text.substring(displayOffset(entry.base), displayOffset(entry.base + entry.original.length)));
+        const changed = entries.some((entry, index) => entry.node.data !== display[index]);
+        if (started && !changed && !forward && !hasForwardMapping) return;
+        if (started && changed) { finishPageAnimation(); keepPagedViewport(); }
+        const anchor = started && changed && (!continuousHost || continuousHost.isActive(frameChapter)) ? readingAnchor() : null;
+        hasForwardMapping = !!forward;
         characters.length = 0; mapped.length = 0;
-        entries.forEach(entry => {
+        entries.forEach((entry, index) => {
             entry.canonical.length = 0; entry.display.length = 0;
-            entry.node.data = converted.text.substring(displayOffset(entry.base), displayOffset(entry.base + entry.original.length));
+            if (entry.node.data !== display[index]) entry.node.data = display[index];
         });
         sourceMappings.forEach(point => {
             const entry = entries[point.entry];
@@ -996,8 +1021,10 @@
         });
         rangeGeometry.clear();
         if (started) {
-            fitPageBoundary(); measureChapter();
-            if (anchor && (!continuousHost || continuousHost.isActive(frameChapter))) navigate(anchor, true);
+            if (changed) {
+                fitPageBoundary(); measureChapter();
+                if (anchor) navigate(anchor, true);
+            }
             report(true);
         }
     }
@@ -1059,7 +1086,7 @@
                 if (continuousHost) { measureChapter(); report(true); return; }
                 fitPageBoundary();
                 const anchor = reflowAnchor || navigationAnchor;
-                if (config.mode !== 'SCROLL') moveToPage(page);
+                if (config.mode !== 'SCROLL') moveToPage(anchor?.lastPage ? pageCount() - 1 : page);
                 else if (anchor) navigate(anchor, true);
                 else report(true);
             };
@@ -1090,12 +1117,16 @@
         try {
             if (value.type === 'navigate') navigate(value);
             else if (value.type === 'resume') {
+                const generation = ++resumeGeneration;
                 const options = value.options;
                 sourceNotes = options.notes || [];
                 decorations = options.decorations;
-                await configure(options.config, false);
+                await configure(options.config, options.preserveViewport);
+                if (generation !== resumeGeneration) return;
                 if (!options.preserveViewport) navigate(options.initialNavigation || {offset:0});
-                requestAnimationFrame(function () { send('ready'); report(true); });
+                requestAnimationFrame(function () {
+                    if (generation === resumeGeneration) { send('ready'); report(true); }
+                });
             }
             else if (value.type === 'move') step(value.direction);
             else if (value.type === 'autoScroll') setAutoScroll(value.speed);

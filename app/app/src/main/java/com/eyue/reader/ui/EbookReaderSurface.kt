@@ -120,7 +120,8 @@ internal class EbookReaderController {
         if (owner != null && bindingOwner !== owner) return
         ready = true
         if (applied != null && pending?.second === applied) pending = null
-        if (!consumePending()) dispatch?.invoke(JSONObject().put("type", "report"))
+        // Both surfaces send the restored viewport after their ready event.
+        consumePending()
     }
 
     internal fun consumePending(): Boolean {
@@ -277,7 +278,13 @@ internal fun EbookReaderSurface(
         }
     } }
     LaunchedEffect(chineseConverter, ready) { if (ready) {
-        invoke(JSONObject().put("type", "convert")); controller.consumePending()
+        webView?.let { browser ->
+            if (browser.appliedConverter !== chineseConverter) {
+                browser.appliedConverter = chineseConverter
+                invoke(JSONObject().put("type", "convert"))
+            }
+        }
+        controller.consumePending()
     } }
     LaunchedEffect(decorations.toString(), ready) { if (ready) invoke(JSONObject().put("type", "decorate").put("decorations", decorations)) }
     LaunchedEffect(sourceNotes.toString(), ready) { if (ready) invoke(JSONObject().put("type", "notes").put("notes", sourceNotes)) }
@@ -288,6 +295,8 @@ internal fun EbookReaderSurface(
             val browserKey = source.key
             fun loadDocument(browser: EbookWebView) {
                 val reuse = browser.loadedKey == browserKey && browser.pageReady
+                if (!reuse) browser.appliedConverter = latestConverter
+                var awaitingVisualState = false
                 val navigation = controller.initialNavigation(chapterIndex) ?: JSONObject().put("type", "navigate")
                     .put("offset", initialOffset).put("image", initialImagePath)
                 val image = navigation.optString("image").takeIf { it.isNotEmpty() }
@@ -355,11 +364,15 @@ internal fun EbookReaderSurface(
                             scrolling = event.optBoolean("scrolling"), atEnd = event.optBoolean("atEnd"))
                             browser.viewport = state
                             latestViewport(state)
-                            if (browser.alpha == 0f) browser.postVisualStateCallback(0, object : WebView.VisualStateCallback() {
-                                override fun onComplete(requestId: Long) {
-                                    if (generation == latestGeneration && browser === webView) browser.alpha = 1f
-                                }
-                            })
+                            if (browser.alpha == 0f && !awaitingVisualState) {
+                                awaitingVisualState = true
+                                browser.postVisualStateCallback(0, object : WebView.VisualStateCallback() {
+                                    override fun onComplete(requestId: Long) {
+                                        awaitingVisualState = false
+                                        if (generation == latestGeneration && browser === webView) browser.alpha = 1f
+                                    }
+                                })
+                            }
                         }
                         "tap" -> latestPageTap?.invoke(event.optDouble("x", .5).toFloat(), event.optDouble("y", .5).toFloat()) ?: latestTap()
                         "imageView" -> { selected = null; latestSelectionActive(false); latestImageViewer(event.optBoolean("open")) }
@@ -534,6 +547,7 @@ internal class EbookWebView(context: Context) : EbookPageTurnWebView(context) {
     var loadedKey: String? = null
     var pageReady = false
     var appliedConfig: String? = null
+    var appliedConverter: ChineseTextConverter? = null
     var envelope: String = ""
     var viewport = EbookViewportState()
     var onBridgeEvent: ((String) -> Unit)? = null

@@ -92,7 +92,7 @@ class EbookReaderControllerRobolectricTest {
         assertEquals(340, commands.single().getInt("offset"))
         assertFalse(controller.consumePending())
         controller.loaded()
-        assertEquals(listOf("navigate", "report"), commands.map { it.getString("type") })
+        assertEquals(listOf("navigate"), commands.map { it.getString("type") })
     }
 
     @Test fun oldResourceCannotConsumeTheNextChaptersJump() {
@@ -128,7 +128,7 @@ class EbookReaderControllerRobolectricTest {
         controller.navigate(320, expectedChapterIndex = 1)
         controller.bind(1) { commands += it }
         controller.loaded(requireNotNull(controller.initialNavigation(1)))
-        assertEquals(listOf("report"), commands.map { it.getString("type") })
+        assertTrue(commands.isEmpty())
         assertNull(controller.initialNavigation(1))
     }
 

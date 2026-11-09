@@ -332,6 +332,48 @@ try {
     }
   }
 
+  await test('backward-chapter-entry-keeps-the-last-page-through-reattachment-and-conversion', async () => {
+    const config = {...baseConfig, mode:'PAGED'};
+    const lastPage = {type:'navigate', offset:0, lastPage:true};
+    const decorations = {annotations:[], search:'', spokenStart:-1, spokenEnd:-1};
+    await open(config, {initialNavigation:lastPage});
+    const expectEnd = async () => {
+      const state = await viewport();
+      assert.ok(state.page > 0, 'A previous chapter must open at its end');
+      assert.equal(state.page,state.pages-1);
+      assert.equal(state.atEnd,true);
+    };
+    await expectEnd();
+    await page.evaluate(() => { window.__ERead.convert = text => JSON.stringify({text:text.replaceAll('风','風')}); });
+    await command({type:'convert'});
+    await expectEnd();
+    await page.evaluate(() => { window.__ERead.convert = text => JSON.stringify({text}); });
+    await command({type:'convert'});
+    await expectEnd();
+    await page.evaluate(()=>document.fonts.dispatchEvent(new Event('loadingdone')));
+    await expectEnd();
+    await page.evaluate(() => {
+      window.textMutations = 0;
+      new MutationObserver(records => { window.textMutations += records.length; })
+        .observe(document.body, {characterData:true, subtree:true});
+    });
+    for (let count=0; count<3; count++) {
+      await command({type:'page', page:0});
+      await command({type:'resume',options:{config,initialNavigation:lastPage,preserveViewport:false,notes:[],decorations}});
+      await command({type:'convert'});
+      await expectEnd();
+    }
+    assert.equal(await page.evaluate(() => window.textMutations),0,'Unchanged conversion must not rewrite the chapter');
+    await command({type:'configure',config:{...config,fontSize:22}});
+    await expectEnd();
+    await command({type:'move',direction:-1});
+    const preceding = await viewport();
+    assert.equal(preceding.page,preceding.pages-2);
+    await command({type:'convert'});
+    assert.equal((await viewport()).page,preceding.page);
+    return preceding;
+  });
+
   await test('publisher-css-structure', async () => {
     await open();
     const source = await page.evaluate(() => {
@@ -552,6 +594,8 @@ try {
     const previous = await viewport();
     assert.equal(previous.page,onImage.page - 1);
     await page.evaluate(()=>document.fonts.dispatchEvent(new Event('loadingdone')));
+    assert.equal((await viewport()).page,previous.page);
+    await command({type:'convert'});
     assert.equal((await viewport()).page,previous.page);
     return {onImage:onImage.page,previous:previous.page,rect};
   });

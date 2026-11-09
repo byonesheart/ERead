@@ -1508,7 +1508,8 @@ internal fun ReaderScreen(
                         },
                         onManualStart = { pauseAutoReading(); highlightQuery = ""; manualDrag = true; speechPageMoved() },
                         onManualEnd = { manualDrag = false },
-                        onChapterStep = { direction ->
+                        onChapterStep = chapterStep@ { direction ->
+                            if (chapterIndex != sourceChapter || ebookNavigationChapter != null) return@chapterStep
                             val target = sourceChapter + direction
                             if (target in book.chapters.indices) jump(target, lastPage = direction < 0)
                             else if (!holdPagingActive) scope.launch { snackbar.showSnackbar(if (direction > 0) "已到全书末尾" else "已到全书开头") }
