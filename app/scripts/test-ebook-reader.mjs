@@ -1024,13 +1024,28 @@ try {
     return evidence;
   });
 
-  await test('older-webviews-use-a-composited-fallback-without-native-readback', async () => {
+  await test('older-webviews-slide-the-viewport-without-transforming-the-chapter', async () => {
     await open({mode:'PAGED',turn:'CURL'});
     await page.evaluate(()=>document.startViewTransition=undefined);
-    await command({type:'move',direction:1});
+    await page.evaluate(()=>ERead.command({type:'move',direction:1}));
+    await page.waitForFunction(()=>scrollX>0&&scrollX<innerWidth);
+    assert.equal(await page.evaluate(()=>getComputedStyle(document.body).transform),'none');
+    await page.waitForFunction(()=>events.some(e=>e.type==='viewport'&&e.page===1));
     assert.equal((await viewport()).page,1);
+    const session = await page.context().newCDPSession(page);
+    const touch = (type, x) => session.send('Input.dispatchTouchEvent', {
+      type, touchPoints:type==='touchEnd' ? [] : [{x,y:380}]
+    });
+    await touch('touchStart',64);
+    await touch('touchMove',128);
+    await touch('touchMove',216);
+    await page.waitForFunction(()=>scrollX>0&&scrollX<innerWidth);
+    assert.equal(await page.evaluate(()=>getComputedStyle(document.body).transform),'none');
+    await page.evaluate(()=>{ events.length=0; });
+    await touch('touchEnd');
+    await page.waitForFunction(()=>events.some(e=>e.type==='viewport'&&e.page===0));
     assert.deepEqual(await page.evaluate(()=>events.filter(e=>e.type==='turn')),[]);
-    return {page:1};
+    return {tapPage:1,dragPage:0};
   });
 
   await test('page-snapshots-have-opaque-paper-in-light-and-night-themes', async () => {
@@ -1051,25 +1066,30 @@ try {
 
   await test('slide-starts-without-native-ack-and-rapid-turns-retire-the-old-animation', async () => {
     await open({ mode:'PAGED', turn:'SLIDE' });
-    const start = await page.evaluate(() => {
-      ERead.command({type:'move',direction:1});
-      const animation = document.getAnimations().find(a => a.id === 'eread-page-turn');
-      return {scroll:scrollX,width:innerWidth,animation:animation?.playState,turns:events.filter(e=>e.type==='turn').length};
-    });
-    assert.equal(start.scroll,start.width); assert.equal(start.animation,'running'); assert.equal(start.turns,0);
-    await page.waitForTimeout(60);
-    const midway = await page.evaluate(() => new DOMMatrix(getComputedStyle(document.body).transform).m41);
-    assert.ok(midway>0&&midway<start.width);
+    const before = await page.screenshot();
+    await page.evaluate(() => ERead.command({type:'move',direction:1}));
+    await page.waitForFunction(()=>document.getAnimations().filter(a=>a.id==='eread-page-turn').length===2);
+    const start = await page.evaluate(() => ({
+      transform:getComputedStyle(document.body).transform,
+      snapshots:document.getAnimations().filter(a=>a.id==='eread-page-turn').map(a=>a.effect.pseudoElement).sort(),
+      turns:events.filter(e=>e.type==='turn').length
+    }));
+    assert.deepEqual(start.snapshots,['::view-transition-new(root)','::view-transition-old(root)']);
+    assert.equal(start.transform,'none'); assert.equal(start.turns,0);
+    await page.evaluate(()=>Promise.all(window.pageTransitions));
+    const completed = await page.screenshot();
+    assert.notDeepEqual(completed,before);
+    await command({type:'page',page:1});
+    assert.deepEqual(await page.screenshot(),completed,'The animation must end on the live target page');
     await page.evaluate(() => { ERead.command({type:'move',direction:1}); ERead.command({type:'move',direction:1}); });
-    assert.equal(await page.evaluate(()=>document.getAnimations().filter(a=>a.id==='eread-page-turn').length),1);
-    await page.waitForFunction(()=>!document.getAnimations().some(a=>a.id==='eread-page-turn'));
+    await page.evaluate(()=>Promise.all(window.pageTransitions));
     assert.equal((await viewport()).page,3);
     assert.equal(await page.evaluate(()=>getComputedStyle(document.body).transform),'none');
     await page.evaluate(() => ERead.command({type:'move',direction:-1}));
     await command({type:'configure',config:{...baseConfig,mode:'SCROLL'}});
     assert.equal(await page.evaluate(()=>document.getAnimations().filter(a=>a.id==='eread-page-turn').length),0);
     assert.equal(await page.evaluate(()=>getComputedStyle(document.body).transform),'none');
-    return {start,midway,finalPageBeforeModeChange:3};
+    return {start,finalPageBeforeModeChange:3};
   });
 
   await test('canonical-note-metadata-without-link', async () => {

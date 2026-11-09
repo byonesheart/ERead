@@ -617,7 +617,6 @@
         if (user) beginManual();
         if (target < 0 || target >= pageCount()) send('chapterStep', {direction: direction});
         else if (config.eink || config.mode === 'VERTICAL_PAGED') moveToPage(target);
-        else if (config.turn === 'SLIDE') animatePage(target);
         else transitionPage(target, direction);
         if (user) endManual();
     }
@@ -629,15 +628,16 @@
             scrollToPage(previous.drag && previous.commit !== true ? previous.origin : previous.page);
         }
         if (!pageAnimation) return;
-        const previous = pageAnimation; pageAnimation = null; previous.cancel();
+        const previous = pageAnimation; pageAnimation = null;
+        cancelAnimationFrame(previous.frame);
+        scrollToPage(previous.page);
         automatic = false;
         if (overlay) overlay.style.visibility = '';
     }
     function transitionPage(page, direction, dragging) {
         finishPageAnimation();
-        // Keep both snapshots in Chromium's compositor. Android software WebView
-        // readback can still contain the previous GPU frame, even after a visual callback.
-        if (!document.startViewTransition) { animatePage(page); return; }
+        // Animate the two visible page snapshots, not the chapter's column flow.
+        if (!document.startViewTransition) { slidePageViewport(page); return; }
         const state = {page:page, origin:pageIndex(), transition:null, animations:[], drag:!!dragging, progress:0, commit:null};
         pageTransition = state; automatic = true;
         state.transition = document.startViewTransition(function () {
@@ -647,12 +647,17 @@
         state.transition.ready.then(function () {
             if (pageTransition !== state) return;
             const curl = config.turn === 'CURL', forward = direction > 0;
-            if (dragging && config.turn === 'SLIDE') {
+            if (config.turn === 'SLIDE') {
                 const sign = direction > 0 ? -1 : 1;
-                ['old', 'new'].forEach((kind, index) => state.animations.push(document.documentElement.animate([
-                    {transform:`translateX(${index ? -sign * 100 : 0}%)`},
-                    {transform:`translateX(${index ? 0 : sign * 100}%)`}
-                ], {duration:180, fill:'both', pseudoElement:'::view-transition-' + kind + '(root)'})));
+                ['old', 'new'].forEach((kind, index) => {
+                    const animation = document.documentElement.animate([
+                        {transform:`translateX(${index ? -sign * 100 : 0}%)`},
+                        {transform:`translateX(${index ? 0 : sign * 100}%)`}
+                    ], {duration:180, easing:dragging ? 'linear' : 'cubic-bezier(.2,.65,.3,1)',
+                        fill:'both', pseudoElement:'::view-transition-' + kind + '(root)'});
+                    animation.id = 'eread-page-turn';
+                    state.animations.push(animation);
+                });
             } else {
             const moving = forward ? 'old' : 'new', fixed = forward ? 'new' : 'old';
             const movingPseudo = '::view-transition-' + moving + '(root)';
@@ -701,13 +706,12 @@
             const span = config.dual ? 2 : 1, target = pageIndex() + direction * span;
             touch.origin = pageIndex(); touch.target = target;
             if (target >= 0 && target < pageCount() && document.startViewTransition) transitionPage(target, direction, true);
-
         }
         touch.progress = progress;
         if (pageTransition?.drag) {
             pageTransition.progress = progress;
             pageTransition.animations.forEach(animation => { animation.currentTime = progress * Number(animation.effect.getTiming().duration); });
-        } else document.body.style.transform = `translateX(${-direction * progress * innerWidth}px)`;
+        } else scrollTo(touch.origin * pageStride() + direction * progress * innerWidth, 0);
         return true;
     }
     function releaseEdgeDrag(previous, cancel) {
@@ -715,48 +719,33 @@
         const commit = !cancel && (previous.progress >= .10 || previous.progress * innerWidth >= 16 &&
             previous.progress * innerWidth / Math.max(1, Date.now() - previous.time) >= .35);
         if (pageTransition?.drag) { settleEdgeTransition(pageTransition, commit); if (manual) endManual(); return; }
-        const offset = -previous.edge * previous.progress * innerWidth;
-        document.body.style.transform = '';
         const outside = previous.target < 0 || previous.target >= pageCount();
         if (commit && outside) send('chapterStep', {direction:previous.edge});
-        else {
-            const shift = commit ? (previous.target - previous.origin) * pageStride() : 0;
-            if (commit) scrollToPage(previous.target);
-            automatic = true;
-            const animation = document.body.animate([
-                {transform:`translateX(${offset + shift}px)`}, {transform:'translateX(0)'}
-            ], {duration:140, easing:'ease-out'});
-            animation.id = 'eread-page-turn';
-            pageAnimation = animation;
-            if (overlay) overlay.style.visibility = 'hidden';
-            animation.onfinish = function () {
-                if (pageAnimation !== animation) return;
-                pageAnimation = null; automatic = false;
-                if (overlay) overlay.style.visibility = '';
-                report(true);
-            };
-        }
+        else slidePageViewport(commit ? previous.target : previous.origin);
         if (manual) endManual();
     }
-    function animatePage(page) {
-        finishPageAnimation();
-        const horizontal = pageHorizontal(), before = horizontal ? scrollX : scrollY, span = horizontal && config.dual ? 2 : 1;
-        const target = Math.floor(Math.max(0, Math.min(pageCount() - 1, page)) / span) * span;
+    function slidePageViewport(page) {
+        const from = scrollX, to = page * pageStride(), start = performance.now();
+        if (from === to) { moveToPage(page); return; }
+        // Older WebViews can scroll the viewport without transforming the chapter.
+        const state = {page:page, frame:0};
+        pagedPosition = page;
+        pageAnimation = state;
         automatic = true;
-        scrollToPage(target);
-        // One existing column flow, composited by Chromium. No bitmap readback,
-        // JavaScript-interface roundtrip, or wait for an Android drawing callback.
-        const animation = document.body.animate([
-            {transform:`translate${horizontal ? 'X' : 'Y'}(${target * pageStride() - before}px)`}, {transform:'translate(0)'}
-        ], {duration:180, easing:'cubic-bezier(.2,.65,.3,1)'});
-        animation.id = 'eread-page-turn'; pageAnimation = animation;
         if (overlay) overlay.style.visibility = 'hidden';
-        animation.onfinish = function () {
-            if (pageAnimation !== animation) return;
+        function frame(now) {
+            const progress = Math.max(0, Math.min(1, (now - start) / 180));
+            if (progress < 1) {
+                scrollTo(from + (to - from) * (1 - (1 - progress) ** 3), 0);
+                state.frame = requestAnimationFrame(frame);
+                return;
+            }
+            scrollToPage(page);
             pageAnimation = null; automatic = false;
             if (overlay) overlay.style.visibility = '';
             report(true);
-        };
+        }
+        state.frame = requestAnimationFrame(frame);
     }
     async function configure(next, preserve, force) {
         if (!force && started && JSON.stringify(next) === JSON.stringify(config)) return;
