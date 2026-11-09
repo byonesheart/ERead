@@ -1,12 +1,11 @@
 {
-  "versionCode": 89,
-  "versionName": "1.11.27-beta.4",
+  "versionCode": 90,
+  "versionName": "1.11.27-beta.5",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.27-beta.4",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.27-beta.4/ERead-1.11.27-beta.4-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.27-beta.5",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.27-beta.5/ERead-1.11.27-beta.5-release.apk",
   "mirrors": [],
   "changelog": [
-    "修复 WebView 翻页位置被重置后从插图回跳章首，以及整页插图在分栏中裁切的问题。",
-    "应用内更新支持系统 HTTP 代理，临时失败后使用 HTTP/1.1 分段续传，显示连接阶段和实时速度，并提供浏览器下载入口。"
+    "修复 EPUB／MOBI 反向翻页从插图回跳章首、跨章时落在上一章首页的问题，并减少切章时的重复转换和排版。"
   ]
 }
