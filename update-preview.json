@@ -1,12 +1,12 @@
 {
-  "versionCode": 88,
-  "versionName": "1.11.27-beta.3",
+  "versionCode": 89,
+  "versionName": "1.11.27-beta.4",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.27-beta.3",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.27-beta.3/ERead-1.11.27-beta.3-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.27-beta.4",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.27-beta.4/ERead-1.11.27-beta.4-release.apk",
   "mirrors": [],
   "changelog": [
-    "修复 EPUB／MOBI 长插图页的裁切、翻页回跳和连贯滚动位置异常。",
-    "阅读图片和 PDF 时支持双击或双指放大进入大图，可拖动查看局部，返回后保留阅读位置。"
+    "修复 WebView 翻页位置被重置后从插图回跳章首，以及整页插图在分栏中裁切的问题。",
+    "应用内更新支持系统 HTTP 代理，临时失败后使用 HTTP/1.1 分段续传，显示连接阶段和实时速度，并提供浏览器下载入口。"
   ]
 }
