@@ -1,5 +1,6 @@
 package com.eyue.reader.data
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -14,7 +15,9 @@ import okio.Timeout
 import okio.buffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -23,6 +26,21 @@ import java.net.SocketTimeoutException
 class UpdateApkTransferTest {
     @get:Rule val folder = TemporaryFolder()
     private val url = "https://github.com/byonesheart/ERead/releases/download/v1/ERead.apk"
+
+    @Test fun foregroundRestrictionsDoNotAbortTheBackgroundTransfer() = runBlocking {
+        allowUpdateDownloadInBackground { throw IllegalStateException("Cannot start a foreground service") }
+        allowUpdateDownloadInBackground { throw SecurityException("Foreground service unavailable") }
+    }
+
+    @Test fun cancellingTheWorkerStillStopsTheTransferBeforeItStarts() = runBlocking {
+        val cancellation = CancellationException("Download paused")
+        try {
+            allowUpdateDownloadInBackground { throw cancellation }
+            fail("The worker must stop on cancellation")
+        } catch (failure: CancellationException) {
+            assertSame(cancellation, failure)
+        }
+    }
 
     @Test fun resumesAtTheSavedByteAfterGitHubRedirect() = runBlocking {
         val partial = folder.newFile().apply { writeText("abc") }

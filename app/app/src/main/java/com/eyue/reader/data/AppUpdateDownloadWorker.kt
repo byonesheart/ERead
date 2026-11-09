@@ -67,7 +67,10 @@ class AppUpdateDownloadWorker(context: Context, parameters: WorkerParameters) : 
             val apk = updateApk(applicationContext, token)
             val etag = updateEtag(applicationContext, token)
             try {
-                setForeground(getForegroundInfo())
+                // A queued worker can start after the activity has gone to the background.
+                // Keep the resumable transfer running if Android blocks foreground promotion.
+                allowUpdateDownloadInBackground { setForeground(getForegroundInfo()) }
+                post(noticeId, progressNotification(partial.length(), -1))
                 if (!apk.isFile) {
                     check(partial.parentFile?.let { it.isDirectory || it.mkdirs() } == true)
                     val retrying = runAttemptCount > 0
@@ -116,6 +119,8 @@ class AppUpdateDownloadWorker(context: Context, parameters: WorkerParameters) : 
                 else Result.failure(workDataOf("error" to failure.message))
             } catch (_: Exception) {
                 Result.failure(workDataOf("error" to "下载未完成，请检查网络或剩余空间后继续"))
+            } finally {
+                notifications.cancel(noticeId)
             }
         }
     }
@@ -153,6 +158,18 @@ class AppUpdateDownloadWorker(context: Context, parameters: WorkerParameters) : 
 
     private fun post(id: Int, notification: android.app.Notification) {
         try { notifications.notify(id, notification) } catch (_: SecurityException) { }
+    }
+}
+
+internal suspend fun allowUpdateDownloadInBackground(promote: suspend () -> Unit) {
+    try {
+        promote()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: IllegalStateException) {
+        // ForegroundServiceStartNotAllowedException also extends IllegalStateException.
+    } catch (_: SecurityException) {
+        // The scheduled worker can still make progress without a foreground service.
     }
 }
 

@@ -145,7 +145,11 @@ internal val LocalUpdateDownloadControls = compositionLocalOf<UpdateDownloadCont
         onDismissRequest = { showTransfer = false },
         title = { Text("更新下载") },
         text = { UpdateDownloadPanel(controls) },
-        confirmButton = { TextButton(onClick = { showTransfer = false }) { Text("关闭") } }
+        confirmButton = {
+            TextButton(onClick = { showTransfer = false }) {
+                Text(if (status?.running == true) "后台下载" else "关闭")
+            }
+        }
     )
     val ready = status?.takeIf { it.ready }?.download
     if (showInstall && ready != null) AlertDialog(
