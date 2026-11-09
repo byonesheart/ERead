@@ -220,7 +220,7 @@ class ReaderNarrationInteractionRobolectricTest {
         compose.mainClock.autoAdvance = false
         val previousPauses = voice.pauses
         swipeToNextPage()
-        assertFalse(nextVoice.playing.value)
+        assertTrue(nextVoice.playing.value)
         assertEquals(previousPauses, voice.pauses)
         advanceBy(1_200)
         await { nextVoice.starts == 2 && nextVoice.playing.value }
@@ -301,6 +301,41 @@ class ReaderNarrationInteractionRobolectricTest {
         assertEquals(2, voice.starts)
     }
 
+    @Test fun detachedNarrationOffersToReturnAfterScreenPauseAndBackground() {
+        showReader(ReadingMode.PAGED, follow = false)
+        startListening()
+        val firstSpoken = paragraphOffset(0, 2) + 10
+        emit(0, firstSpoken)
+        await { position.get()?.offset == firstSpoken }
+        closeTools()
+        compose.mainClock.autoAdvance = false
+        swipeToNextPage()
+        val manual = requireNotNull(position.get())
+        val latestSpoken = paragraphOffset(0, 5) + 10
+        emit(0, latestSpoken)
+        assertEquals(manual, position.get())
+        advanceBy(1_200)
+        compose.onNodeWithTag("reader_speech_prompt").assertDoesNotExist()
+
+        compose.activityRule.scenario.moveToState(Lifecycle.State.STARTED)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        advanceBy(1_200)
+        compose.onNodeWithText("返回朗读位置？").assertIsDisplayed()
+        compose.onNodeWithText("留在此页").performClick()
+        assertEquals(manual, position.get())
+
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        drain()
+        compose.onNodeWithText("返回原位置").performClick()
+        await { position.get()?.offset == latestSpoken }
+        val nextSpoken = paragraphOffset(0, 6) + 10
+        emit(0, nextSpoken)
+        await { position.get()?.offset == nextSpoken }
+        assertEquals(1, voice.starts)
+        assertTrue(voice.playing.value)
+    }
+
     @Test fun synchronizedPagingAndScrollingWaitOneSecondAfterManualMovementBeforeRestarting() {
         showReader(ReadingMode.PAGED, follow = false)
         startListening()
@@ -308,10 +343,10 @@ class ReaderNarrationInteractionRobolectricTest {
         closeTools()
         compose.mainClock.autoAdvance = false
         swipeToNextPage()
-        assertFalse(voice.playing.value)
+        assertTrue(voice.playing.value)
         advanceBy(600)
-        assertEquals("Do not resume during the one-second settling interval", 1, voice.starts)
-        assertFalse(voice.playing.value)
+        assertEquals("Keep the original queue during the one-second settling interval", 1, voice.starts)
+        assertTrue(voice.playing.value)
         advanceBy(600)
         await { voice.starts == 2 && voice.playing.value }
         assertQueueStartsAtCurrentPage()
@@ -325,9 +360,9 @@ class ReaderNarrationInteractionRobolectricTest {
             moveTo(Offset(width / 2f, height * .4f), delayMillis = 16)
         }
         drain()
-        assertFalse(voice.playing.value)
+        assertTrue(voice.playing.value)
         advanceBy(1_200)
-        assertEquals("An ongoing drag must stay paused, even after one second", 2, voice.starts)
+        assertEquals("An ongoing drag must keep the original queue", 2, voice.starts)
         compose.onNodeWithTag("reader_scroll").performTouchInput {
             advanceEventTime(600)
             moveBy(Offset(0f, -8f))
@@ -336,7 +371,7 @@ class ReaderNarrationInteractionRobolectricTest {
         drain()
         advanceBy(600)
         assertEquals(2, voice.starts)
-        assertFalse(voice.playing.value)
+        assertTrue(voice.playing.value)
         advanceBy(600)
         await { voice.starts == 3 && voice.playing.value }
         assertQueueStartsAtCurrentPage()
@@ -441,10 +476,10 @@ class ReaderNarrationInteractionRobolectricTest {
         }
         drain()
         advanceBy(600)
-        assertFalse(voice.playing.value)
+        assertTrue(voice.playing.value)
         assertEquals(1, voice.starts)
         advanceBy(600)
-        await { voice.playing.value }
+        await { voice.starts == 2 && voice.playing.value }
         assertEquals(2, voice.starts)
         assertEquals(0, voice.resumes)
         assertEquals(chapters[0].indexOf("The quiet"), voice.source.first().offset)
@@ -466,8 +501,8 @@ class ReaderNarrationInteractionRobolectricTest {
         }
         drain()
         advanceBy(1_200)
-        await { voice.playing.value }
-        assertEquals("The visible paused node restarts its sentence after the scroll settles", 2, voice.starts)
+        await { voice.starts == 2 && voice.playing.value }
+        assertEquals("The visible spoken node restarts its sentence after the scroll settles", 2, voice.starts)
         assertEquals(0, voice.resumes)
         assertEquals(chapters[0].indexOf("A reader"), voice.source.first().offset)
         emit(0, 75)
@@ -493,7 +528,7 @@ class ReaderNarrationInteractionRobolectricTest {
         assertEquals(paragraphOffset(0, 3) + 12, position.get()?.offset)
     }
 
-    @Test fun disablingSyncWhileNavigationIsPendingResumesTheOriginalQueueWithoutReplaying() {
+    @Test fun disablingSyncWhileNavigationIsPendingKeepsTheOriginalQueueAndFollowsIt() {
         voice.resumable = true
         showReader(ReadingMode.PAGED, follow = true)
         startListening()
@@ -501,13 +536,13 @@ class ReaderNarrationInteractionRobolectricTest {
         compose.mainClock.autoAdvance = false
         compose.onNodeWithContentDescription("下一章").performClick()
         await { position.get()?.chapter == 1 }
-        assertFalse(voice.playing.value)
+        assertTrue(voice.playing.value)
         compose.onNodeWithText("同步").performClick()
         advanceBy(1500)
-        assertTrue("Disabling sync must not strand a queue paused for navigation", voice.playing.value)
+        assertTrue("Disabling sync must keep the existing audio playing", voice.playing.value)
         assertEquals(1, voice.starts)
-        assertEquals(1, voice.resumes)
-        assertEquals(1, position.get()?.chapter)
+        assertEquals(0, voice.resumes)
+        await { position.get()?.chapter == 0 }
     }
 
     @Test fun togglingSyncRepeatedlyDuringPlaybackNeverRestartsAnEarlierParagraph() {

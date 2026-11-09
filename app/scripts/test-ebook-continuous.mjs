@@ -25,7 +25,7 @@ const config = {mode:'SCROLL',turn:'SLIDE',authorCss:true,fontSize:19,lineHeight
 const browser = await chromium.launch({headless:true,executablePath:process.env.EREAD_BROWSER || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'});
 const page = await browser.newPage({viewport:{width:392,height:760},hasTouch:true});
 const results=[],errors=[];
-let cropFixture = false, publicationFixture = false;
+let cropFixture = false, publicationFixture = false, viewportFixture = false;
 page.on('pageerror', error => errors.push(error.message));
 page.on('console', message => { if(message.type()==='error')console.log('BROWSER '+message.text()); });
 const requests=[];
@@ -51,6 +51,7 @@ await page.route('https://eread.local/**',async route=>{
   if(match){const index=Number(match[1]),chapter=chapters[index];return route.fulfill({contentType:'text/html',body:envelope(
     `<style>.same{color:${publicationFixture ? 'white' : chapter.color}} p{line-height:35px}${publicationFixture ? `body{background:linear-gradient(${index % 2 ? '#18283b,#18283b' : '#183b28,#183b28'});color:white}` : ''}</style>`+
       (cropFixture && index===0 ? '<img id="crop-image" style="display:block;width:320px;height:240px" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22320%22 height=%22240%22%3E%3Crect width=%22320%22 height=%22240%22 fill=%22green%22/%3E%3C/svg%3E">' : '')+
+      (viewportFixture ? '<style>@media (min-width:300px){.illustration{height:90vh}}</style><div class="illustration"></div><div style="height:90vh"></div><div class="illustration"></div>' : '')+
       chapter.body,childScript,{canonical:chapter.canonical,
       config:{...config,continuous:true},images:cropFixture && index===0 ? [{offset:0,path:'/book/crop-image.svg'}] : [],noteTargets:['#note'],notes:[],decorations:{annotations:[],search:'',spokenStart:-1,spokenEnd:-1}})});}
   return route.fulfill({status:404,body:''});
@@ -273,6 +274,32 @@ try{
    assert.equal(after.chapter,3);assert.ok(after.offset<=moved.offset&&after.endOffset>moved.offset);
    assert.ok(await page.evaluate(()=>document.querySelectorAll('iframe').length<=3));
    return {initial:initial.offset,final:final.offset,moved:moved.offset,after:after.offset};
+ });
+ await test('publisher-viewport-units-use-the-reader-height-in-chapter-frames',async()=>{
+   viewportFixture=true;
+   await page.goto('https://eread.local/root.html');await ready(0);
+   const dimensions=()=>page.locator('iframe[data-chapter="0"]').evaluate(frame=>{
+     const child=frame.contentDocument;
+     const illustrations=Array.from(child.querySelectorAll('.illustration'));
+     return {frame:frame.offsetHeight,heights:[illustrations[0],illustrations[0].nextElementSibling,illustrations[1]].map(
+       node=>node.getBoundingClientRect().height)};
+   });
+   const before=await dimensions();
+   assert.deepEqual(before.heights,[684,684,684]);
+   await page.waitForTimeout(500);
+   assert.deepEqual(await dimensions(),before,'A chapter must not grow as its frame resizes');
+   await page.setViewportSize({width:392,height:600});
+   await page.waitForFunction(()=>{
+     const frame=document.querySelector('iframe[data-chapter="0"]');
+     return frame.contentDocument.querySelector('.illustration').getBoundingClientRect().height===540;
+   });
+   const after=await dimensions();
+   assert.deepEqual(after.heights,[540,540,540]);
+   assert.ok(after.frame<before.frame);
+   const offset=chapters[1].canonical.indexOf(chapters[1].paragraphs[5]);await jump(1,offset);
+   const state=await page.evaluate(()=>events.filter(e=>e.type==='viewport').at(-1));
+   assert.equal(state.chapter,1);assert.ok(state.offset<=offset+2&&state.endOffset>offset);
+   return {before,after};
  });
 }catch(error){
  console.log(JSON.stringify(await page.evaluate(()=>({events:window.events,scroll:scrollY,frames:Array.from(document.querySelectorAll('iframe')).map(f=>({src:f.src,height:f.offsetHeight,ready:f.contentDocument?.readyState,reader:!!f.contentWindow?.ERead,text:f.contentDocument?.body?.textContent.slice(-180)}))})),null,2));

@@ -213,7 +213,7 @@ internal fun ReaderScreen(
     val pointerConfiguration = LocalViewConfiguration.current
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
-    var readerForeground by remember(lifecycleOwner) { mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
+    var readerForeground by remember(lifecycleOwner) { mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(snackbar) {
         snapshotFlow { snackbar.currentSnackbarData }.filterNotNull().collectLatest { message ->
@@ -228,7 +228,7 @@ internal fun ReaderScreen(
     val engineError by speech.error.collectAsState()
     val speechSession = remember(book.id) { ReaderSpeechSession(scope, mediaAudio) }
     val speechError = speechSession.readError ?: engineError
-    var speechResumePending by remember(book.id) { mutableStateOf(false) }
+    var speechSyncPending by remember(book.id) { mutableStateOf(false) }
     var manualDrag by remember(book.id) { mutableStateOf(false) }
     var manualNavigationVersion by remember(book.id) { mutableIntStateOf(0) }
     var speechNavigationVersion by remember(book.id) { mutableIntStateOf(0) }
@@ -236,7 +236,9 @@ internal fun ReaderScreen(
     var pendingSpeechLocation by remember(book.id) { mutableStateOf<Pair<ReaderSpeechSegment, Int>?>(null) }
     var speechOwnsPosition by remember(book.id) { mutableStateOf(false) }
     var spokenLocation by remember(book.id) { mutableStateOf<Pair<ReaderSpeechSegment, Int>?>(null) }
+    var speechDetached by remember(book.id) { mutableStateOf(false) }
     var followPagePrompt by remember(book.id) { mutableStateOf(false) }
+    var promptOnReturn by remember(book.id) { mutableStateOf(false) }
     val latestNightMode by rememberUpdatedState(settings.nightMode)
     val latestTtsSpeed by rememberUpdatedState(settings.ttsSpeed)
     val latestTtsFollowPage by rememberUpdatedState(settings.ttsFollowPage)
@@ -424,11 +426,11 @@ internal fun ReaderScreen(
             chapterIndex, importedBook.chapters)
     }
 
-    fun pauseSpeech() { speechSession.pause(speech); speechResumePending = false; pendingSpeechLocation = null; speechOwnsPosition = false }
+    fun pauseSpeech() { speechSession.pause(speech); speechSyncPending = false; pendingSpeechLocation = null; speechOwnsPosition = false }
     fun stopSpeech() {
         speechSession.stop(speech)
-        speechResumePending = false; pendingSpeechLocation = null; speechOwnsPosition = false
-        spokenLocation = null; followPagePrompt = false
+        speechSyncPending = false; pendingSpeechLocation = null; speechOwnsPosition = false
+        spokenLocation = null; speechDetached = false; followPagePrompt = false; promptOnReturn = false
     }
     fun dismissAnnotationBubble() {
         if (selectedPassage != null || tappedNoteIds.isNotEmpty() || tappedSourceFootnote != null || activeTextSelections.isNotEmpty()) {
@@ -439,17 +441,22 @@ internal fun ReaderScreen(
         val key = sourceChapter to sourcePage
         activeTextSelections = if (active) activeTextSelections + key else activeTextSelections - key
     }
-    fun pauseSpeechForNavigation() {
+    fun speechPageMoved() {
         modeSwitchAnchor = null
         dismissAnnotationBubble()
         searchReturnPosition = null
         manualNavigationVersion++
         pendingSpeechLocation = null
         speechOwnsPosition = false
-        if (speechSession.active && !latestTtsFollowPage) { followPagePrompt = true; return }
-        if (speech.playing.value || speechSession.preparation?.isActive == true || mediaAudio.pending != null) {
-            speechResumePending = true
-            speechSession.pause(speech)
+        if (!speechSession.active) return
+        if (!latestTtsFollowPage) {
+            speechDetached = true
+            promptOnReturn = false
+            followPagePrompt = true
+        } else if (speech.playing.value || speechSession.preparation?.isActive == true || mediaAudio.pending != null) {
+            speechSyncPending = true
+            // Replace a start that has not produced audio yet. Keep the playing queue alive while moving.
+            if (!speech.playing.value) speechSession.pause(speech)
         }
     }
 
@@ -470,7 +477,7 @@ internal fun ReaderScreen(
 
     fun jump(chapterNumber: Int, pageNumber: Int = 0, offset: Int = 0, imagePath: String? = null, imageIndexHint: Int? = null,
              fromSpeech: Boolean = false, lastPage: Boolean = false) {
-        if (!fromSpeech) { highlightQuery = ""; pauseSpeechForNavigation() }
+        if (!fromSpeech) { highlightQuery = ""; speechPageMoved() }
         lastPagePending = false
         pendingScrollAnchor = null
         initialPositionPending = false
@@ -589,7 +596,7 @@ internal fun ReaderScreen(
         com.eyue.reader.data.ImportWorkPriority.interaction()
         if (book.chapters.isEmpty() || document == null || layoutState.preparing || layoutState.restoring) return
         highlightQuery = ""
-        pauseSpeechForNavigation()
+        speechPageMoved()
         if (!preserveToolbar) chromeVisible = false
         if (sourceEbook) {
             ebookController.move(direction, expectedChapterIndex = chapterIndex)
@@ -716,10 +723,10 @@ internal fun ReaderScreen(
     }
     fun followSpeech(segment: ReaderSpeechSegment, offset: Int) {
         spokenLocation = segment to offset
-        if (!settings.ttsFollowPage) return
+        if (speechDetached || speechSyncPending || manualDrag) return
         val loadedDocument = document ?: return
-        if (speechResumePending || manualDrag) return
-        if (selectedPassage != null || tappedNoteIds.isNotEmpty() || activeTextSelections.isNotEmpty()) {
+        speechOwnsPosition = speech.playing.value
+        if (selectedPassage != null || tappedNoteIds.isNotEmpty() || tappedSourceFootnote != null || activeTextSelections.isNotEmpty()) {
             pendingSpeechLocation = segment to offset
             return
         }
@@ -783,19 +790,24 @@ internal fun ReaderScreen(
     fun pdfSpeechOffset(sourceChapter: Int, sourcePage: Int): Int? = spokenLocation?.takeIf {
         speaking && it.first.chapter == sourceChapter && it.first.page == sourcePage
     }?.second
-    fun startSpeechAt(startChapter: Int, startPage: Int, startOffset: Int) {
+    fun claimSpeechPosition() {
+        speechOwnsPosition = speech.playing.value && !speechDetached && !speechSyncPending && !manualDrag
+    }
+    fun startSpeechAt(startChapter: Int, startPage: Int, startOffset: Int, keepPage: Boolean = false) {
         autoReading = false
-        speechResumePending = false
+        speechSyncPending = false
         speechNavigationVersion = manualNavigationVersion
         pendingSpeechLocation = null
+        speechDetached = keepPage
         followPagePrompt = false
+        promptOnReturn = false
         speechOwnsPosition = false
         val pages = textPages
         val mode = if (sourceEbook) ReadingMode.SCROLL else settings.readingMode
         val owner = chapterStore
         val rasterTexts = document?.pageText.orEmpty()
         speechSession.start(speech, { latestTtsSpeed },
-            onStarted = { speechOwnsPosition = speech.playing.value && latestTtsFollowPage },
+            onStarted = ::claimSpeechPosition,
             onLocation = { segment, offset -> if (speech.playing.value) latestFollowSpeech(segment, offset) }) {
             documentReadError?.let { error(it) }
             readerSpeechSource(importedBook, owner, raster, rasterTexts, pages, mode, speech.usesChapterSegments,
@@ -839,11 +851,16 @@ internal fun ReaderScreen(
             return
         }
         mediaAudio.play {
-            if (speech.resume()) { speechOwnsPosition = latestTtsFollowPage; mediaAudio.update(true, true, latestTtsSpeed) }
+            if (speech.resume()) {
+                claimSpeechPosition()
+                mediaAudio.update(true, true, latestTtsSpeed)
+                spokenLocation?.let { latestFollowSpeech(it.first, it.second) }
+            }
             else {
                 val location = spokenLocation
                 if (location == null) startSpeech() else startSpeechAt(location.first.chapter,
-                    if (raster) location.first.page else locatePage(location.first.chapter, location.second), location.second)
+                    if (raster) location.first.page else locatePage(location.first.chapter, location.second),
+                    location.second, keepPage = speechDetached)
             }
         }
     }
@@ -853,7 +870,7 @@ internal fun ReaderScreen(
         var targetPage = location?.first?.page ?: pageIndex
         val point = location?.second ?: characterOffset
         pauseSpeech()
-        speechResumePending = false
+        speechSyncPending = false
         speechNavigationVersion = manualNavigationVersion
         pendingSpeechLocation = null
         followPagePrompt = false
@@ -862,7 +879,7 @@ internal fun ReaderScreen(
         val mode = if (sourceEbook) ReadingMode.SCROLL else settings.readingMode
         val rasterTexts = document?.pageText.orEmpty()
         speechSession.start(speech, { latestTtsSpeed },
-            onStarted = { speechOwnsPosition = speech.playing.value && latestTtsFollowPage },
+            onStarted = ::claimSpeechPosition,
             onLocation = { segment, offset -> if (speech.playing.value) latestFollowSpeech(segment, offset) }) {
             suspend fun read(chapter: Int, page: Int): String = if (raster)
                 owner.readPageText(chapter, page) else owner.readText(chapter)
@@ -906,13 +923,18 @@ internal fun ReaderScreen(
             if (speechSession.active) {
                 val location = spokenLocation
                 if (location == null) startSpeech() else startSpeechAt(location.first.chapter,
-                    if (raster) location.first.page else locatePage(location.first.chapter, location.second), location.second)
+                    if (raster) location.first.page else locatePage(location.first.chapter, location.second),
+                    location.second, keepPage = speechDetached)
             }
         }
     }
     DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, _ ->
-            readerForeground = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        val observer = LifecycleEventObserver { _, event ->
+            readerForeground = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+            if (event == Lifecycle.Event.ON_RESUME && speechSession.active && speechDetached && !latestTtsFollowPage) {
+                promptOnReturn = true
+                followPagePrompt = true
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -920,32 +942,27 @@ internal fun ReaderScreen(
     LaunchedEffect(chromeVisible) { if (!chromeVisible) { returnPosition = null; speechBarHeight = 0; floatingActionsHeight = 0; autoControlsVisible = false } }
     LaunchedEffect(speech, settings.ttsSpeed) { speech.setSpeed(settings.ttsSpeed) }
     LaunchedEffect(settings.ttsFollowPage) {
+        val preparingAfterMove = speechSyncPending && !speech.playing.value
         followPagePrompt = false
+        promptOnReturn = false
+        speechDetached = false
         pendingSpeechLocation = null
-        if (!settings.ttsFollowPage) {
-            val resumeNavigationPause = speechResumePending
-            speechResumePending = false
-            speechOwnsPosition = false
-            // A navigation pause belongs to sync. Removing sync must release it;
-            // explicit user pauses have no pending flag and remain paused.
-            if (resumeNavigationPause && speechSession.active) resumeSpeech()
-        } else if (speech.playing.value) {
-            // Turning sync on follows the existing audio queue. A stale page-move
-            // counter must not seek/restart speech or survive into the next resume.
-            speechResumePending = false
+        speechSyncPending = false
+        claimSpeechPosition()
+        if (speech.playing.value) {
             speechNavigationVersion = manualNavigationVersion
-            speechOwnsPosition = true
             spokenLocation?.let { latestFollowSpeech(it.first, it.second) }
-        }
+        } else if (preparingAfterMove && speechSession.active) resumeSpeech()
     }
     LaunchedEffect(readerForeground) {
         if (!readerForeground) pauseAutoReading()
         if (readerForeground && speaking) spokenLocation?.let { latestFollowSpeech(it.first, it.second) }
     }
-    LaunchedEffect(book.id, pendingSpeechLocation, layoutState.restoring, layoutState.preparing, speechResumePending, manualDrag, speaking, readerForeground,
-        selectedPassage, tappedNoteIds, activeTextSelections) {
-        if (readerForeground && !layoutState.restoring && !layoutState.preparing && !speechResumePending && !manualDrag &&
-            selectedPassage == null && tappedNoteIds.isEmpty() && activeTextSelections.isEmpty()) {
+    LaunchedEffect(book.id, pendingSpeechLocation, layoutState.restoring, layoutState.preparing, speechSyncPending, manualDrag, speaking, readerForeground,
+        selectedPassage, tappedNoteIds, tappedSourceFootnote, activeTextSelections, ebookViewport.ready) {
+        if (readerForeground && !layoutState.restoring && !layoutState.preparing && !speechSyncPending && !manualDrag &&
+            (!sourceEbook || ebookViewport.ready) && selectedPassage == null && tappedNoteIds.isEmpty() &&
+            tappedSourceFootnote == null && activeTextSelections.isEmpty()) {
             val pending = pendingSpeechLocation
             pendingSpeechLocation = null
             if (pending != null) latestFollowSpeech(pending.first, pending.second)
@@ -954,20 +971,20 @@ internal fun ReaderScreen(
     LaunchedEffect(book.id, listState, speech) {
         listState.interactionSource.interactions.collect { interaction ->
             when (interaction) {
-                is DragInteraction.Start -> { pauseAutoReading(); highlightQuery = ""; manualDrag = true; pauseSpeechForNavigation() }
+                is DragInteraction.Start -> { pauseAutoReading(); highlightQuery = ""; manualDrag = true; speechPageMoved() }
                 is DragInteraction.Stop, is DragInteraction.Cancel -> manualDrag = false
             }
         }
     }
-    LaunchedEffect(book.id, speechResumePending, manualNavigationVersion, manualDrag, scrolling, speechMoveCount,
-        layoutState.restoring, layoutState.preparing, progressDraft, readerForeground, settings.ttsFollowPage, followPagePrompt) {
-        if (readerForeground && (speechResumePending || followPagePrompt) && !manualDrag && !scrolling &&
+    LaunchedEffect(book.id, speechSyncPending, manualNavigationVersion, manualDrag, scrolling, speechMoveCount,
+        layoutState.restoring, layoutState.preparing, progressDraft, readerForeground, settings.ttsFollowPage, followPagePrompt, promptOnReturn) {
+        if (readerForeground && (speechSyncPending || followPagePrompt && !promptOnReturn) && !manualDrag && !scrolling &&
             speechMoveCount == 0 && !layoutState.restoring && !layoutState.preparing && progressDraft == null) {
             delay(1_000)
-            followPagePrompt = false
-            if (speechResumePending && !manualDrag && !scrolling && speechMoveCount == 0 && !layoutState.restoring && !layoutState.preparing && progressDraft == null) {
+            if (!promptOnReturn) followPagePrompt = false
+            if (speechSyncPending && !manualDrag && !scrolling && speechMoveCount == 0 && !layoutState.restoring && !layoutState.preparing && progressDraft == null) {
                 if (!sourceEbook && settings.readingMode == ReadingMode.SCROLL) latestSyncScrollPosition()
-                speechResumePending = false
+                speechSyncPending = false
                 latestStartSpeech()
             }
         }
@@ -1390,7 +1407,7 @@ internal fun ReaderScreen(
                 !chromeVisible && panel == null && activeTextSelections.isEmpty() && !layoutState.preparing && !layoutState.restoring,
                 onDrag = { direction, fraction ->
                     if (paperDragSettle?.isActive != true) {
-                        if (paperDragDirection == 0) { pauseAutoReading(); pauseSpeechForNavigation(); selectionReset++; manualDrag = true }
+                        if (paperDragDirection == 0) { pauseAutoReading(); speechPageMoved(); selectionReset++; manualDrag = true }
                         paperDragDirection = direction
                         val origin = ReaderPageLocation(chapterIndex, readerSpreadStart(pageIndex, dualPage))
                         val target = readerAdjacentPage(origin.chapter, origin.page, pageCounts, direction, dualPage)
@@ -1472,7 +1489,7 @@ internal fun ReaderScreen(
                                 }
                             }
                         }, onTap = ::tapPage, onPageTap = { x, y -> tapPageAt(x, y) },
-                        onManualStart = { pauseAutoReading(); highlightQuery = ""; manualDrag = true; pauseSpeechForNavigation() },
+                        onManualStart = { pauseAutoReading(); highlightQuery = ""; manualDrag = true; speechPageMoved() },
                         onManualEnd = { manualDrag = false },
                         onChapterStep = { direction ->
                             val target = sourceChapter + direction
@@ -1554,7 +1571,7 @@ internal fun ReaderScreen(
                     }
                 }
                 else -> {
-                    val latestDragStart by rememberUpdatedState { highlightQuery = ""; manualDrag = true; pauseSpeechForNavigation() }
+                    val latestDragStart by rememberUpdatedState { highlightQuery = ""; manualDrag = true; speechPageMoved() }
                     val latestPageTurn by rememberUpdatedState { direction: Int -> move(direction) }
                     Box(Modifier.fillMaxSize().pointerInput(book.id, settings.readingMode, speech) {
                         readerPageDragGestures(settings.readingMode == ReadingMode.VERTICAL_PAGED,
@@ -1661,7 +1678,7 @@ internal fun ReaderScreen(
                         Icon(Icons.Outlined.SkipPrevious, "上一章", Modifier.size(22.dp))
                     }
                     Slider(progressDraft ?: if (!raster) progress else if (totalPages <= 1) 0f else (globalPage - 1).toFloat() / (totalPages - 1),
-                        onValueChange = { highlightQuery = ""; pauseSpeechForNavigation(); progressDraft = it }, onValueChangeFinished = {
+                        onValueChange = { highlightQuery = ""; speechPageMoved(); progressDraft = it }, onValueChangeFinished = {
                             progressDraft?.let(::seekProgress)
                             progressDraft = null
                             seekPreviewPage = null
@@ -1747,9 +1764,15 @@ internal fun ReaderScreen(
                     .padding(bottom = if (chromeVisible) with(density) { (toolbarHeight + speechBarHeight + floatingActionsHeight).toDp() } + 24.dp else 36.dp)
                     .testTag("reader_speech_prompt")) {
                 Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("从当前页面朗读？", Modifier.weight(1f), fontSize = 11.sp)
-                    TextButton(onClick = { startSpeech() }) { Text("确认") }
+                    Text(if (promptOnReturn) "返回朗读位置？" else "从当前页面朗读？", Modifier.weight(1f), fontSize = 11.sp)
                     TextButton(onClick = {
+                        if (promptOnReturn) { promptOnReturn = false; followPagePrompt = false } else startSpeech()
+                    }) { Text(if (promptOnReturn) "留在此页" else "确认") }
+                    TextButton(onClick = {
+                        speechDetached = false
+                        promptOnReturn = false
+                        speechNavigationVersion = manualNavigationVersion
+                        claimSpeechPosition()
                         spokenLocation?.let { (segment, offset) ->
                             jump(segment.chapter, if (raster) segment.page else locatePage(segment.chapter, offset), offset, fromSpeech = true)
                         }

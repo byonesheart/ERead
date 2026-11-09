@@ -128,6 +128,41 @@
         convert:text => window.parent.__ERead.convert(text)
     } : window.__ERead;
     function viewBounds() { return continuousHost ? continuousHost.bounds(frameChapter) : {top:0, bottom:innerHeight, height:innerHeight}; }
+    function setPublicationViewport() {
+        const height = viewBounds().height, style = document.documentElement.style;
+        style.setProperty('--eread-publication-vh', height / 100 + 'px');
+        style.setProperty('--eread-publication-vmin', Math.min(innerWidth, height) / 100 + 'px');
+        style.setProperty('--eread-publication-vmax', Math.max(innerWidth, height) / 100 + 'px');
+    }
+    function adaptPublicationViewportUnits() {
+        // A continuous chapter frame expands to its content height. Publisher viewport
+        // units must use the reading window, or content and frame keep resizing each other.
+        const units = /url\((?:[^)"']|"[^"]*"|'[^']*')*\)|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(^|[^\w.-])([+-]?(?:\d*\.\d+|\d+)(?:e[+-]?\d+)?)[dsl]?(vh|vb|vmin|vmax)\b/gi;
+        function rewrite(style) {
+            Array.from(style).forEach(name => {
+                const value = style.getPropertyValue(name);
+                const replacement = value.replace(units, (token, before, amount, unit) => unit ?
+                    before + `calc(${amount} * var(--eread-publication-${unit.toLowerCase() === 'vb' ? 'vh' : unit.toLowerCase()}))` : token);
+                if (value !== replacement) style.setProperty(name, replacement, style.getPropertyPriority(name));
+            });
+        }
+        const visited = new WeakSet();
+        function visit(container) {
+            if (!container || visited.has(container)) return;
+            visited.add(container);
+            let rules;
+            try { rules = container.cssRules; } catch (_) { return; }
+            if (!rules) return;
+            Array.from(rules).forEach(rule => {
+                if (rule.style) rewrite(rule.style);
+                if (rule.styleSheet) visit(rule.styleSheet);
+                visit(rule);
+            });
+        }
+        Array.from(document.styleSheets).forEach(visit);
+        document.querySelectorAll('[style]').forEach(node => rewrite(node.style));
+        setPublicationViewport();
+    }
     function measureChapter() {
         if (continuousHost) continuousHost.height(frameChapter, Math.max(document.body.offsetHeight, document.body.scrollHeight));
     }
@@ -335,15 +370,30 @@
         const top = Math.max(view.top + 2, config.top || 0), bottom = Math.min(view.bottom - 2, innerHeight - (config.bottom || 0));
         for (let row = 0; row <= 8; row++) for (let column = 0; column <= 4; column++) {
             const x = left + (right - left) * column / 4, y = top + (bottom - top) * row / 8;
-            const at = caret(x, y, false, true, nodes), end = caret(x, y, true, true, nodes);
-            if (at !== null) points.push(at);
-            if (end !== null) points.push(end);
+            const point = caretLocation(x, y);
+            if (!point) continue;
+            for (const end of [false, true]) {
+                const offset = canonicalPoint(point.node, point.offset, end);
+                if (offset === null) continue;
+                nodes.add(domPoint(offset, end).node);
+                if (Array.from(rangeFor(end ? Math.max(0, offset - 1) : offset,
+                    end ? offset : Math.min(canonical.length, offset + 1)).getClientRects()).some(visible)) points.push(offset);
+            }
         }
         // Sampling discovers nearby text nodes; their actual line boxes fill gaps
         // between samples without walking every glyph or every page in the chapter.
         nodes.forEach(node => {
             const range = document.createRange(); range.selectNodeContents(node);
-            Array.from(range.getClientRects()).filter(visible).forEach(rect => {
+            const rects = Array.from(range.getClientRects());
+            const entry = nodeEntries.get(node);
+            if (entry?.canonical.length && rects.length && rects.every(rect =>
+                rect.left >= 0 && rect.right <= innerWidth && rect.top >= view.top && rect.bottom <= view.bottom)) {
+                // The complete text node is on this page. Its existing source map
+                // already gives both endpoints, including inline tags and whitespace.
+                points.push(entry.canonical[0], entry.canonical[entry.canonical.length - 1] + 1);
+                return;
+            }
+            rects.filter(visible).forEach(rect => {
                 const x = Math.max(1, Math.min(innerWidth - 1, (rect.left + rect.right) / 2));
                 const y = Math.max(view.top + 1, Math.min(view.bottom - 1, (rect.top + rect.bottom) / 2));
                 const start = caret(config.vertical ? x : Math.max(1, rect.left + .5),
@@ -596,6 +646,7 @@
             Math.min(canonical.length, navigationAnchor.offset + 1)).getClientRects()).some(visible))) ? navigationAnchor : old);
         if (anchor && !reflowAnchor) reflowAnchor = {...anchor};
         config = next;
+        if (continuousHost) setPublicationViewport();
         if (activeFont !== font) {
             if (activeFont) document.fonts.delete(activeFont);
             if (font) document.fonts.add(font);
@@ -830,6 +881,7 @@
         try {
             canonical = options.canonical; decorations = options.decorations; noteTargets = new Set(options.noteTargets || []);
             sourceNotes = options.notes || [];
+            if (continuousHost) adaptPublicationViewportUnits();
             capturePublicationAppearance();
             // MOBI 6 encodes paragraph indentation/spacing as HTML attributes rather
             // than CSS. Translate those presentation attributes, retaining the DOM.

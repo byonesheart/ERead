@@ -120,6 +120,8 @@ class EReadAppStartupRobolectricTest {
         } }
         capture("app-startup-update")
         compose.onNodeWithTag("settings_update_badge", useUnmergedTree = true).assertIsDisplayed()
+        compose.runOnIdle { vm.setAppTheme(com.eyue.reader.data.AppThemeStyle.XINGCAI) }
+        compose.onNodeWithTag("settings_update_badge", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithText("设置").performClick()
         compose.onNodeWithTag("settings_update_badge", useUnmergedTree = true).assertDoesNotExist()
         compose.onNodeWithTag("settings_about").performScrollTo().performClick()
