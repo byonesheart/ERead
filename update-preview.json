@@ -1,13 +1,12 @@
 {
-  "versionCode": 86,
-  "versionName": "1.11.27-beta.1",
+  "versionCode": 87,
+  "versionName": "1.11.27-beta.2",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.27-beta.1",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.27-beta.1/ERead-1.11.27-beta.1-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.27-beta.2",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.27-beta.2/ERead-1.11.27-beta.2-release.apk",
   "mirrors": [],
   "changelog": [
-    "修复部分 EPUB 连贯滚动时出现大片空白、页数异常，减少长章节翻页卡顿。",
-    "同步朗读时移动页面保持播放，停稳后跟随当前页面。关闭同步时页面默认跟随朗读，手动移页后可返回朗读位置。",
-    "修复星彩模式设置图标的更新提示。"
+    "修复应用内更新下载遇到临时断连时直接结束的问题，支持自动重试和断点续传。",
+    "应用内更新实时显示已下载大小、总大小和进度。"
   ]
 }
