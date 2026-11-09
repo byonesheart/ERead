@@ -531,6 +531,56 @@ try {
     return { state, imageState, overlayCount: overlay.length };
   });
 
+  await test('long-image-page-stays-fitted-and-backward-turn-survives-late-resources', async () => {
+    const source = {baseUrl:'https://eread.local/book/archive/long-image.html',canonicalText:lines.join('\n\n'),
+      html:`<html><head><style>figure{display:flex;align-items:center;height:110vh;margin:0;break-before:column;break-after:column}
+        figure img{width:100%;height:120vh;max-height:none!important}</style></head><body>
+        ${lines.slice(0,20).map(text=>`<p>${text}</p>`).join('')}<figure><img id="long-image" src="illustration.svg"></figure>
+        ${lines.slice(20).map(text=>`<p>${text}</p>`).join('')}</body></html>`,
+      images:[{offset:lines.slice(0,20).join('\n\n').length,path:imageIdentity}],noteTargets:{}};
+    await open({mode:'PAGED'}, {source,initialNavigation:{offset:0}});
+    await command({type:'navigate',image:imageIdentity});
+    const onImage = await viewport();
+    const rect = await page.locator('#long-image').boundingBox();
+    assert.ok(onImage.page > 1 && onImage.images.includes(imageIdentity));
+    assert.ok(rect.y >= 18 && rect.y + rect.height <= 742.5,JSON.stringify(rect));
+    await command({type:'move',direction:-1});
+    const previous = await viewport();
+    assert.equal(previous.page,onImage.page - 1);
+    await page.evaluate(()=>document.fonts.dispatchEvent(new Event('loadingdone')));
+    assert.equal((await viewport()).page,previous.page);
+    return {onImage:onImage.page,previous:previous.page,rect};
+  });
+
+  await test('image-double-tap-and-pinch-open-a-viewer-without-moving-the-page', async () => {
+    await open({mode:'PAGED'});
+    await command({type:'navigate',image:imageIdentity});
+    const before = await viewport();
+    const image = page.locator('img').first();
+    const rect = await image.boundingBox();
+    const x = Math.round(rect.x + rect.width / 2), y = Math.round(rect.y + rect.height / 2);
+    await page.touchscreen.tap(x,y);
+    await page.touchscreen.tap(x,y);
+    await page.getByRole('dialog',{name:'查看大图'}).waitFor();
+    assert.equal((await viewport()).page,before.page);
+    assert.equal((await page.locator('#eread-image-viewer').boundingBox()).x,0);
+    await command({type:'closeImageViewer'});
+    await page.waitForTimeout(310);
+    const input = await page.context().newCDPSession(page);
+    const touches = (type,points) => input.send('Input.dispatchTouchEvent',{type,touchPoints:points});
+    await touches('touchStart',[{x:x-20,y,id:0}]);
+    await touches('touchStart',[{x:x-20,y,id:0},{x:x+20,y,id:1}]);
+    await touches('touchMove',[{x:x-42,y,id:0},{x:x+42,y,id:1}]);
+    await touches('touchEnd',[]);
+    await page.getByRole('dialog',{name:'查看大图'}).waitFor();
+    assert.match(await page.locator('#eread-image-viewer img').getAttribute('style'),/scale\(2\.1\)/);
+    await command({type:'closeImageViewer'});
+    assert.equal(await page.locator('#eread-image-viewer').count(),0);
+    assert.equal((await viewport()).page,before.page);
+    assert.deepEqual(await image.boundingBox(),rect);
+    return before;
+  });
+
   for (const mode of ['SCROLL', 'PAGED', 'VERTICAL_PAGED']) for (const kind of ['image', 'picture', 'svg']) {
     await test(`image-crop-${mode.toLowerCase()}-${kind}`, async () => {
       const drawing = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><rect width="320" height="240" fill="red"/><rect x="40" y="24" width="200" height="168" fill="#00ff00"/></svg>';

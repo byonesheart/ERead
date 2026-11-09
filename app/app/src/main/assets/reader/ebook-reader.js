@@ -6,6 +6,7 @@
     let navigationAnchor = null, reflowAnchor = null;
     let sourceNotes = [];
     let suppressClickUntil = 0;
+    let imageViewer = null, pendingImageTap = null;
     let autoScrollFrame = 0, autoScrollSpeed = 0, autoScrollTime = 0, autoScrollRemainder = 0;
     function setAutoScroll(speed) {
         if (autoScrollFrame) automatic = false;
@@ -28,7 +29,6 @@
         }
         autoScrollFrame = requestAnimationFrame(tick);
     }
-    let stableOffset = 0;
     let configurationGeneration = 0, activeFont = null;
     const loadedFonts = new Map(), sourceMappings = [];
     const imageCrops = new Map();
@@ -251,6 +251,93 @@
         while (target.ownerSVGElement) target = target.ownerSVGElement;
         return target;
     }
+    function imageAt(target) {
+        const node = target?.closest?.('img,svg,image');
+        return node ? imageCropTarget(node) : null;
+    }
+    function gesture(touches, dy = 0) {
+        if (!touches.length) return null;
+        const first = touches[0], second = touches[1] || first;
+        return {x:(first.clientX + second.clientX) / 2, y:(first.clientY + second.clientY) / 2 + dy,
+            distance:Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY), count:touches.length};
+    }
+    function closeImageViewer() {
+        if (!imageViewer) return;
+        imageViewer.layer.remove();
+        imageViewer = null; touch = null;
+        suppressClickUntil = Date.now() + 300;
+        send('imageView', {open:false});
+    }
+    function updateImageViewer(point) {
+        const state = imageViewer;
+        const previous = state.point;
+        state.point = point;
+        if (!point || !previous || point.count !== previous.count) return;
+        const {width, height} = state.layer.getBoundingClientRect();
+        const zoom = Math.max(1, Math.min(5, state.zoom * (previous.distance ? point.distance / previous.distance : 1)));
+        const ratio = zoom / state.zoom;
+        const fitWidth = Math.min(width, height * state.aspect), fitHeight = fitWidth / state.aspect;
+        const maxX = Math.max(0, (fitWidth * zoom - width) / 2), maxY = Math.max(0, (fitHeight * zoom - height) / 2);
+        state.x = Math.max(-maxX, Math.min(maxX, point.x - width / 2 - (previous.x - width / 2 - state.x) * ratio));
+        state.y = Math.max(-maxY, Math.min(maxY, point.y - height / 2 - (previous.y - height / 2 - state.y) * ratio));
+        state.zoom = zoom;
+        state.picture.style.transform = `translate(${state.x}px,${state.y}px) scale(${zoom})`;
+    }
+    function openImageViewer(node, point = null) {
+        if (!node || imageViewer) return;
+        clearTimeout(pendingImageTap?.timer); pendingImageTap = null;
+        clearTimeout(imageSelectionTimer);
+        setAutoScroll(0);
+        if (continuousHost) continuousHost.pauseAutoScroll();
+        finishPageAnimation();
+        getSelection().removeAllRanges();
+        const host = continuousHost ? window.parent.document : document;
+        const layer = host.createElement('div'), picture = node.cloneNode(true);
+        picture.removeAttribute('id');
+        const rect = node.getBoundingClientRect();
+        const aspect = node.naturalWidth && node.naturalHeight ? node.naturalWidth / node.naturalHeight :
+            (rect.height > 0 && rect.width > 0 ? rect.width / rect.height : 1);
+        if (node.tagName === 'IMG') {
+            picture.removeAttribute('srcset'); picture.removeAttribute('sizes'); picture.src = node.currentSrc || node.src;
+        } else {
+            for (const image of picture.querySelectorAll('image,use')) {
+                const href = image.getAttribute('href') || image.getAttribute('xlink:href');
+                if (href && !href.startsWith('#')) {
+                    image.removeAttribute('xlink:href'); image.setAttribute('href', new URL(href, document.baseURI).href);
+                }
+            }
+        }
+        layer.id = 'eread-image-viewer';
+        layer.setAttribute('role', 'dialog');
+        layer.setAttribute('aria-label', '查看大图');
+        layer.style.cssText = 'position:fixed!important;inset:0!important;z-index:2147483647!important;' +
+            'display:block!important;background:#121212!important;overflow:hidden!important;touch-action:none!important;';
+        picture.style.cssText = 'display:block!important;position:static!important;float:none!important;width:100%!important;' +
+            'height:100%!important;max-height:none!important;max-width:none!important;margin:0!important;' +
+            'object-fit:contain!important;pointer-events:none!important;';
+        const close = host.createElement('button');
+        close.type = 'button'; close.textContent = '×'; close.setAttribute('aria-label', '关闭大图');
+        close.style.cssText = 'position:absolute!important;right:12px!important;top:12px!important;width:44px;height:44px;' +
+            'font:26px sans-serif!important;border:0;border-radius:22px;background:#333;color:white!important;';
+        close.addEventListener('click', event => { event.stopPropagation(); closeImageViewer(); });
+        layer.append(picture, close);
+        host.documentElement.appendChild(layer);
+        imageViewer = {layer, picture, aspect, point, zoom:1, x:0, y:0};
+        for (const type of ['touchstart','touchmove','touchend','touchcancel']) layer.addEventListener(type, event => {
+            event.stopPropagation();
+            if (event.target === close) return;
+            event.preventDefault();
+            updateImageViewer(gesture(event.touches));
+        }, {passive:false});
+        layer.addEventListener('click', event => event.stopPropagation());
+        layer.addEventListener('wheel', event => { event.preventDefault(); event.stopPropagation(); }, {passive:false});
+        touch = null;
+        if (manual) endManual();
+        send('imageView', {open:true});
+    }
+    function sourceGesture(event) {
+        return gesture(event.touches, continuousHost ? window.frameElement.getBoundingClientRect().top : 0);
+    }
     function imageBounds(image) {
         const target = imageCropTarget(image.node), crop = imageCrops.get(target);
         if (!crop) return image.node.getBoundingClientRect();
@@ -404,9 +491,13 @@
                 if (end !== null) points.push(end);
             });
         });
-        images.forEach(image => {
+        const imageOnly = !points.length;
+        let imageIndex;
+        images.forEach((image, index) => {
             if (visible(imageBounds(image))) {
-                shownImages.push(image.path); points.push(image.offset);
+                if (imageOnly && imageIndex === undefined) imageIndex = index;
+                if (image.path) shownImages.push(image.path);
+                points.push(image.offset);
             }
         });
         // Whitespace immediately before a sampled glyph belongs to the same paragraph.
@@ -416,7 +507,8 @@
         while (end < canonical.length && whitespace(canonical[end])) end++;
         const horizontal = pageHorizontal(), position = horizontal ? scrollX : continuousHost ? view.top : scrollY;
         const extent = horizontal ? document.documentElement.scrollWidth : document.documentElement.scrollHeight;
-        return {offset: start, endOffset: end, page: continuousHost ? Math.floor(position / pageStride()) : pageIndex(), pages: pageCount(), images: shownImages, scrolling: manual,
+        return {offset: start, endOffset: imageOnly && imageIndex !== undefined ? start : end,
+            imageIndex, page: continuousHost ? Math.floor(position / pageStride()) : pageIndex(), pages: pageCount(), images: shownImages, scrolling: manual,
             atStart: position <= 1, atEnd: position + (horizontal ? innerWidth : view.height) >= extent - 1};
     }
     function report(force) {
@@ -425,7 +517,6 @@
         if (!force && now - lastBridgeReport < 80) { drawDecorations(); return; }
         lastBridgeReport = now;
         const state = viewport(), signature = JSON.stringify(state);
-        stableOffset = state.offset;
         if (force || signature !== lastViewport) { lastViewport = signature; send('viewport', state); }
         drawDecorations();
     }
@@ -452,10 +543,11 @@
     function navigate(command, reflow) {
         if (!reflow) reflowAnchor = null;
         finishPageAnimation();
-        const targetImage = command.image && images.find(image => image.path === command.image);
+        const targetImage = command.imageIndex === undefined ?
+            command.image && images.find(image => image.path === command.image) : images[command.imageIndex];
         const range = targetImage ? null : rangeFor(command.offset || 0, Math.min(canonical.length, (command.offset || 0) + 1));
         const rect = targetImage ? imageBounds(targetImage) : range.getBoundingClientRect();
-        navigationAnchor = {offset: command.offset || 0, image: command.image};
+        navigationAnchor = {offset: command.offset || 0, image: command.image, imageIndex: command.imageIndex};
         if (continuousHost) {
             measureChapter();
             const y = command.lastPage ? Math.max(0, document.body.scrollHeight - viewBounds().height) : rect.top + scrollY - (config.top || 0);
@@ -473,6 +565,7 @@
         }
     }
     function step(direction, user = false) {
+        navigationAnchor = null; reflowAnchor = null;
         if (config.mode === 'SCROLL') {
             if (user) beginManual();
             const maximum = Math.max(0, document.documentElement.scrollHeight - innerHeight);
@@ -679,7 +772,7 @@
             ::view-transition-image-pair(root) { isolation:isolate; }
             ::view-transition-old(root),::view-transition-new(root) { mix-blend-mode:normal; height:100%; object-fit:fill; backface-visibility:hidden;
                 background:${config.paper || '#fff'} ${config.paperImage ? `linear-gradient(${config.night ? 'rgba(0,0,0,.72),rgba(0,0,0,.72)' : 'rgba(255,255,255,.72),rgba(255,255,255,.72)'}),url('${config.paperImage}') center/cover` : ''}; }
-            html { margin:0!important; padding:0!important; width:100%!important; height:${continuousHost ? 'auto' : '100%'}!important; writing-mode:horizontal-tb!important; scroll-behavior:auto!important; overflow:${scrolling && !continuousHost ? 'auto' : 'hidden'}!important; background:transparent!important; isolation:isolate; }
+            html { margin:0!important; padding:0!important; width:100%!important; height:${continuousHost ? 'auto' : '100%'}!important; writing-mode:horizontal-tb!important; scroll-behavior:auto!important; overflow-anchor:none!important; overflow:${scrolling && !continuousHost ? 'auto' : 'hidden'}!important; background:transparent!important; isolation:isolate; }
             body { box-sizing:content-box!important; margin:0!important; padding:${config.top}px ${config.right}px ${config.bottom}px ${config.left}px!important;
                 width:${horizontal ? width : Math.max(32, innerWidth - config.left - config.right)}px!important; min-width:0!important;
                 height:${horizontal || vertical ? height + 'px' : 'auto'}!important; min-height:${horizontal || vertical ? '0' : height + 'px'}!important;
@@ -692,7 +785,9 @@
             ${software}
             ${!config.authorCss ? 'h1,h2,h3 { break-after:avoid; break-inside:avoid; }' : ''}
             ${config.eink ? 'body * { background-color:transparent!important; }' : ''}
-            img,svg,image,video { max-width:100%!important; max-height:${height}px; object-fit:contain; break-inside:avoid; }
+            img,svg,image,video { max-width:100%!important; max-height:${height}px${scrolling ? '' : '!important'}; object-fit:contain; break-inside:avoid; }
+            ${scrolling ? '' : `[data-eread-image-page] { max-height:${height}px!important; box-sizing:border-box!important; break-inside:avoid; }
+                body [data-eread-image-page] :is(img,svg) { max-height:${height}px!important; }`}
             table { max-width:100%; } a { color:inherit; } a[href] { text-decoration:underline; }
             #eread-overlays { position:${continuousHost ? 'absolute' : 'fixed'}!important; inset:0!important; padding:0!important; margin:0!important; pointer-events:none!important;
                 z-index:2147483646!important; width:100vw!important; height:100vh!important; columns:auto!important; }
@@ -727,7 +822,7 @@
         fitPageBoundary();
         measureChapter();
         if (anchor && (!continuousHost || continuousHost.isActive(frameChapter)))
-            navigate({offset: anchor.offset, image: anchor.image}, true);
+            navigate({offset: anchor.offset, image: anchor.image, imageIndex: anchor.imageIndex}, true);
         requestAnimationFrame(() => { if (generation === configurationGeneration) report(true); });
     }
     function rectsFor(start, end) {
@@ -915,13 +1010,26 @@
             textByParent.forEach((nodes, parent) => paragraphObserver.observe(parent));
             const nodes = Array.from(document.querySelectorAll('img,svg image'));
             images = nodes.map((node, index) => Object.assign({node:node}, options.images[index] || {offset:0, path:''}));
+            for (const node of document.querySelectorAll('img,svg')) {
+                if (node.ownerSVGElement) continue;
+                const parent = (node.closest('picture') || node).parentElement;
+                if (!parent || parent === document.body || parent.textContent.trim()) continue;
+                const style = getComputedStyle(parent);
+                if (parent.children.length === 1 && (style.display.includes('flex') ||
+                    /^(page|always|column)$/.test(style.breakBefore) || /^(page|always|column)$/.test(style.breakAfter)))
+                    parent.dataset.ereadImagePage = '1';
+            }
             const resourceReady = function () {
                 if (!started) return;
+                const page = pageTransition?.page ?? pageIndex();
                 rangeGeometry.clear();
                 applyImageCrop();
                 if (continuousHost) { measureChapter(); report(true); return; }
                 fitPageBoundary();
-                navigate(reflowAnchor || navigationAnchor || {offset:stableOffset}, true);
+                const anchor = reflowAnchor || navigationAnchor;
+                if (anchor) navigate(anchor, true);
+                else if (config.mode !== 'SCROLL') moveToPage(page);
+                else report(true);
             };
             nodes.forEach(node => node.addEventListener('load', resourceReady));
             document.fonts.addEventListener('loadingdone', resourceReady);
@@ -959,8 +1067,9 @@
             }
             else if (value.type === 'move') step(value.direction);
             else if (value.type === 'autoScroll') setAutoScroll(value.speed);
-            else if (value.type === 'page') moveToPage(value.page);
+            else if (value.type === 'page') { navigationAnchor = null; reflowAnchor = null; moveToPage(value.page); }
             else if (value.type === 'clearSelection') { getSelection().removeAllRanges(); alignPagedSelection(); }
+            else if (value.type === 'closeImageViewer') closeImageViewer();
             else if (value.type === 'resetReflowAnchor') { navigationAnchor = null; reflowAnchor = null; }
             else if (value.type === 'configure') await configure(value.config, true);
             else if (value.type === 'convert') convertText();
@@ -973,11 +1082,19 @@
     }
     document.addEventListener('selectionchange', selection);
     window.addEventListener('pagehide', function () {
+        closeImageViewer();
+        clearTimeout(pendingImageTap?.timer);
         setAutoScroll(0);
         if (paragraphObserver) paragraphObserver.disconnect();
         visibleTextParents.clear(); textByParent.clear();
     });
-    window.addEventListener('scroll', function () { if (!automatic && touch) beginManual(); schedule(); if (manual) endManual(); }, {passive:true});
+    window.addEventListener('scroll', function () {
+        // WebView can scroll a hidden axis when focusing or revealing a replaced element.
+        if (continuousHost && (scrollX || scrollY)) scrollTo(0, 0);
+        else if (pageHorizontal() && scrollY) scrollTo(scrollX, 0);
+        if (!automatic && touch) beginManual();
+        schedule(); if (manual) endManual();
+    }, {passive:true});
     document.addEventListener('wheel', function () {
         if (config.mode === 'SCROLL') { setAutoScroll(0); beginManual(); endManual(); }
     }, {passive:true});
@@ -986,7 +1103,15 @@
         clearTimeout(resizeTimer); resizeTimer = setTimeout(function () { configure(config, true, true).catch(fail); }, 80);
     });
     document.addEventListener('touchstart', function (event) {
-        if (!started || event.touches.length !== 1) return;
+        if (!started) return;
+        if (imageViewer) { updateImageViewer(sourceGesture(event)); return; }
+        if (event.touches.length === 2 && touch?.image) {
+            clearTimeout(imageSelectionTimer);
+            if (touch.dragging) { releaseEdgeDrag(touch, true); touch.dragging = false; }
+            touch.pinch = sourceGesture(event);
+            return;
+        }
+        if (event.touches.length !== 1) return;
         finishPageAnimation();
         touch = {x:event.touches[0].clientX, y:event.touches[0].clientY, time:Date.now(), moved:false, image:event.target.closest('img,image,svg'),
             startAtStart: scrollY <= 1, startAtEnd: scrollY + innerHeight >= document.documentElement.scrollHeight - 1};
@@ -998,8 +1123,18 @@
         }, 500);
     }, {passive:true});
     document.addEventListener('touchmove', function (event) {
+        if (imageViewer) { event.preventDefault(); updateImageViewer(sourceGesture(event)); return; }
         if (!touch) return;
         const point = event.touches[0];
+        if (touch.pinch) {
+            event.preventDefault();
+            const moved = sourceGesture(event);
+            if (moved?.count === 2 && moved.distance > touch.pinch.distance * 1.05) {
+                openImageViewer(imageAt(touch.image), touch.pinch);
+                updateImageViewer(moved);
+            }
+            return;
+        }
         if (event.touches.length !== 1) {
             const previous = touch; touch = null; if (previous.dragging) releaseEdgeDrag(previous, true); return;
         }
@@ -1008,8 +1143,10 @@
         if (config.mode !== 'SCROLL' && getSelection().isCollapsed) event.preventDefault();
     }, {passive:false});
     document.addEventListener('touchend', function (event) {
+        if (imageViewer) { updateImageViewer(sourceGesture(event)); return; }
         if (!touch) return;
         const previous = touch; touch = null; clearTimeout(imageSelectionTimer);
+        if (previous.pinch) { suppressClickUntil = Date.now() + 300; if (manual) endManual(); return; }
         if (!getSelection().isCollapsed) selection();
         if (previous.dragging) { releaseEdgeDrag(previous, false); return; }
         if (previous.moved && !previous.selecting && Date.now() - previous.time < 500 && config.mode !== 'SCROLL' && getSelection().isCollapsed) {
@@ -1023,18 +1160,14 @@
         if (manual) endManual();
     }, {passive:true});
     document.addEventListener('touchcancel', function () {
+        if (imageViewer) imageViewer.point = null;
         const previous = touch; touch = null;
         if (previous?.dragging) releaseEdgeDrag(previous, true);
         clearTimeout(imageSelectionTimer);
         if (manual) endManual();
     }, {passive:true});
     document.addEventListener('contextmenu', function (event) { if (event.target.closest('img,svg')) event.preventDefault(); });
-    document.addEventListener('click', function (event) {
-        if (!started) return;
-        event.preventDefault();
-        if (Date.now() < suppressClickUntil) return;
-        const selection = getSelection();
-        if (selection && !selection.isCollapsed) return;
+    function readerClick(event) {
         const link = event.target.closest('a[href]');
         if (link) {
             const target = link.getAttribute('href'), id = target && target.split('#')[1];
@@ -1060,6 +1193,16 @@
         const hits = decorationRects().filter(({rect}) => event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom);
         if (hits.length) send('annotation', Object.assign({ids:Array.from(new Set(hits.map(hit => hit.item.id)))}, bounds(hits[0].rect)));
         else send('tap', {x:event.clientX / innerWidth, y:event.clientY / innerHeight});
+    }
+    document.addEventListener('click', function (event) {
+        if (!started) return;
+        event.preventDefault();
+        if (imageViewer || Date.now() < suppressClickUntil || !getSelection().isCollapsed) return;
+        const image = imageAt(event.target);
+        if (!image) { readerClick(event); return; }
+        if (pendingImageTap?.image === image) { openImageViewer(image); return; }
+        clearTimeout(pendingImageTap?.timer);
+        pendingImageTap = {image, timer:setTimeout(() => { pendingImageTap = null; readerClick(event); }, 260)};
     });
     window.ERead = {init:init, command:command};
     if (continuousHost) new ResizeObserver(measureChapter).observe(document.body);

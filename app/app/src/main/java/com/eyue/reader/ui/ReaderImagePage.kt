@@ -11,9 +11,12 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -67,6 +72,47 @@ private val readerBitmapCache = object : LruCache<String, Bitmap>(minOf(Runtime.
 }
 private val readerDecodePermits = Semaphore(2)
 
+internal data class ReaderImagePreview(val bitmap: Bitmap, val zoom: Float, val focus: Offset)
+
+@Composable
+internal fun ReaderImageViewer(preview: ReaderImagePreview, onClose: () -> Unit, modifier: Modifier = Modifier) {
+    val bitmap = preview.bitmap
+    var zoom by remember(bitmap) { mutableStateOf(preview.zoom) }
+    var pan by remember(bitmap) { mutableStateOf(Offset.Zero) }
+    var surface by remember(bitmap) { mutableStateOf(IntSize.Zero) }
+    fun fit(): Offset {
+        val scale = minOf(surface.width.toFloat() / bitmap.width, surface.height.toFloat() / bitmap.height)
+        return Offset(bitmap.width * scale, bitmap.height * scale)
+    }
+    fun clamp(offset: Offset, scale: Float): Offset {
+        val fitted = fit()
+        val x = ((fitted.x * scale - surface.width) / 2f).coerceAtLeast(0f)
+        val y = ((fitted.y * scale - surface.height) / 2f).coerceAtLeast(0f)
+        return Offset(offset.x.coerceIn(-x, x), offset.y.coerceIn(-y, y))
+    }
+    LaunchedEffect(preview, surface) {
+        zoom = preview.zoom
+        val fitted = fit()
+        pan = clamp(Offset(-preview.focus.x * fitted.x, -preview.focus.y * fitted.y) * (zoom - 1f), zoom)
+    }
+    Box(modifier.fillMaxSize().background(Color(0xFF121212)).clipToBounds()
+        .onSizeChanged { surface = it }.testTag("reader_image_viewer")
+        .pointerInput(bitmap) {
+            detectTransformGestures { centroid, change, scale, _ ->
+                val next = (zoom * scale).coerceIn(1f, 5f)
+                val pivot = centroid - Offset(size.width / 2f, size.height / 2f)
+                pan = clamp(pivot - (pivot - pan) * (next / zoom) + change, next)
+                zoom = next
+            }
+        }) {
+        Image(bitmap.asImageBitmap(), "大图", Modifier.fillMaxSize().graphicsLayer {
+            scaleX = zoom; scaleY = zoom; translationX = pan.x; translationY = pan.y
+        }, contentScale = ContentScale.Fit)
+        TextButton(onClose, Modifier.align(Alignment.TopEnd).padding(8.dp).background(
+            Color(0xAA222222), RoundedCornerShape(20.dp))) { Text("关闭大图", color = Color.White) }
+    }
+}
+
 @Composable
 internal fun ReaderImagePage(
     source: PageSource,
@@ -79,20 +125,19 @@ internal fun ReaderImagePage(
     modifier: Modifier = Modifier,
     description: String = "漫画或 PDF 页面",
     speechOffset: Int? = null, speechText: String = "", einkMode: Boolean = false,
-    pdfCrop: PdfCrop = PdfCrop(), onPageTap: ((Float, Float) -> Unit)? = null
+    pdfCrop: PdfCrop = PdfCrop(), onPageTap: ((Float, Float) -> Unit)? = null,
+    onImagePreview: ((ReaderImagePreview) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val crop = pdfCrop.normalized()
     val cacheKey = "${source.path}:${source.pdfPage}:${targetWidth.coerceAtMost(1600)}:$crop"
     var bitmap by remember(cacheKey) { mutableStateOf<Bitmap?>(null) }
     var failure by remember(cacheKey) { mutableStateOf<String?>(null) }
-    var zoom by remember(cacheKey) { mutableStateOf(1f) }
-    var pan by remember(cacheKey) { mutableStateOf(Offset.Zero) }
-    var surfaceSize by remember(cacheKey) { mutableStateOf(IntSize.Zero) }
     var speechGeometry by remember(cacheKey) { mutableStateOf<PdfSpeechGeometry?>(null) }
     val latestTap by rememberUpdatedState(onTap)
     val latestPageTap by rememberUpdatedState(onPageTap)
     val latestLongPress by rememberUpdatedState(onLongPress)
+    val latestPreview by rememberUpdatedState(onImagePreview)
     LaunchedEffect(cacheKey, speechText, speechOffset != null) {
         if (source.pdfPage >= 0 && speechOffset != null && speechText.isNotBlank() && speechGeometry == null) {
             speechGeometry = withContext(Dispatchers.IO) {
@@ -115,35 +160,47 @@ internal fun ReaderImagePage(
             )
         }
     }
-    val transform = rememberTransformableState { zoomChange, panChange, _ ->
-        zoom = (zoom * zoomChange).coerceIn(1f, 5f)
-        val candidate = pan + panChange
-        val image = bitmap
-        val fit = if (image != null) minOf(surfaceSize.width.toFloat() / image.width, surfaceSize.height.toFloat() / image.height) else 1f
-        val contentWidth = (image?.width ?: surfaceSize.width) * fit
-        val contentHeight = (image?.height ?: surfaceSize.height) * fit
-        val maxX = ((contentWidth * zoom - surfaceSize.width) / 2f).coerceAtLeast(0f)
-        val maxY = ((contentHeight * zoom - surfaceSize.height) / 2f).coerceAtLeast(0f)
-        pan = if (zoom > 1f) Offset(candidate.x.coerceIn(-maxX, maxX), candidate.y.coerceIn(-maxY, maxY)) else Offset.Zero
+    fun preview(point: Offset, size: IntSize, scale: Float) {
+        val image = bitmap ?: return
+        val fit = minOf(size.width.toFloat() / image.width, size.height.toFloat() / image.height)
+        if (fit <= 0f) return
+        val focus = Offset(((point.x - size.width / 2f) / (image.width * fit)).coerceIn(-.5f, .5f),
+            ((point.y - size.height / 2f) / (image.height * fit)).coerceIn(-.5f, .5f))
+        latestPreview?.invoke(ReaderImagePreview(image, scale, focus))
     }
     val layout = if (paged) Modifier.fillMaxSize() else {
         bitmap?.let { Modifier.fillMaxWidth().aspectRatio(it.width.toFloat() / it.height) }
             ?: Modifier.fillMaxWidth().heightIn(min = 280.dp)
     }
     Box(
-        modifier.then(layout).onSizeChanged { surfaceSize = it }.clipToBounds()
+        modifier.then(layout).clipToBounds()
             .then(if (markColor != null) Modifier.border(3.dp, markColor) else Modifier)
-            .transformable(state = transform, canPan = { zoom > 1f })
+            .pointerInput(cacheKey) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    var scale = 1f
+                    var opened = false
+                    do {
+                        val event = awaitPointerEvent()
+                        if (latestPreview != null && event.changes.count { it.pressed } >= 2) {
+                            scale = (scale * event.calculateZoom()).coerceIn(1f, 5f)
+                            val center = event.calculateCentroid()
+                            if (center.isSpecified && (opened || scale > 1.05f)) {
+                                opened = true
+                                preview(center, size, scale)
+                            }
+                            event.changes.forEach { it.consume() }
+                        }
+                    } while (event.changes.any { it.pressed })
+                }
+            }
             .pointerInput(cacheKey) {
                 detectTapGestures(
                     onTap = { point ->
-                        latestPageTap?.takeIf { zoom == 1f }?.invoke(point.x / size.width.coerceAtLeast(1), point.y / size.height.coerceAtLeast(1)) ?: latestTap()
+                        latestPageTap?.invoke(point.x / size.width.coerceAtLeast(1), point.y / size.height.coerceAtLeast(1)) ?: latestTap()
                     },
                     onLongPress = { latestLongPress() },
-                    onDoubleTap = {
-                        zoom = if (zoom > 1f) 1f else 2f
-                        pan = Offset.Zero
-                    }
+                    onDoubleTap = { preview(it, size, 2f) }
                 )
             },
         contentAlignment = Alignment.Center
@@ -152,19 +209,14 @@ internal fun ReaderImagePage(
             failure != null -> Text(failure.orEmpty(), color = foreground, modifier = Modifier.padding(24.dp))
             bitmap != null -> Image(
                 bitmap = bitmap!!.asImageBitmap(), contentDescription = description,
-                modifier = Modifier.fillMaxSize().graphicsLayer {
-                    scaleX = zoom; scaleY = zoom
-                    translationX = pan.x; translationY = pan.y
-                }, contentScale = ContentScale.Fit
+                modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit
             )
             else -> if (einkMode) Text("正在读取页面", color = foreground)
                 else CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         }
         if (bitmap != null && speechOffset != null && speechGeometry != null) {
             val highlights = speechGeometry!!.paragraph(speechOffset)
-            Canvas(Modifier.fillMaxSize().graphicsLayer {
-                scaleX = zoom; scaleY = zoom; translationX = pan.x; translationY = pan.y
-            }.testTag("reader_pdf_speech_highlight")) {
+            Canvas(Modifier.fillMaxSize().testTag("reader_pdf_speech_highlight")) {
                 val image = bitmap!!
                 val fit = minOf(size.width / image.width, size.height / image.height)
                 val width = image.width * fit

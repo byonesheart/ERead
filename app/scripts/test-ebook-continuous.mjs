@@ -25,7 +25,7 @@ const config = {mode:'SCROLL',turn:'SLIDE',authorCss:true,fontSize:19,lineHeight
 const browser = await chromium.launch({headless:true,executablePath:process.env.EREAD_BROWSER || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'});
 const page = await browser.newPage({viewport:{width:392,height:760},hasTouch:true});
 const results=[],errors=[];
-let cropFixture = false, publicationFixture = false, viewportFixture = false;
+let cropFixture = false, publicationFixture = false, viewportFixture = false, longTailFixture = false;
 page.on('pageerror', error => errors.push(error.message));
 page.on('console', message => { if(message.type()==='error')console.log('BROWSER '+message.text()); });
 const requests=[];
@@ -52,7 +52,8 @@ await page.route('https://eread.local/**',async route=>{
     `<style>.same{color:${publicationFixture ? 'white' : chapter.color}} p{line-height:35px}${publicationFixture ? `body{background:linear-gradient(${index % 2 ? '#18283b,#18283b' : '#183b28,#183b28'});color:white}` : ''}</style>`+
       (cropFixture && index===0 ? '<img id="crop-image" style="display:block;width:320px;height:240px" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22320%22 height=%22240%22%3E%3Crect width=%22320%22 height=%22240%22 fill=%22green%22/%3E%3C/svg%3E">' : '')+
       (viewportFixture ? '<style>@media (min-width:300px){.illustration{height:90vh}}</style><div class="illustration"></div><div style="height:90vh"></div><div class="illustration"></div>' : '')+
-      chapter.body,childScript,{canonical:chapter.canonical,
+      chapter.body + (longTailFixture && index===2 ? '<figure style="height:90vh;display:flex;align-items:center;margin:0"><img id="tail-image" style="width:100%;height:90vh" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22320%22 height=%22720%22%3E%3Crect width=%22320%22 height=%22720%22 fill=%22green%22/%3E%3C/svg%3E"></figure>' : ''),
+      childScript,{canonical:chapter.canonical,
       config:{...config,continuous:true},images:cropFixture && index===0 ? [{offset:0,path:'/book/crop-image.svg'}] : [],noteTargets:['#note'],notes:[],decorations:{annotations:[],search:'',spokenStart:-1,spokenEnd:-1}})});}
   return route.fulfill({status:404,body:''});
 });
@@ -300,6 +301,54 @@ try{
    const state=await page.evaluate(()=>events.filter(e=>e.type==='viewport').at(-1));
    assert.equal(state.chapter,1);assert.ok(state.offset<=offset+2&&state.endOffset>offset);
    return {before,after};
+ });
+ await test('long-tail-image-and-late-chapter-reports-do-not-jump-the-scroll-anchor',async()=>{
+   viewportFixture=false;longTailFixture=true;
+   await page.goto('https://eread.local/root.html');await ready(0);
+   await jump(2,chapters[2].canonical.length - 30);
+   await page.waitForFunction(()=>document.querySelector('iframe[data-chapter="3"]')?.style.opacity==='1');
+   await page.evaluate(()=>{
+     const row=document.querySelector('section[data-chapter="2"]');
+     scrollTo(0,scrollY+row.getBoundingClientRect().bottom-innerHeight-2);
+   });
+   await page.waitForTimeout(200);
+   const image=page.frameLocator('iframe[data-chapter="2"]').locator('#tail-image');
+   const rect=await image.boundingBox();
+   const at=await page.evaluate(()=>scrollY);
+   await page.touchscreen.tap(rect.x+rect.width/2,rect.y+rect.height/2);
+   await page.touchscreen.tap(rect.x+rect.width/2,rect.y+rect.height/2);
+   await page.getByRole('dialog',{name:'查看大图'}).waitFor();
+   await page.evaluate(()=>ERead.command({type:'closeImageViewer'}));
+   assert.equal(await page.locator('#eread-image-viewer').count(),0);
+   assert.equal(await page.evaluate(()=>scrollY),at);
+   const stale=await page.evaluate(()=>{
+     const row=document.querySelector('section[data-chapter="3"]');
+     scrollTo(0,scrollY+row.getBoundingClientRect().top+20);
+     events=[];
+     EReadContinuous.event(2,{type:'viewport',offset:0,endOffset:0,page:0,pages:1});
+     return events.filter(e=>e.type==='viewport');
+   });
+   assert.deepEqual(stale,[]);
+   await ready(3);
+   assert.equal((await page.evaluate(()=>events.filter(e=>e.type==='viewport').at(-1))).chapter,3);
+   return {scrollAnchor:at};
+ });
+ await test('shrinking-a-preceding-chapter-at-book-end-compensates-only-once',async()=>{
+   longTailFixture=false;
+   await jump(7,chapters[7].canonical.length-4);
+   await page.waitForFunction(()=>document.querySelector('iframe[data-chapter="6"]')?.style.opacity==='1');
+   const position=await page.evaluate(()=>{
+     const previous=document.querySelector('section[data-chapter="6"]');
+     const tail=document.querySelector('section[data-chapter="7"]');
+     const height=previous.offsetHeight;
+     EReadContinuous.height(6,height+2400);
+     scrollTo(0,document.documentElement.scrollHeight);
+     const before=tail.getBoundingClientRect().top;
+     EReadContinuous.height(6,height);
+     return {before,after:tail.getBoundingClientRect().top};
+   });
+   assert.equal(position.after,position.before);
+   return position;
  });
 }catch(error){
  console.log(JSON.stringify(await page.evaluate(()=>({events:window.events,scroll:scrollY,frames:Array.from(document.querySelectorAll('iframe')).map(f=>({src:f.src,height:f.offsetHeight,ready:f.contentDocument?.readyState,reader:!!f.contentWindow?.ERead,text:f.contentDocument?.body?.textContent.slice(-180)}))})),null,2));

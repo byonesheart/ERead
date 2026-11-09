@@ -37,7 +37,8 @@ internal fun EbookContinuousSurface(
     onManualStart: () -> Unit, onManualEnd: () -> Unit, onSelectionActive: (Boolean) -> Unit,
     onAction: (ReaderSelectedPassage, AnnotationKind) -> Unit, onEdit: ((ReaderSelectedPassage) -> Unit)?,
     onRole: ((ReaderSelectedPassage) -> Unit)?, onAnnotation: (List<String>, Rect) -> Unit,
-    onFootnote: (SourceFootnote, Rect) -> Unit, session: EbookReaderSession?, onPageTap: ((Float, Float) -> Unit)? = null
+    onFootnote: (SourceFootnote, Rect) -> Unit, session: EbookReaderSession?, onPageTap: ((Float, Float) -> Unit)? = null,
+    onImageViewer: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -57,6 +58,7 @@ internal fun EbookContinuousSurface(
     val latestViewport by rememberUpdatedState(onViewport)
     val latestTap by rememberUpdatedState(onTap)
     val latestPageTap by rememberUpdatedState(onPageTap)
+    val latestImageViewer by rememberUpdatedState(onImageViewer)
     val latestManualStart by rememberUpdatedState(onManualStart)
     val latestManualEnd by rememberUpdatedState(onManualEnd)
     val latestSelection by rememberUpdatedState(onSelectionActive)
@@ -178,6 +180,7 @@ internal fun EbookContinuousSurface(
                     })
                 }
                 "tap" -> latestPageTap?.invoke(event.optDouble("x", .5).toFloat(), event.optDouble("y", .5).toFloat()) ?: latestTap()
+                "imageView" -> { selected = null; latestSelection(false); latestImageViewer(event.optBoolean("open")) }
                 "manualStart" -> { selected = null; latestManualStart() }
                 "manualEnd" -> latestManualEnd()
                 "selection" -> documents[index]?.first?.canonicalText?.let { text ->

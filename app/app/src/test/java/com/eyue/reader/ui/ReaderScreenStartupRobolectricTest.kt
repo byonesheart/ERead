@@ -12,6 +12,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalContext
+import androidx.activity.ComponentActivity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.text.TextLayoutResult
@@ -62,6 +64,7 @@ class ReaderScreenStartupRobolectricTest {
     private data class Position(val chapter: Int, val offset: Int, val progress: Float)
     private val position = AtomicReference<Position?>()
     private var windowHeight = 0
+    private var hostActivity: ComponentActivity? = null
     private var audioService: ServiceController<ReaderAudioService>? = null
 
     @Test fun repeatedModeChangesKeepTheSameLogicalReadingPosition() {
@@ -274,6 +277,28 @@ class ReaderScreenStartupRobolectricTest {
         compose.onNodeWithTag("reader_body").assertIsDisplayed()
         compose.onNodeWithContentDescription("漫画或 PDF 页面").assertIsDisplayed()
         compose.onNodeWithText("这一页读取失败", substring = true).assertDoesNotExist()
+        val page = compose.onNodeWithTag("reader_image_0_0")
+        val bounds = page.fetchSemanticsNode().boundsInRoot
+        val previous = position.get()
+        page.performTouchInput { doubleClick(center) }
+        compose.onNodeWithTag("reader_image_viewer").assertIsDisplayed()
+        compose.runOnUiThread { requireNotNull(hostActivity).onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithTag("reader_image_viewer").assertDoesNotExist()
+        assertEquals(bounds, page.fetchSemanticsNode().boundsInRoot)
+        assertEquals(previous, position.get())
+        page.performTouchInput {
+            down(0, center - Offset(20f, 0f))
+            down(1, center + Offset(20f, 0f))
+            updatePointerTo(0, center - Offset(48f, 0f))
+            updatePointerTo(1, center + Offset(48f, 0f))
+            move()
+            up(1)
+            up(0)
+        }
+        compose.onNodeWithTag("reader_image_viewer").assertIsDisplayed()
+        compose.onNodeWithText("关闭大图").performClick()
+        assertEquals(bounds, page.fetchSemanticsNode().boundsInRoot)
+        assertEquals(previous, position.get())
     }
 
     @Test fun toolbarPreviousAndNextChapterNavigateTheActualReader() {
@@ -469,6 +494,7 @@ class ReaderScreenStartupRobolectricTest {
         compose.setContent {
             MaterialTheme {
                 windowHeight = LocalWindowInfo.current.containerSize.height
+                hostActivity = LocalContext.current as? ComponentActivity
                 var settings by remember { mutableStateOf(initialSettings.copy(readingMode = mode, showTime = false, showBattery = false)) }
                 val reader: @Composable () -> Unit = {
                     ReaderScreen(book, settings,

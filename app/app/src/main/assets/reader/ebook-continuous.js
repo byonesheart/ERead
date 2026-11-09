@@ -2,7 +2,7 @@
     'use strict';
     const bridge = window.__ERead;
     let options, active = -1, serial = 0, ready = false, frame = 0, manual = false, endTimer;
-    let pending = null, automatic = 0, last = null;
+    let pending = null, automatic = 0, last = null, imageViewerChapter = null;
     let autoScrollFrame = 0, autoScrollSpeed = 0, autoScrollTime = 0, autoScrollRemainder = 0;
     function setAutoScroll(speed) {
         cancelAnimationFrame(autoScrollFrame); autoScrollFrame = 0; autoScrollTime = 0;
@@ -39,8 +39,9 @@
         clearTimeout(endTimer); endTimer = setTimeout(() => { manual = false; send('manualEnd'); schedule(); }, 140);
     }
     function beginManual() {
-        setAutoScroll(0); pending = null;
-        loaded.forEach((item, index) => commandChild(index, {type:'resetReflowAnchor'}));
+        setAutoScroll(0);
+        if (!manual || pending) loaded.forEach((item, index) => commandChild(index, {type:'resetReflowAnchor'}));
+        pending = null;
         if (!manual) { manual = true; send('manualStart'); }
         clearTimeout(endTimer);
         endTimer = setTimeout(() => { manual = false; send('manualEnd'); schedule(); }, 140);
@@ -57,6 +58,7 @@
     function retain(center) {
         active = center;
         for (const [index, value] of loaded) if (Math.abs(index - center) > 1) {
+            if (imageViewerChapter === index) commandChild(index, {type:'closeImageViewer'});
             value.frame?.remove(); loaded.delete(index); send('chapterDiscard', {chapter:index, token:value.token});
         }
         request(center);
@@ -71,12 +73,17 @@
         const row = rows[index], before = row.getBoundingClientRect(), next = Math.max(1, Math.ceil(pixels));
         const delta = next - before.height;
         if (Math.abs(delta) < 1) return;
+        const position = scrollY;
         row.style.height = next + 'px';
         const value = loaded.get(index);
         if (value?.frame) value.frame.style.height = next + 'px';
         // Disable native scroll anchoring; compensate exactly once when a preceding
         // placeholder is replaced or its fonts/images change the chapter height.
-        if (before.bottom <= 1 && delta) { automatic++; scrollBy(0, delta); requestAnimationFrame(() => automatic--); }
+        if (before.bottom <= 1) {
+            // A shrinking document may already clamp scrollY at its new end.
+            // Base the compensation on the position before changing its height.
+            automatic++; scrollTo(0, position + delta); requestAnimationFrame(() => automatic--);
+        }
         schedule();
     }
     function report() {
@@ -124,13 +131,19 @@
         }
         if (value.type === 'viewport') {
             if (!ready || index !== active || pending) return;
+            const rect = rows[index].getBoundingClientRect();
+            if (rect.bottom <= 1 || rect.top > 1) { schedule(); return; }
             last = Object.assign({}, value, {chapter:index, scrolling:manual || value.scrolling});
             bridge.event(JSON.stringify(last)); return;
         }
-        if (value.type === 'manualStart') { setAutoScroll(0); manual = true; pending = null; clearTimeout(endTimer); }
+        if (value.type === 'manualStart') {
+            beginManual();
+            return;
+        }
         if (value.type === 'manualEnd') {
             clearTimeout(endTimer); endTimer = setTimeout(() => { manual = false; send('manualEnd'); schedule(); }, 140); return;
         }
+        if (value.type === 'imageView') imageViewerChapter = value.open ? index : null;
         if (value.type === 'error' && index !== active) {
             item.frame?.remove(); loaded.delete(index); send('chapterDiscard', {chapter:index, token:item.token}); return;
         }
@@ -167,8 +180,11 @@
         if (value.type === 'navigate') navigate(value);
         else if (value.type === 'report') schedule();
         else if (value.type === 'clearSelection') loaded.forEach(item => item.frame?.contentWindow?.getSelection()?.removeAllRanges());
+        else if (value.type === 'closeImageViewer' && imageViewerChapter !== null) commandChild(imageViewerChapter, value);
         else if (value.type === 'autoScroll') setAutoScroll(value.speed);
         else if (value.type === 'move') {
+            pending = null;
+            loaded.forEach((item, index) => commandChild(index, {type:'resetReflowAnchor'}));
             automatic++; scrollBy(0, value.direction * innerHeight * .85);
             requestAnimationFrame(() => { automatic--; schedule(); });
         } else if (value.type === 'resume') {

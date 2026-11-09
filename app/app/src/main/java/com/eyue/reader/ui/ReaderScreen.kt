@@ -190,6 +190,8 @@ internal fun ReaderScreen(
     DisposableEffect(ebookStore) { onDispose { ebookStore?.close() } }
     val ebookController = remember(importedBook.id, ebookStore) { EbookReaderController() }
     var ebookViewport by remember(importedBook.id) { mutableStateOf(EbookViewportState()) }
+    var ebookImageViewerOpen by remember(importedBook.id) { mutableStateOf(false) }
+    var imagePreview by remember(importedBook.id) { mutableStateOf<ReaderImagePreview?>(null) }
     var ebookNavigationChapter by remember(importedBook.id) { mutableStateOf<Int?>(null) }
     var ebookPageCounts by remember(importedBook.id, importedBook.chapters.size) { mutableStateOf(List(importedBook.chapters.size) { 1 }) }
     val layoutState = remember(book.id) { ReaderLayoutSession() }
@@ -593,6 +595,7 @@ internal fun ReaderScreen(
         }
     }
     fun move(direction: Int, preserveToolbar: Boolean = false) {
+        if (ebookImageViewerOpen || imagePreview != null) return
         com.eyue.reader.data.ImportWorkPriority.interaction()
         if (book.chapters.isEmpty() || document == null || layoutState.preparing || layoutState.restoring) return
         highlightQuery = ""
@@ -712,6 +715,13 @@ internal fun ReaderScreen(
             else item.imagePath == imagePath && item.characterOffset == sourceOffset }
         if (showNotes(notes, pointerAnchor)) noteTapHandled = true else tapPageAt(x, y)
     }
+    fun previewImage(preview: ReaderImagePreview) {
+        if (imagePreview == null) {
+            pauseAutoReading()
+            dismissAnnotationBubble()
+        }
+        imagePreview = preview
+    }
     fun imageSelection(sourceChapter: Int, sourcePage: Int) {
         val text = document?.pageText?.getOrNull(sourceChapter)?.getOrNull(sourcePage).orEmpty()
         openSelection(ReaderSelectedPassage(sourceChapter, sourcePage, 0, text.length, text.take(180), raster = true), AnnotationKind.NOTE)
@@ -723,7 +733,7 @@ internal fun ReaderScreen(
     }
     fun followSpeech(segment: ReaderSpeechSegment, offset: Int) {
         spokenLocation = segment to offset
-        if (speechDetached || speechSyncPending || manualDrag) return
+        if (speechDetached || speechSyncPending || manualDrag || ebookImageViewerOpen || imagePreview != null) return
         val loadedDocument = document ?: return
         speechOwnsPosition = speech.playing.value
         if (selectedPassage != null || tappedNoteIds.isNotEmpty() || tappedSourceFootnote != null || activeTextSelections.isNotEmpty()) {
@@ -1003,6 +1013,9 @@ internal fun ReaderScreen(
         tappedNoteIds.isEmpty() && tappedSourceFootnote == null && speechError == null) {
         if (panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS) panel = null
         else if (chromeVisible) chromeVisible = false else { stopSpeech(); onClose() }
+    }
+    BackHandler(enabled = imagePreview != null || ebookImageViewerOpen) {
+        if (imagePreview != null) imagePreview = null else ebookController.closeImageViewer()
     }
     DisposableEffect(view, settings.keepScreenOn) {
         val previous = view.keepScreenOn
@@ -1489,6 +1502,10 @@ internal fun ReaderScreen(
                                 }
                             }
                         }, onTap = ::tapPage, onPageTap = { x, y -> tapPageAt(x, y) },
+                        onImageViewer = { open ->
+                            ebookImageViewerOpen = open
+                            if (open) { chromeVisible = false; pauseAutoReading(); dismissAnnotationBubble() }
+                        },
                         onManualStart = { pauseAutoReading(); highlightQuery = ""; manualDrag = true; speechPageMoved() },
                         onManualEnd = { manualDrag = false },
                         onChapterStep = { direction ->
@@ -1527,7 +1544,7 @@ internal fun ReaderScreen(
                                 onPageTap = { x, y -> tapImage(sourceChapter, index, x = x, y = y) }, pdfCrop = settings.pdfCrop,
                                 modifier = Modifier.testTag("reader_image_${sourceChapter}_$index"),
                                 speechOffset = pdfSpeechOffset(sourceChapter, index), speechText = renderDocument.pageText.getOrNull(sourceChapter)?.getOrNull(index).orEmpty(),
-                                einkMode = einkMode)
+                                einkMode = einkMode, onImagePreview = ::previewImage)
                         } else if (sourceChapter !in renderDocument.readyChapters) items(
                             count = renderDocument.scrollItemCounts.getOrElse(sourceChapter) { 1 }, key = { "$sourceChapter:$it" }) {
                             LaunchedEffect(renderStore, sourceChapter, renderGeneration) {
@@ -1550,7 +1567,8 @@ internal fun ReaderScreen(
                                 ReaderImagePage(PageSource(image.path), textWidth, false, foreground,
                                     onTap = { tapImage(sourceChapter, index, page.start, image.path) }, onLongPress = { inlineImageSelection(sourceChapter, index, page) }, markColor = color,
                                     onPageTap = { x, y -> tapImage(sourceChapter, index, page.start, image.path, x, y) },
-                                    modifier = Modifier.then(imageTapObserver).testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode, pdfCrop = settings.pdfCrop)
+                                    modifier = Modifier.then(imageTapObserver).testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode, pdfCrop = settings.pdfCrop,
+                                    onImagePreview = ::previewImage)
                             } else ReaderSelectableText(rememberReaderAnnotatedPage(renderDocument.text.getOrNull(sourceChapter).orEmpty(), page, book.id, sourceChapter, annotations, highlightQuery,
                                 colors.primaryContainer, settings.nightMode, renderDocument.sourceStyles.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
                                 renderChapters.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty()), textStyle, sourceChapter, index, page.start, selectionReset,
@@ -1594,7 +1612,7 @@ internal fun ReaderScreen(
                                 onLongPress = { if (interactive && !holdPagingActive) imageSelection(sourceChapter, sourcePage) }, markColor = color,
                                 modifier = Modifier.padding(readerContentPadding(settings)).testTag("reader_image_${sourceChapter}_$sourcePage"),
                                 speechOffset = pdfSpeechOffset(sourceChapter, sourcePage), speechText = renderDocument.pageText.getOrNull(sourceChapter)?.getOrNull(sourcePage).orEmpty(),
-                                einkMode = einkMode)
+                                einkMode = einkMode, onImagePreview = if (interactive) ::previewImage else null)
                         } else renderPages.getOrNull(sourceChapter)?.getOrNull(sourcePage)?.let { page ->
                             if (page.imageIndex >= 0) {
                                 val image = renderChapters[sourceChapter].inlineImages[page.imageIndex]
@@ -1604,7 +1622,8 @@ internal fun ReaderScreen(
                                     onPageTap = { x, y -> if (interactive) tapImage(sourceChapter, sourcePage, page.start, image.path, x, y) },
                                     onLongPress = { if (interactive && !holdPagingActive) inlineImageSelection(sourceChapter, sourcePage, page) }, markColor = color,
                                     modifier = Modifier.padding(readerContentPadding(settings)).then(imageTapObserver)
-                                        .testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode, pdfCrop = settings.pdfCrop)
+                                        .testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode, pdfCrop = settings.pdfCrop,
+                                    onImagePreview = if (interactive) ::previewImage else null)
                             } else ReaderSelectableText(rememberReaderAnnotatedPage(sourceText, page, book.id, sourceChapter, annotations, highlightQuery,
                                 colors.primaryContainer, settings.nightMode, renderDocument.sourceStyles.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
                                 renderChapters.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty()), textStyle, sourceChapter, sourcePage, page.start, selectionReset,
@@ -1829,6 +1848,7 @@ internal fun ReaderScreen(
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+        imagePreview?.let { ReaderImageViewer(it, { imagePreview = null }, Modifier.matchParentSize()) }
     }
 
     if (speechError != null) AlertDialog(onDismissRequest = { speechSession.clearError(speech) }, title = { Text("朗读失败") },

@@ -192,7 +192,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent(onHistory: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 修复应用内更新下载遇到临时断连时直接结束的问题，支持自动重试和断点续传。\n• 应用内更新实时显示已下载大小、总大小和进度。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 修复 EPUB／MOBI 长插图页的裁切、翻页回跳和连贯滚动位置异常。\n• 阅读图片和 PDF 时支持双击或双指放大进入大图，可拖动查看局部，返回后保留阅读位置。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton(onClick = onHistory, modifier = Modifier.testTag("settings_history_changelog")) { Text("历史更新日志") }
     }

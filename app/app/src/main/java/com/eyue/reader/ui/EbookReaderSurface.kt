@@ -103,6 +103,7 @@ internal class EbookReaderController {
     }
 
     fun clearSelection() { dispatch?.invoke(JSONObject().put("type", "clearSelection")) }
+    fun closeImageViewer() { dispatch?.invoke(JSONObject().put("type", "closeImageViewer")) }
     fun cancelTouch() { dispatch?.invoke(JSONObject().put("type", "cancelTouch")) }
 
     internal fun bind(chapterIndex: Int, continuous: Boolean = false, owner: Any = Any(), callback: (JSONObject) -> Unit) {
@@ -174,14 +175,15 @@ internal fun EbookReaderSurface(
     readContinuousText: (suspend (Int) -> String)? = null,
     preload: Boolean = false,
     retentionCenter: Int = chapterIndex,
-    onPageTap: ((Float, Float) -> Unit)? = null
+    onPageTap: ((Float, Float) -> Unit)? = null,
+    onImageViewer: (Boolean) -> Unit = {}
 ) {
     if (settings.continuousEbookScroll && settings.readingMode == com.eyue.reader.data.ReadingMode.SCROLL &&
         continuousChapters.isNotEmpty() && readContinuousText != null) {
         EbookContinuousSurface(store, continuousChapters, readContinuousText, chapterIndex, initialOffset, initialImagePath,
             settings, annotations, controller, modifier, foreground, einkMode, selectionReset, selectionMenuEnabled,
             searchQuery, spokenRange, chineseConverter, onViewport, onTap, onManualStart, onManualEnd, onSelectionActive,
-            onAction, onEdit, onRole, onAnnotationTap, onFootnote, session, onPageTap)
+            onAction, onEdit, onRole, onAnnotationTap, onFootnote, session, onPageTap, onImageViewer)
         return
     }
     val context = LocalContext.current
@@ -205,6 +207,7 @@ internal fun EbookReaderSurface(
     val latestViewport by rememberUpdatedState(onViewport)
     val latestTap by rememberUpdatedState(onTap)
     val latestPageTap by rememberUpdatedState(onPageTap)
+    val latestImageViewer by rememberUpdatedState(onImageViewer)
     val latestManualStart by rememberUpdatedState(onManualStart)
     val latestManualEnd by rememberUpdatedState(onManualEnd)
     val latestChapterStep by rememberUpdatedState(onChapterStep)
@@ -359,6 +362,7 @@ internal fun EbookReaderSurface(
                             })
                         }
                         "tap" -> latestPageTap?.invoke(event.optDouble("x", .5).toFloat(), event.optDouble("y", .5).toFloat()) ?: latestTap()
+                        "imageView" -> { selected = null; latestSelectionActive(false); latestImageViewer(event.optBoolean("open")) }
                         "turn" -> browser.turnPage(event.optInt("page"), event.optInt("direction"),
                             runCatching { PageTurnStyle.valueOf(event.optString("style")) }.getOrDefault(PageTurnStyle.SLIDE))
                         "manualStart" -> { selected = null; latestManualStart() }
