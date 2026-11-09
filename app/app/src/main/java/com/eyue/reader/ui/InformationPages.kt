@@ -192,7 +192,7 @@ internal fun openAuthorLink(context: Context, url: String) {
 @Composable internal fun CurrentChangelogContent(onHistory: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 修复 EPUB／MOBI 长插图页的裁切、翻页回跳和连贯滚动位置异常。\n• 阅读图片和 PDF 时支持双击或双指放大进入大图，可拖动查看局部，返回后保留阅读位置。", style = MaterialTheme.typography.bodyMedium)
+        Text("• 修复 WebView 翻页位置被重置后从插图回跳章首，以及整页插图在分栏中裁切的问题。\n• 应用内更新支持系统 HTTP 代理，临时失败后使用 HTTP/1.1 分段续传，显示连接阶段和实时速度，并提供浏览器下载入口。", style = MaterialTheme.typography.bodyMedium)
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton(onClick = onHistory, modifier = Modifier.testTag("settings_history_changelog")) { Text("历史更新日志") }
     }

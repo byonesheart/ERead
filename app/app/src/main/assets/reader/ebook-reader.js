@@ -80,6 +80,7 @@
     const pageBoundary = document.createElement('i');
     pageBoundary.id = 'eread-page-boundary';
     let contentPages = 1;
+    let pagedPosition = null;
     const nodeEntries = new WeakMap();
     const sourceFontRatios = new Set();
     const textByParent = new Map(), visibleTextParents = new Set();
@@ -223,7 +224,21 @@
     }
     function pageHorizontal() { return config.mode === 'PAGED' && !config.vertical; }
     function pageStride() { return pageHorizontal() ? innerWidth / (config.dual ? 2 : 1) : viewBounds().height; }
-    function pageIndex() { return Math.max(0, Math.round((pageHorizontal() ? scrollX : scrollY) / pageStride())); }
+    function pageIndex() {
+        return config.mode !== 'SCROLL' && pagedPosition !== null ? pagedPosition :
+            Math.max(0, Math.round((pageHorizontal() ? scrollX : scrollY) / pageStride()));
+    }
+    function scrollToPage(page) {
+        pagedPosition = page;
+        const target = page * pageStride();
+        scrollTo(pageHorizontal() ? target : 0, pageHorizontal() ? 0 : target);
+    }
+    function keepPagedViewport() {
+        if (config.mode === 'SCROLL' || pagedPosition === null || !getSelection().isCollapsed) return;
+        const horizontal = pageHorizontal(), target = pagedPosition * pageStride();
+        if (horizontal ? Math.abs(scrollX - target) > .5 || scrollY : Math.abs(scrollY - target) > .5 || scrollX)
+            scrollToPage(pagedPosition);
+    }
     function pageCount() {
         if (continuousHost) return Math.max(1, Math.ceil(document.body.scrollHeight / pageStride()));
         if (config.mode !== 'SCROLL') return contentPages;
@@ -513,6 +528,7 @@
     }
     function report(force) {
         if (!started || pageAnimation || pageTransition || touch?.dragging) return;
+        keepPagedViewport();
         const now = performance.now();
         if (!force && now - lastBridgeReport < 80) { drawDecorations(); return; }
         lastBridgeReport = now;
@@ -535,16 +551,18 @@
     function moveToPage(page) {
         finishPageAnimation();
         const span = pageHorizontal() && config.dual ? 2 : 1;
-        const target = Math.floor(Math.max(0, Math.min(pageCount() - 1, page)) / span) * span * pageStride();
+        const target = Math.floor(Math.max(0, Math.min(pageCount() - 1, page)) / span) * span;
         automatic = true;
-        scrollTo(pageHorizontal() ? target : 0, pageHorizontal() ? 0 : target);
+        scrollToPage(target);
         requestAnimationFrame(function () { automatic = false; report(true); });
     }
     function navigate(command, reflow) {
         if (!reflow) reflowAnchor = null;
         finishPageAnimation();
         const targetImage = command.imageIndex === undefined ?
-            command.image && images.find(image => image.path === command.image) : images[command.imageIndex];
+            command.image && images.reduce((nearest, image) => image.path === command.image &&
+                (!nearest || Math.abs(image.offset - (command.offset || 0)) < Math.abs(nearest.offset - (command.offset || 0))) ?
+                image : nearest, null) : images[command.imageIndex];
         const range = targetImage ? null : rangeFor(command.offset || 0, Math.min(canonical.length, (command.offset || 0) + 1));
         const rect = targetImage ? imageBounds(targetImage) : range.getBoundingClientRect();
         navigationAnchor = {offset: command.offset || 0, image: command.image, imageIndex: command.imageIndex};
@@ -589,7 +607,7 @@
             const previous = pageTransition; pageTransition = null;
             previous.animations.forEach(animation => animation.cancel());
             previous.transition.skipTransition(); automatic = false;
-            if (previous.drag && previous.commit !== true) scrollTo(previous.origin * pageStride(), 0);
+            scrollToPage(previous.drag && previous.commit !== true ? previous.origin : previous.page);
         }
         if (!pageAnimation) return;
         const previous = pageAnimation; pageAnimation = null; previous.cancel();
@@ -605,7 +623,7 @@
         pageTransition = state; automatic = true;
         state.transition = document.startViewTransition(function () {
             if (pageTransition !== state) return;
-            scrollTo(page * pageStride(), 0);
+            scrollToPage(page);
         });
         state.transition.ready.then(function () {
             if (pageTransition !== state) return;
@@ -640,7 +658,7 @@
         state.transition.finished.then(function () {
             state.animations.forEach(animation => animation.cancel());
             if (pageTransition !== state) return;
-            if (state.drag && !state.commit) scrollTo(state.origin * pageStride(), 0);
+            if (state.drag && !state.commit) scrollToPage(state.origin);
             pageTransition = null; automatic = false; report(true);
         });
     }
@@ -684,7 +702,7 @@
         if (commit && outside) send('chapterStep', {direction:previous.edge});
         else {
             const shift = commit ? (previous.target - previous.origin) * pageStride() : 0;
-            if (commit) scrollTo(previous.target * pageStride(), 0);
+            if (commit) scrollToPage(previous.target);
             automatic = true;
             const animation = document.body.animate([
                 {transform:`translateX(${offset + shift}px)`}, {transform:'translateX(0)'}
@@ -704,13 +722,13 @@
     function animatePage(page) {
         finishPageAnimation();
         const horizontal = pageHorizontal(), before = horizontal ? scrollX : scrollY, span = horizontal && config.dual ? 2 : 1;
-        const target = Math.floor(Math.max(0, Math.min(pageCount() - 1, page)) / span) * span * pageStride();
+        const target = Math.floor(Math.max(0, Math.min(pageCount() - 1, page)) / span) * span;
         automatic = true;
-        scrollTo(horizontal ? target : 0, horizontal ? 0 : target);
+        scrollToPage(target);
         // One existing column flow, composited by Chromium. No bitmap readback,
         // JavaScript-interface roundtrip, or wait for an Android drawing callback.
         const animation = document.body.animate([
-            {transform:`translate${horizontal ? 'X' : 'Y'}(${target - before}px)`}, {transform:'translate(0)'}
+            {transform:`translate${horizontal ? 'X' : 'Y'}(${target * pageStride() - before}px)`}, {transform:'translate(0)'}
         ], {duration:180, easing:'cubic-bezier(.2,.65,.3,1)'});
         animation.id = 'eread-page-turn'; pageAnimation = animation;
         if (overlay) overlay.style.visibility = 'hidden';
@@ -738,6 +756,7 @@
         const anchor = reflowAnchor || ((old && navigationAnchor && (navigationAnchor.image || Array.from(rangeFor(navigationAnchor.offset,
             Math.min(canonical.length, navigationAnchor.offset + 1)).getClientRects()).some(visible))) ? navigationAnchor : old);
         if (anchor && !reflowAnchor) reflowAnchor = {...anchor};
+        if (next.mode === 'SCROLL' || next.mode !== config.mode || next.vertical !== config.vertical) pagedPosition = null;
         config = next;
         if (continuousHost) setPublicationViewport();
         if (activeFont !== font) {
@@ -786,8 +805,18 @@
             ${!config.authorCss ? 'h1,h2,h3 { break-after:avoid; break-inside:avoid; }' : ''}
             ${config.eink ? 'body * { background-color:transparent!important; }' : ''}
             img,svg,image,video { max-width:100%!important; max-height:${height}px${scrolling ? '' : '!important'}; object-fit:contain; break-inside:avoid; }
-            ${scrolling ? '' : `[data-eread-image-page] { max-height:${height}px!important; box-sizing:border-box!important; break-inside:avoid; }
-                body [data-eread-image-page] :is(img,svg) { max-height:${height}px!important; }`}
+            ${scrolling ? '' : `body [data-eread-image-page] { display:block!important;position:relative!important;
+                width:100%!important;height:${height}px!important;min-height:0!important;max-height:${height}px!important;
+                box-sizing:border-box!important;margin:0!important;padding:0!important;overflow:hidden!important;
+                -webkit-column-break-inside:avoid;break-inside:avoid; }
+                body [data-eread-image-page="break"] { -webkit-column-break-before:always;-webkit-column-break-after:always;
+                break-before:column!important;break-after:column!important; }
+                body [data-eread-image-page] > img, body [data-eread-image-page] > svg,
+                body [data-eread-image-page] > picture { position:absolute!important;inset:0!important;top:0!important;left:0!important;
+                bottom:0!important;right:0!important;margin:auto!important;padding:0!important;max-width:100%!important;
+                max-height:100%!important;width:auto!important;height:auto!important;object-fit:contain!important; }
+                body [data-eread-image-page] > picture { display:flex!important;align-items:center!important;justify-content:center!important; }
+                body [data-eread-image-page] > picture > img { max-height:100%!important;max-width:100%!important; }`}
             table { max-width:100%; } a { color:inherit; } a[href] { text-decoration:underline; }
             #eread-overlays { position:${continuousHost ? 'absolute' : 'fixed'}!important; inset:0!important; padding:0!important; margin:0!important; pointer-events:none!important;
                 z-index:2147483646!important; width:100vw!important; height:100vh!important; columns:auto!important; }
@@ -884,9 +913,11 @@
     function alignPagedSelection() {
         if (config.mode !== 'PAGED' || config.vertical || continuousHost || pageAnimation || pageTransition || touch?.dragging) return;
         const span = config.dual ? 2 : 1;
-        const page = Math.max(0, Math.min(pageCount() - 1, Math.round(scrollX / (pageStride() * span)) * span));
+        const page = Math.max(0, Math.min(pageCount() - 1, getSelection().isCollapsed && pagedPosition !== null ?
+            pagedPosition : Math.round(scrollX / (pageStride() * span)) * span));
         const target = page * pageStride();
-        if (Math.abs(scrollX - target) > .5 || scrollY !== 0) scrollTo(target, 0);
+        pagedPosition = page;
+        if (Math.abs(scrollX - target) > .5 || scrollY !== 0) scrollToPage(page);
     }
     function selection() {
         clearTimeout(selectionTimer);
@@ -1015,9 +1046,10 @@
                 const parent = (node.closest('picture') || node).parentElement;
                 if (!parent || parent === document.body || parent.textContent.trim()) continue;
                 const style = getComputedStyle(parent);
-                if (parent.children.length === 1 && (style.display.includes('flex') ||
-                    /^(page|always|column)$/.test(style.breakBefore) || /^(page|always|column)$/.test(style.breakAfter)))
-                    parent.dataset.ereadImagePage = '1';
+                const pageBreak = /^(page|always|column)$/.test(style.breakBefore) || /^(page|always|column)$/.test(style.breakAfter);
+                if (parent.children.length === 1 && (pageBreak ||
+                    style.display.includes('flex') && Number.parseFloat(style.height) >= viewBounds().height * .65))
+                    parent.dataset.ereadImagePage = pageBreak ? 'break' : 'fit';
             }
             const resourceReady = function () {
                 if (!started) return;
@@ -1027,8 +1059,8 @@
                 if (continuousHost) { measureChapter(); report(true); return; }
                 fitPageBoundary();
                 const anchor = reflowAnchor || navigationAnchor;
-                if (anchor) navigate(anchor, true);
-                else if (config.mode !== 'SCROLL') moveToPage(page);
+                if (config.mode !== 'SCROLL') moveToPage(page);
+                else if (anchor) navigate(anchor, true);
                 else report(true);
             };
             nodes.forEach(node => node.addEventListener('load', resourceReady));
@@ -1091,7 +1123,7 @@
     window.addEventListener('scroll', function () {
         // WebView can scroll a hidden axis when focusing or revealing a replaced element.
         if (continuousHost && (scrollX || scrollY)) scrollTo(0, 0);
-        else if (pageHorizontal() && scrollY) scrollTo(scrollX, 0);
+        else if (!pageAnimation && !pageTransition && !touch?.dragging) keepPagedViewport();
         if (!automatic && touch) beginManual();
         schedule(); if (manual) endManual();
     }, {passive:true});

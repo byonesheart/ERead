@@ -44,8 +44,10 @@ import com.eyue.reader.data.AppUpdateResult
 import com.eyue.reader.data.UPDATE_READY_NOTIFICATION
 import com.eyue.reader.data.UpdateDownload
 import com.eyue.reader.data.UpdateDownloadStatus
+import com.eyue.reader.data.safeUpdateLink
 import com.eyue.reader.data.updateApk
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 internal data class UpdateDownloadControls(
@@ -182,6 +184,13 @@ internal val LocalUpdateDownloadControls = compositionLocalOf<UpdateDownloadCont
     val task = status.download
     val context = LocalContext.current
     val progress = status.progress
+    var recentRate by remember(status.work?.progress, status.running) { mutableStateOf(status.rate) }
+    LaunchedEffect(status.work?.progress, status.running) {
+        if (recentRate != null) {
+            delay(2_500)
+            recentRate = null
+        }
+    }
     Column(Modifier.fillMaxWidth().testTag("update_download_status"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("E阅 ${task.versionName}", style = MaterialTheme.typography.titleSmall)
         Text(when {
@@ -191,14 +200,15 @@ internal val LocalUpdateDownloadControls = compositionLocalOf<UpdateDownloadCont
             status.work?.state == WorkInfo.State.ENQUEUED -> "等待网络或任务启动"
             status.work?.state == WorkInfo.State.FAILED -> "下载未完成，请继续下载"
             status.running && progress == 1f -> "正在校验安装包…"
-            status.running -> "正在下载…"
+            status.running -> status.phase ?: "正在下载…"
             else -> "下载已暂停"
         }, style = MaterialTheme.typography.bodySmall)
         if (!status.ready && (status.bytes > 0 || status.total != null)) {
             val received = Formatter.formatShortFileSize(context, status.bytes)
             val size = status.total?.let { " / ${Formatter.formatShortFileSize(context, it)}" }.orEmpty()
             val percent = status.total?.let { " · ${status.bytes * 100 / it}%" }.orEmpty()
-            Text("已下载 $received$size$percent", Modifier.testTag("update_download_bytes"),
+            val rate = recentRate?.let { " · ${Formatter.formatShortFileSize(context, it)}/s" }.orEmpty()
+            Text("已下载 $received$size$percent$rate", Modifier.testTag("update_download_bytes"),
                 style = MaterialTheme.typography.bodySmall)
         }
         val bar = Modifier.fillMaxWidth().testTag("update_download_progress")
@@ -213,6 +223,9 @@ internal val LocalUpdateDownloadControls = compositionLocalOf<UpdateDownloadCont
             TextButton({ controls.cancel(task) }, enabled = !controls.busy) {
                 Text(if (status.ready) "删除安装包" else "取消下载")
             }
+        }
+        if (!status.ready && safeUpdateLink(task.url, download = true)) {
+            TextButton({ openAuthorLink(context, task.url) }) { Text("在浏览器下载") }
         }
     }
 }

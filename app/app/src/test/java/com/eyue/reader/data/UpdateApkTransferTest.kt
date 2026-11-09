@@ -113,6 +113,43 @@ class UpdateApkTransferTest {
         }
     }
 
+    @Test fun boundedRetryFollowsGitHubAndKeepsReadingShortRangesFromTheFileServer() = runBlocking {
+        val partial = folder.newFile()
+        val etag = folder.newFile()
+        val requests = mutableListOf<Request>()
+        val client = client { request ->
+            requests += request
+            val range = request.header("Range")
+            if (request.url.host == "github.com") response(request, 302, "")
+                .header("Location", "https://release-assets.githubusercontent.com/package").build()
+            else when (range) {
+                "bytes=0-3" -> response(request, 206, "abc").header("Content-Range", "bytes 0-2/7")
+                    .header("ETag", "\"same\"").build()
+                "bytes=3-6" -> response(request, 206, "defg").header("Content-Range", "bytes 3-6/7")
+                    .header("ETag", "\"same\"").build()
+                else -> error("Unexpected range $range")
+            }
+        }
+        val progress = mutableListOf<Pair<Long, Long>>()
+        val hosts = mutableListOf<String>()
+        UpdateApkTransfer(client, partial, etag, rangeSize = 4).download(url, onConnecting = { hosts += it }) { bytes, total ->
+            progress += bytes to total
+        }
+        assertEquals(listOf("GitHub", "GitHub 文件服务器", "GitHub 文件服务器"), hosts)
+        assertEquals(listOf("bytes=0-3", "bytes=0-3", "bytes=3-6"), requests.map { it.header("Range") })
+        assertEquals("\"same\"", requests.last().header("If-Range"))
+        assertEquals("abcdefg", partial.readText())
+        assertEquals(listOf(0L, 3L, 3L, 7L), progress.map { it.first })
+        assertTrue(progress.all { it.second == 7L })
+    }
+
+    @Test fun systemProxyExclusionsMatchHostsWithoutAccidentallyExcludingGithubAssets() {
+        assertTrue(updateProxyExcludes("Localhost", "localhost"))
+        assertTrue(updateProxyExcludes("git.internal.example", "*.internal.example"))
+        assertFalse(updateProxyExcludes("release-assets.githubusercontent.com", "github.com"))
+        assertFalse(updateProxyExcludes("github.com.example", "github.com"))
+    }
+
     private fun client(handle: (Request) -> Response) = OkHttpClient.Builder().followRedirects(false)
         .addInterceptor { handle(it.request()) }.build()
 

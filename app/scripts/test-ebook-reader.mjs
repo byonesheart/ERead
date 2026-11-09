@@ -544,6 +544,10 @@ try {
     const rect = await page.locator('#long-image').boundingBox();
     assert.ok(onImage.page > 1 && onImage.images.includes(imageIdentity));
     assert.ok(rect.y >= 18 && rect.y + rect.height <= 742.5,JSON.stringify(rect));
+    // Android WebView can reveal a focused element by resetting the hidden scroll axis.
+    await page.evaluate(() => scrollTo(0, 0));
+    assert.equal((await viewport()).page,onImage.page);
+    assert.equal(await page.evaluate(() => scrollX),onImage.page * 392);
     await command({type:'move',direction:-1});
     const previous = await viewport();
     assert.equal(previous.page,onImage.page - 1);

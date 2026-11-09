@@ -37,6 +37,8 @@ internal data class UpdateDownloadStatus(val download: UpdateDownload, val work:
     val ready get() = work?.state == WorkInfo.State.SUCCEEDED
     val total get() = work?.progress?.getLong("total", -1)?.takeIf { it > 0 && it >= bytes }
     val progress get() = total?.let { bytes.toFloat() / it }
+    val phase get() = work?.progress?.getString("phase")
+    val rate get() = work?.progress?.getLong("rate", 0)?.takeIf { it > 0 && work.state == WorkInfo.State.RUNNING }
     val error get() = work?.outputData?.getString("error")
 }
 
