@@ -1,11 +1,12 @@
 {
-  "versionCode": 90,
-  "versionName": "1.11.27-beta.5",
+  "versionCode": 92,
+  "versionName": "1.11.27-beta.6",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.27-beta.5",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.27-beta.5/ERead-1.11.27-beta.5-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.27-beta.6",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.27-beta.6/ERead-1.11.27-beta.6-release.apk",
   "mirrors": [],
   "changelog": [
-    "修复 EPUB／MOBI 反向翻页从插图回跳章首、跨章时落在上一章首页的问题，并减少切章时的重复转换和排版。"
+    "优化 EPUB／MOBI 长章节的左右翻页，减少滑动动画卡顿。",
+    "更多功能请自行体验。"
   ]
 }
