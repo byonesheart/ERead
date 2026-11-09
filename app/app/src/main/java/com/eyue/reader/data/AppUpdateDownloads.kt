@@ -2,6 +2,7 @@ package com.eyue.reader.data
 
 import android.app.NotificationManager
 import android.content.Context
+import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -30,10 +32,11 @@ internal data class UpdateDownload(
     val token: UUID, val workId: UUID, val versionCode: Int, val versionName: String, val url: String
 )
 
-internal data class UpdateDownloadStatus(val download: UpdateDownload, val work: WorkInfo?) {
+internal data class UpdateDownloadStatus(val download: UpdateDownload, val work: WorkInfo?, val bytes: Long) {
     val running get() = work?.state in setOf(WorkInfo.State.ENQUEUED, WorkInfo.State.RUNNING, WorkInfo.State.BLOCKED)
     val ready get() = work?.state == WorkInfo.State.SUCCEEDED
-    val progress get() = work?.progress?.getInt("percent", -1)?.takeIf { it in 0..100 }
+    val total get() = work?.progress?.getLong("total", -1)?.takeIf { it > 0 && it >= bytes }
+    val progress get() = total?.let { bytes.toFloat() / it }
     val error get() = work?.outputData?.getString("error")
 }
 
@@ -47,8 +50,12 @@ internal class AppUpdateDownloads private constructor(context: Context) {
     private val commands = Mutex()
     val status = current.flatMapLatest { task ->
         if (task == null) flowOf(null)
-        else manager.getWorkInfoByIdFlow(task.workId).map { UpdateDownloadStatus(task, it) }
-    }
+        else manager.getWorkInfoByIdFlow(task.workId).map { work ->
+            val bytes = work?.progress?.getLong("bytes", -1)?.takeIf { it >= 0 }
+                ?: updatePartial(context, task.token).length()
+            UpdateDownloadStatus(task, work, bytes)
+        }
+    }.flowOn(Dispatchers.IO)
 
     suspend fun start(update: AppUpdateResult) = command {
         val url = requireNotNull(update.downloadUrl)
@@ -102,6 +109,7 @@ internal class AppUpdateDownloads private constructor(context: Context) {
         val request = OneTimeWorkRequestBuilder<AppUpdateDownloadWorker>()
             .setId(task.workId)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.SECONDS)
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .keepResultsForAtLeast(7, TimeUnit.DAYS)
             .setInputData(workDataOf("token" to task.token.toString(), "versionCode" to task.versionCode,

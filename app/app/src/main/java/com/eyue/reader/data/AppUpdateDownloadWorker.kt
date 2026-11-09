@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.SystemClock
+import android.text.format.Formatter
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
@@ -62,13 +63,12 @@ class AppUpdateDownloadWorker(context: Context, parameters: WorkerParameters) : 
                 if (!apk.isFile) {
                     check(partial.parentFile?.let { it.isDirectory || it.mkdirs() } == true)
                     val transfer = UpdateApkTransfer(client, partial, etag)
-                    var reportedAt = 0L
+                    var reportedAt = -500L
                     transfer.download(url) { bytes, total ->
                         val now = SystemClock.elapsedRealtime()
                         if (now - reportedAt >= 500 || bytes == total) {
-                            val percent = if (total > 0) (bytes * 100 / total).toInt() else -1
-                            setProgress(workDataOf("percent" to percent))
-                            post(noticeId, progressNotification(percent))
+                            setProgress(workDataOf("bytes" to bytes, "total" to total))
+                            post(noticeId, progressNotification(bytes, total))
                             reportedAt = now
                         }
                     }
@@ -88,7 +88,9 @@ class AppUpdateDownloadWorker(context: Context, parameters: WorkerParameters) : 
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: UpdateDownloadException) {
-                Result.failure(workDataOf("error" to failure.message))
+                currentCoroutineContext().ensureActive()
+                if (failure.retryable && runAttemptCount < 3) Result.retry()
+                else Result.failure(workDataOf("error" to failure.message))
             } catch (_: Exception) {
                 Result.failure(workDataOf("error" to "下载未完成，请检查网络或剩余空间后继续"))
             }
@@ -96,7 +98,7 @@ class AppUpdateDownloadWorker(context: Context, parameters: WorkerParameters) : 
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo {
-        val notification = progressNotification(-1)
+        val notification = progressNotification(0, -1)
         return if (Build.VERSION.SDK_INT >= 29) ForegroundInfo(noticeId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         else ForegroundInfo(noticeId, notification)
     }
@@ -111,19 +113,34 @@ class AppUpdateDownloadWorker(context: Context, parameters: WorkerParameters) : 
             .setSmallIcon(android.R.drawable.stat_sys_download).setContentIntent(click)
     }
 
-    private fun progressNotification(percent: Int) = notification()
-        .setContentText(if (percent < 0) "正在下载更新" else "已下载 $percent%")
-        .setProgress(100, percent.coerceAtLeast(0), percent < 0).setOngoing(true).setOnlyAlertOnce(true)
-        .addAction(android.R.drawable.ic_media_pause, "暂停",
-            WorkManager.getInstance(applicationContext).createCancelPendingIntent(id))
-        .build()
+    private fun progressNotification(bytes: Long, total: Long): android.app.Notification {
+        val percent = if (total > 0) (bytes * 100 / total).toInt() else -1
+        return notification()
+            .setContentText(when {
+                percent == 100 -> "正在校验安装包"
+                percent >= 0 -> "已下载 $percent%"
+                bytes > 0 -> "已下载 ${Formatter.formatShortFileSize(applicationContext, bytes)}"
+                else -> "正在连接下载服务器"
+            })
+            .setProgress(100, percent.coerceAtLeast(0), percent < 0).setOngoing(true).setOnlyAlertOnce(true)
+            .addAction(android.R.drawable.ic_media_pause, "暂停",
+                WorkManager.getInstance(applicationContext).createCancelPendingIntent(id))
+            .build()
+    }
 
     private fun post(id: Int, notification: android.app.Notification) {
         try { notifications.notify(id, notification) } catch (_: SecurityException) { }
     }
 }
 
-internal class UpdateDownloadException(message: String) : IOException(message)
+internal class UpdateDownloadException(message: String, val retryable: Boolean = false, cause: IOException? = null) :
+    IOException(message, cause)
+
+private inline fun <T> readUpdateNetwork(action: () -> T): T = try {
+    action()
+} catch (failure: IOException) {
+    throw UpdateDownloadException("下载连接中断，请检查网络后继续下载", retryable = true, cause = failure)
+}
 
 internal class UpdateApkTransfer(private val client: OkHttpClient, private val partial: File, private val etagFile: File) {
     private val activeCall = AtomicReference<Call?>()
@@ -156,7 +173,7 @@ internal class UpdateApkTransfer(private val client: OkHttpClient, private val p
             val call = client.newCall(request.build())
             activeCall.set(call)
             currentCoroutineContext().ensureActive()
-            val response = call.execute()
+            val response = readUpdateNetwork { call.execute() }
             if (response.code !in setOf(301, 302, 303, 307, 308)) return response
             val next = response.use { it.header("Location")?.let(it.request.url::resolve) }
             if (next == null || !next.isHttps || next.port != 443 || next.username.isNotEmpty() || next.password.isNotEmpty() ||
@@ -169,8 +186,12 @@ internal class UpdateApkTransfer(private val client: OkHttpClient, private val p
     }
 
     private suspend fun receive(response: Response, offset: Long, etag: String?, progress: suspend (Long, Long) -> Unit) {
-        if (response.code != 200 && response.code != 206)
-            throw UpdateDownloadException("GitHub 下载失败（HTTP ${response.code}），请检查网络后继续")
+        if (response.code != 200 && response.code != 206) {
+            val code = response.code
+            val retryable = code == 408 || code == 429 || code in 500..599 ||
+                (response.request.url.host in ASSET_HOSTS && code in setOf(401, 403, 410))
+            throw UpdateDownloadException("GitHub 下载失败（HTTP $code），请检查网络后继续", retryable)
+        }
         val body = response.body ?: throw UpdateDownloadException("GitHub 返回了空安装包")
         val append = response.code == 206
         val newEtag = response.header("ETag")?.takeIf { it.startsWith('"') }
@@ -179,10 +200,10 @@ internal class UpdateApkTransfer(private val client: OkHttpClient, private val p
             val start = range?.groupValues?.get(1)?.toLongOrNull()
             val end = range?.groupValues?.get(2)?.toLongOrNull()
             val size = range?.groupValues?.get(3)?.toLongOrNull()
-            if (offset <= 0 || start != offset || size == null || end != size - 1 ||
+            if (offset <= 0 || start != offset || size == null || size <= offset || end != size - 1 ||
                 (newEtag != null && newEtag != etag)) {
                 etagFile.delete()
-                throw UpdateDownloadException("续传位置校验失败，请继续下载以重新获取安装包")
+                throw UpdateDownloadException("续传位置校验失败，请继续下载以重新获取安装包", retryable = true)
             }
             size
         } else body.contentLength()
@@ -197,7 +218,7 @@ internal class UpdateApkTransfer(private val client: OkHttpClient, private val p
             val buffer = ByteArray(64 * 1024)
             while (true) {
                 currentCoroutineContext().ensureActive()
-                val count = input.read(buffer)
+                val count = readUpdateNetwork { input.read(buffer) }
                 if (count < 0) break
                 bytes += count
                 if (bytes > MAX_APK_BYTES || (total >= 0 && bytes > total))
@@ -206,7 +227,8 @@ internal class UpdateApkTransfer(private val client: OkHttpClient, private val p
                 progress(bytes, total)
             }
         }
-        if (bytes == 0L || (total >= 0 && total != bytes)) throw UpdateDownloadException("安装包下载不完整，请继续下载")
+        if (bytes == 0L || (total >= 0 && total != bytes))
+            throw UpdateDownloadException("安装包下载不完整，请继续下载", retryable = true)
     }
 
     companion object {

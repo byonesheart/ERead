@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.text.format.Formatter
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -179,20 +180,30 @@ internal val LocalUpdateDownloadControls = compositionLocalOf<UpdateDownloadCont
 @Composable internal fun UpdateDownloadPanel(controls: UpdateDownloadControls) {
     val status = controls.status ?: return
     val task = status.download
+    val context = LocalContext.current
+    val progress = status.progress
     Column(Modifier.fillMaxWidth().testTag("update_download_status"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("E阅 ${task.versionName}", style = MaterialTheme.typography.titleSmall)
         Text(when {
             status.ready -> "下载完成"
             status.error != null -> status.error.orEmpty()
+            status.work?.state == WorkInfo.State.ENQUEUED && status.work.runAttemptCount > 0 -> "等待网络或自动重试"
             status.work?.state == WorkInfo.State.ENQUEUED -> "等待网络或任务启动"
-            status.running -> status.progress?.let { "已下载 $it%" } ?: "正在下载…"
+            status.work?.state == WorkInfo.State.FAILED -> "下载未完成，请继续下载"
+            status.running && progress == 1f -> "正在校验安装包…"
+            status.running -> "正在下载…"
             else -> "下载已暂停"
         }, style = MaterialTheme.typography.bodySmall)
-        if (status.running) {
-            val progress = status.progress
-            if (progress == null) LinearProgressIndicator(Modifier.fillMaxWidth())
-            else LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
+        if (!status.ready && (status.bytes > 0 || status.total != null)) {
+            val received = Formatter.formatShortFileSize(context, status.bytes)
+            val size = status.total?.let { " / ${Formatter.formatShortFileSize(context, it)}" }.orEmpty()
+            val percent = status.total?.let { " · ${status.bytes * 100 / it}%" }.orEmpty()
+            Text("已下载 $received$size$percent", Modifier.testTag("update_download_bytes"),
+                style = MaterialTheme.typography.bodySmall)
         }
+        val bar = Modifier.fillMaxWidth().testTag("update_download_progress")
+        if (!status.ready && progress != null) LinearProgressIndicator(progress = { progress }, modifier = bar)
+        else if (status.work?.state == WorkInfo.State.RUNNING) LinearProgressIndicator(bar)
         Row {
             when {
                 status.ready -> TextButton(controls.install, enabled = !controls.busy) { Text("安装更新") }

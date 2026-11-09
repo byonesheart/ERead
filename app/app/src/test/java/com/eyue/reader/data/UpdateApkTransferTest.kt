@@ -5,12 +5,20 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
+import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
+import okio.BufferedSource
+import okio.Source
+import okio.Timeout
+import okio.buffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.net.SocketTimeoutException
 
 class UpdateApkTransferTest {
     @get:Rule val folder = TemporaryFolder()
@@ -51,6 +59,58 @@ class UpdateApkTransferTest {
         assertEquals(UpdateDownloadException::class.java, error?.javaClass)
         assertEquals("abc", partial.readText())
         assertFalse(etag.exists())
+    }
+
+    @Test fun aMidBodyTimeoutIsRetryableAndTheNextAttemptContinuesFromDisk() = runBlocking {
+        val partial = folder.newFile()
+        val etag = folder.newFile()
+        val requests = mutableListOf<Request>()
+        val client = client { request ->
+            requests += request
+            if (request.header("Range") == null) {
+                val body = object : ResponseBody() {
+                    private val input = object : Source {
+                        private var sent = false
+                        override fun read(sink: Buffer, byteCount: Long): Long {
+                            if (sent) throw SocketTimeoutException("Connection stalled")
+                            sent = true
+                            sink.writeUtf8("abc")
+                            return 3
+                        }
+                        override fun timeout() = Timeout.NONE
+                        override fun close() = Unit
+                    }.buffer()
+                    override fun contentType() = null
+                    override fun contentLength() = 6L
+                    override fun source(): BufferedSource = input
+                }
+                response(request, 200, "").body(body).header("ETag", "\"same\"").build()
+            } else response(request, 206, "def").header("Content-Range", "bytes 3-5/6").header("ETag", "\"same\"").build()
+        }
+        val progress = mutableListOf<Pair<Long, Long>>()
+        val transfer = UpdateApkTransfer(client, partial, etag)
+        val failure = runCatching { transfer.download(url) { bytes, total -> progress += bytes to total } }
+            .exceptionOrNull() as UpdateDownloadException
+        assertTrue(failure.retryable)
+        assertEquals("abc", partial.readText())
+        assertEquals(listOf(0L to 6L, 3L to 6L), progress)
+
+        transfer.download(url) { bytes, total -> progress += bytes to total }
+        assertEquals("bytes=3-", requests.last().header("Range"))
+        assertEquals("\"same\"", requests.last().header("If-Range"))
+        assertEquals("abcdef", partial.readText())
+        assertEquals(6L to 6L, progress.last())
+    }
+
+    @Test fun temporaryHttpFailuresCanRetryAndMissingReleaseAssetsDoNot() = runBlocking {
+        val partial = folder.newFile()
+        val etag = folder.newFile()
+        for (code in listOf(429, 503, 404)) {
+            val transfer = UpdateApkTransfer(client { response(it, code, "").build() }, partial, etag)
+            val error = runCatching { transfer.download(url) { _, _ -> } }.exceptionOrNull() as UpdateDownloadException
+            assertEquals(code != 404, error.retryable)
+            assertEquals(0L, partial.length())
+        }
     }
 
     private fun client(handle: (Request) -> Response) = OkHttpClient.Builder().followRedirects(false)
