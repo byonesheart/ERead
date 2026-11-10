@@ -130,7 +130,13 @@ async function open(config = {}, options = {}) {
 }
 
 async function command(value) {
-  await page.evaluate(value => window.ERead.command(value), value);
+  const firstEvent = await page.evaluate(async value => {
+    const first = window.events.length;
+    await window.ERead.command(value);
+    return first;
+  }, value);
+  if (value.type === 'move') await page.waitForFunction(first => window.events.slice(first)
+    .some(event => event.type === 'viewport' || event.type === 'chapterStep'), firstEvent);
   await page.evaluate(() => Promise.all(window.pageTransitions));
     await page.evaluate(() => Promise.all(document.getAnimations().filter(animation => animation.id === 'eread-page-turn')
       .map(animation => animation.finished.catch(() => {}))));
@@ -1079,21 +1085,21 @@ try {
     await open({ mode:'PAGED', turn:'SLIDE' });
     const before = await page.screenshot();
     await page.evaluate(() => ERead.command({type:'move',direction:1}));
-    await page.waitForFunction(()=>document.getAnimations().filter(a=>a.id==='eread-page-turn').length===2);
+    await page.waitForFunction(()=>scrollX > 0 && scrollX < innerWidth);
     const start = await page.evaluate(() => ({
       transform:getComputedStyle(document.body).transform,
-      snapshots:document.getAnimations().filter(a=>a.id==='eread-page-turn').map(a=>a.effect.pseudoElement).sort(),
+      snapshots:window.pageTransitions.length,
       turns:events.filter(e=>e.type==='turn').length
     }));
-    assert.deepEqual(start.snapshots,['::view-transition-new(root)','::view-transition-old(root)']);
+    assert.equal(start.snapshots,0);
     assert.equal(start.transform,'none'); assert.equal(start.turns,0);
-    await page.evaluate(()=>Promise.all(window.pageTransitions));
+    await page.waitForFunction(()=>window.events.some(event=>event.type==='viewport' && event.page===1));
     const completed = await page.screenshot();
     assert.notDeepEqual(completed,before);
     await command({type:'page',page:1});
     assert.deepEqual(await page.screenshot(),completed,'The animation must end on the live target page');
     await page.evaluate(() => { ERead.command({type:'move',direction:1}); ERead.command({type:'move',direction:1}); });
-    await page.evaluate(()=>Promise.all(window.pageTransitions));
+    await page.waitForFunction(()=>window.events.some(event=>event.type==='viewport' && event.page===3));
     assert.equal((await viewport()).page,3);
     assert.equal(await page.evaluate(()=>getComputedStyle(document.body).transform),'none');
     await page.evaluate(() => ERead.command({type:'move',direction:-1}));
@@ -1267,30 +1273,41 @@ try {
       const touch = (type, x) => session.send('Input.dispatchTouchEvent', {type,
         touchPoints:x === undefined ? [] : [{x, y:380}]});
       await touch('touchStart', 386); await touch('touchMove', 235);
-      const offset = () => page.evaluate(() => { const a=document.getAnimations().find(a=>a.playState==='paused'); return a ? -Number(a.currentTime)/Number(a.effect.getTiming().duration)*innerWidth : new DOMMatrix(getComputedStyle(document.body).transform).m41; });
-      await page.waitForFunction(()=>document.getAnimations().some(a=>a.playState==='paused'));
-      const beforeRelease = await offset();
+      const live = turn === 'SLIDE';
+      const offset = origin => page.evaluate(origin => {
+        const a = document.getAnimations().find(a => a.playState === 'paused');
+        return a ? -Number(a.currentTime) / Number(a.effect.getTiming().duration) * innerWidth :
+          -Math.abs(scrollX - origin * innerWidth);
+      }, origin);
+      const waitForDrag = origin => page.waitForFunction(({origin, live}) => live ?
+        scrollX !== origin * innerWidth : document.getAnimations().some(a=>a.playState==='paused'), {origin, live});
+      const finishDrag = async (type, target) => {
+        const first = await page.evaluate(() => window.events.length);
+        await touch(type);
+        await page.waitForFunction(({target, first}) => window.events.slice(first)
+          .some(event => event.type === 'viewport' && event.page === target), {target, first});
+      };
+      await waitForDrag(3);
+      const beforeRelease = await offset(3);
       assert.ok(Math.abs(beforeRelease + 151) < 2, 'Live paper tracks the finger pixel for pixel');
       await touch('touchMove', 190);
-      assert.ok(Math.abs((await offset()) + 196) < 2, 'Subsequent moves keep tracking');
+      assert.ok(Math.abs((await offset(3)) + 196) < 2, 'Subsequent moves keep tracking');
       await touch('touchMove', 270);
-      assert.ok(Math.abs((await offset()) + 116) < 2, 'Reversing the finger moves the same paper back');
-      assert.ok(await page.evaluate(() => document.getAnimations().some(a=>a.playState==='paused')), 'The selected turn effect follows the held gesture');
+      assert.ok(Math.abs((await offset(3)) + 116) < 2, 'Reversing the finger moves the same paper back');
       await page.screenshot({path:path.join(outputDir, 'held-' + turn + '.png')});
-      await touch('touchEnd');
-      await page.waitForFunction(() => !document.getAnimations().length);
+      await finishDrag('touchEnd', 4);
       assert.equal((await viewport()).page, 4);
       await touch('touchStart', 6); await touch('touchMove', 14); await touch('touchEnd');
-      await page.waitForFunction(() => !document.getAnimations().length);
+      // Below the browser's gesture threshold, no new viewport event is required.
+      await page.waitForFunction(() => !document.getAnimations().length && Math.abs(scrollX - 4 * innerWidth) <= 1);
       assert.equal((await viewport()).page, 4, 'A short drag must spring back');
-      await touch('touchStart', 6); await touch('touchMove', 170); await touch('touchCancel');
-      await page.waitForFunction(() => !document.getAnimations().length);
+      await touch('touchStart', 6); await touch('touchMove', 170);
+      await finishDrag('touchCancel', 4);
       assert.equal((await viewport()).page, 4, 'A cancelled grab must retain the original page');
       await touch('touchStart', 6); await touch('touchMove', 170);
-      await page.waitForFunction(()=>document.getAnimations().some(a=>a.playState==='paused'));
-      assert.ok(Math.abs((await offset()) + 164) < 2, 'The current paper also moves right when returning');
-      await touch('touchEnd');
-      await page.waitForFunction(() => !document.getAnimations().length);
+      await waitForDrag(4);
+      assert.ok(Math.abs((await offset(4)) + 164) < 2, 'The current paper also moves right when returning');
+      await finishDrag('touchEnd', 3);
       assert.equal((await viewport()).page, 3, 'Dragging back must reveal the previous page');
       assert.deepEqual(await page.evaluate(() => window.events.filter(e => e.type === 'tap')), []);
       evidence.push({turn, beforeRelease, finalPage:3});

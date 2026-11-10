@@ -648,10 +648,11 @@
         automatic = false;
         if (overlay) overlay.style.visibility = '';
     }
+    function usesPageSnapshots() { return config.turn !== 'SLIDE' && !!document.startViewTransition; }
     function transitionPage(page, direction, dragging) {
         finishPageAnimation();
-        // Animate the two visible page snapshots, not the chapter's column flow.
-        if (!document.startViewTransition) { slidePageViewport(page); return; }
+        // Only effects that fold or cover paper need two captured pages.
+        if (!usesPageSnapshots()) { slidePageViewport(page); return; }
         const state = {page:page, origin:pageIndex(), transition:null, animations:[], drag:!!dragging, progress:0, commit:null};
         pageTransition = state; automatic = true;
         state.transition = document.startViewTransition(function () {
@@ -661,18 +662,6 @@
         state.transition.ready.then(function () {
             if (pageTransition !== state) return;
             const curl = config.turn === 'CURL', forward = direction > 0;
-            if (config.turn === 'SLIDE') {
-                const sign = direction > 0 ? -1 : 1;
-                ['old', 'new'].forEach((kind, index) => {
-                    const animation = document.documentElement.animate([
-                        {transform:`translateX(${index ? -sign * 100 : 0}%)`},
-                        {transform:`translateX(${index ? 0 : sign * 100}%)`}
-                    ], {duration:180, easing:dragging ? 'linear' : 'cubic-bezier(.2,.65,.3,1)',
-                        fill:'both', pseudoElement:'::view-transition-' + kind + '(root)'});
-                    animation.id = 'eread-page-turn';
-                    state.animations.push(animation);
-                });
-            } else {
             const moving = forward ? 'old' : 'new', fixed = forward ? 'new' : 'old';
             const movingPseudo = '::view-transition-' + moving + '(root)';
             const still = document.documentElement.animate([{zIndex:1},{zIndex:1}],
@@ -687,7 +676,6 @@
                 {duration:curl ? 280 : 180, easing:dragging ? 'linear' : 'cubic-bezier(.2,.65,.3,1)', fill:'both', pseudoElement:movingPseudo});
             animation.id = still.id = 'eread-page-turn';
             state.animations.push(animation, still);
-            }
             if (dragging) {
                 state.animations.forEach(animation => { animation.pause(); animation.currentTime = state.progress * Number(animation.effect.getTiming().duration); });
                 if (state.commit !== null) settleEdgeTransition(state, state.commit);
@@ -719,7 +707,8 @@
             beginManual();
             const span = config.dual ? 2 : 1, target = pageIndex() + direction * span;
             touch.origin = pageIndex(); touch.target = target;
-            if (target >= 0 && target < pageCount() && document.startViewTransition) transitionPage(target, direction, true);
+            if (target >= 0 && target < pageCount() && usesPageSnapshots()) transitionPage(target, direction, true);
+            else if (overlay) overlay.style.visibility = 'hidden';
         }
         touch.progress = progress;
         if (pageTransition?.drag) {
@@ -734,14 +723,19 @@
             previous.progress * innerWidth / Math.max(1, Date.now() - previous.time) >= .35);
         if (pageTransition?.drag) { settleEdgeTransition(pageTransition, commit); if (manual) endManual(); return; }
         const outside = previous.target < 0 || previous.target >= pageCount();
-        if (commit && outside) send('chapterStep', {direction:previous.edge});
+        if (commit && outside) {
+            if (overlay) overlay.style.visibility = '';
+            send('chapterStep', {direction:previous.edge});
+        }
         else slidePageViewport(commit ? previous.target : previous.origin);
         if (manual) endManual();
     }
     function slidePageViewport(page) {
         const from = scrollX, to = page * pageStride(), start = performance.now();
-        if (from === to) { moveToPage(page); return; }
-        // Older WebViews can scroll the viewport without transforming the chapter.
+        if (from === to) {
+            if (overlay) overlay.style.visibility = '';
+            moveToPage(page); return;
+        }
         const state = {page:page, frame:0};
         pagedPosition = page;
         pageAnimation = state;
@@ -1072,7 +1066,7 @@
             paragraphObserver = new IntersectionObserver(records => {
                 records.forEach(record => record.isIntersecting && record.intersectionRect.width > 0 && record.intersectionRect.height > 0 ?
                     visibleTextParents.add(record.target) : visibleTextParents.delete(record.target));
-                if (started) schedule();
+                if (started && !pageAnimation && !pageTransition && !touch?.dragging) schedule();
             });
             textByParent.forEach((nodes, parent) => paragraphObserver.observe(parent));
             const nodes = Array.from(document.querySelectorAll('img,svg image'));
@@ -1168,7 +1162,8 @@
     window.addEventListener('scroll', function () {
         // WebView can scroll a hidden axis when focusing or revealing a replaced element.
         if (continuousHost && (scrollX || scrollY)) scrollTo(0, 0);
-        else if (!pageAnimation && !pageTransition && !touch?.dragging) keepPagedViewport();
+        if (pageAnimation || pageTransition || touch?.dragging) return;
+        if (!continuousHost) keepPagedViewport();
         if (!automatic && touch) beginManual();
         schedule(); if (manual) endManual();
     }, {passive:true});
