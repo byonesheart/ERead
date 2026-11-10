@@ -52,7 +52,7 @@ class EbookReaderHtmlRobolectricTest {
             "<style>$css</style></head><body class='book' style='padding:1em'><div class='outer'><table><tr><td>正文</td></tr></table></div></body></html>")
         assertTrustedEnvelope(rendered)
         assertTrue(rendered.contains("<html lang='zh' data-eread-loading>"))
-        assertTrue(rendered.contains("html[data-eread-loading] body{opacity:0!important}"))
+        assertTrue(rendered.contains("html[data-eread-loading] body,html[data-eread-loading] body *{visibility:hidden!important}"))
         assertTrue(rendered.contains("<head id='publisher'>"))
         assertTrue(rendered.contains("<link rel='stylesheet' href='../styles/main.css'/>"))
         assertTrue(rendered.contains("<style>$css</style>"))

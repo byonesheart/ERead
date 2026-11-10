@@ -18,9 +18,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.zIndex
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -172,10 +169,9 @@ internal fun EbookReaderSurface(
     contentReady: Boolean = true,
     initialOffset: Int = 0,
     initialImagePath: String? = null,
+    preload: Boolean = false,
     continuousChapters: List<Chapter> = emptyList(),
     readContinuousText: (suspend (Int) -> String)? = null,
-    preload: Boolean = false,
-    retentionCenter: Int = chapterIndex,
     onPageTap: ((Float, Float) -> Unit)? = null,
     onImageViewer: (Boolean) -> Unit = {}
 ) {
@@ -307,7 +303,7 @@ internal fun EbookReaderSurface(
                     else -> offset >= browser.viewport.offset && (offset < browser.viewport.endOffset ||
                         offset == browser.viewport.endOffset && (browser.viewport.atEnd || browser.viewport.endOffset == browser.viewport.offset))
                 }
-                browser.alpha = if (preserve) 1f else 0f
+                browser.alpha = if (preserve && !preload) 1f else 0f
                 browser.documentGeneration = generation
                 fun fail(message: String) {
                     if (generation == latestGeneration && browser === webView) {
@@ -364,7 +360,7 @@ internal fun EbookReaderSurface(
                             scrolling = event.optBoolean("scrolling"), atEnd = event.optBoolean("atEnd"))
                             browser.viewport = state
                             latestViewport(state)
-                            if (browser.alpha == 0f && !awaitingVisualState) {
+                            if (!preload && browser.alpha == 0f && !awaitingVisualState) {
                                 awaitingVisualState = true
                                 browser.postVisualStateCallback(0, object : WebView.VisualStateCallback() {
                                     override fun onComplete(requestId: Long) {
@@ -411,7 +407,7 @@ internal fun EbookReaderSurface(
             }
             key(browserKey) {
                 AndroidView(modifier = Modifier.fillMaxSize(), factory = { androidContext ->
-                    browserSession.acquire(browserKey, chapterIndex, retentionCenter, browserLease).also { browser ->
+                    browserSession.acquire(browserKey, chapterIndex, owner = browserLease).also { browser ->
                         webView = browser
                         browser.setBackgroundColor(AndroidColor.TRANSPARENT)
                         browser.overScrollMode = WebView.OVER_SCROLL_NEVER
@@ -423,7 +419,6 @@ internal fun EbookReaderSurface(
                             builtInZoomControls = false; displayZoomControls = false
                             textZoom = 100; mediaPlaybackRequiresUserGesture = true
                             setSupportMultipleWindows(false)
-                            offscreenPreRaster = preload
                         }
                         browser.isFocusable = !preload; browser.isFocusableInTouchMode = !preload
                         browser.importantForAccessibility = if (preload) android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
@@ -461,23 +456,6 @@ internal fun EbookReaderSurface(
                 clipboard.setText(AnnotatedString(passage.quote)); selected = null; controller.clearSelection()
             })
         }
-    }
-}
-
-/** Lay out only the two adjacent pages, behind the reader, using its real viewport. */
-@Composable
-internal fun EbookChapterPreloads(store: EbookSourceStore, chapters: List<Chapter>, text: List<String>, prepared: Set<Int>,
-    center: Int, settings: ReaderSettings, annotations: List<Annotation>, foreground: Color, dualPage: Boolean,
-    eink: Boolean, converter: ChineseTextConverter?, session: EbookReaderSession?) {
-    if (session == null || settings.readingMode == com.eyue.reader.data.ReadingMode.SCROLL) return
-    for (index in listOf(center + 1, center - 1).filter { it in prepared && it in chapters.indices }) key(index) {
-        val controller = remember(store, index) { EbookReaderController() }
-        EbookReaderSurface(store, index, chapters[index], text[index], settings, annotations, controller,
-            Modifier.fillMaxSize().alpha(0f).zIndex(-1f).clearAndSetSemantics {}, dualPage, eink,
-            foreground, selectionMenuEnabled = false, chineseConverter = converter, session = session,
-            preload = true, retentionCenter = center,
-            onViewport = {}, onTap = {}, onManualStart = {}, onManualEnd = {}, onChapterStep = {},
-            onSelectionActive = {}, onAction = { _, _ -> }, onAnnotationTap = { _, _ -> }, onFootnote = { _, _ -> })
     }
 }
 
@@ -547,13 +525,14 @@ internal class EbookWebView(context: Context) : EbookPageTurnWebView(context) {
     var loadedKey: String? = null
     var pageReady = false
     var appliedConfig: String? = null
-    var appliedConverter: ChineseTextConverter? = null
+    @Volatile var appliedConverter: ChineseTextConverter? = null
     var envelope: String = ""
     var viewport = EbookViewportState()
     var onBridgeEvent: ((String) -> Unit)? = null
     var convertText: ((String) -> String)? = null
     init {
         addJavascriptInterface(object {
+            @JavascriptInterface fun conversionEnabled(): Boolean = appliedConverter != null
             @JavascriptInterface fun convert(text: String): String = convertText?.invoke(text) ?: JSONObject().put("text", text).toString()
             @JavascriptInterface fun event(json: String) {
                 val callback = onBridgeEvent

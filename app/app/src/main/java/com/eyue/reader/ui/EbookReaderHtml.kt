@@ -21,7 +21,7 @@ internal fun ebookReaderHtml(source: EbookSourceDocument, script: String, nonce:
         "object-src 'none'; form-action 'none'; base-uri 'none'"
     val trustedHead = "<meta charset=\"UTF-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"$policy\">" +
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no\">" +
-        "<style>html[data-eread-loading] body{opacity:0!important}</style>"
+        "<style>html[data-eread-loading] body,html[data-eread-loading] body *{visibility:hidden!important}</style>"
     val clean = ebookSanitizePublisherHtml(source.html)
     val tags = sourceHtmlTags(clean).toList()
     val html = tags.firstOrNull { !it.closing && it.name == "html" }

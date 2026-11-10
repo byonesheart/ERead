@@ -1469,7 +1469,6 @@ internal fun ReaderScreen(
                 }
                 sourceEbook -> {
                     val sourceChapter = chapterIndex
-                    Box(Modifier.fillMaxSize()) {
                     EbookReaderSurface(requireNotNull(ebookStore), sourceChapter, renderChapters[sourceChapter], currentText,
                         settings, annotations, ebookController, Modifier.fillMaxSize().testTag("reader_ebook"),
                         session = ebookSession, contentReady = sourceChapter in renderDocument.readyChapters,
@@ -1523,10 +1522,6 @@ internal fun ReaderScreen(
                             selectedPassage = null; tappedNoteIds = emptyList(); selectionReset++
                             annotationAnchor = anchor; tappedSourceFootnote = note; chromeVisible = false
                         })
-                    if (ebookViewport.ready && !hasUnsavedText) EbookChapterPreloads(requireNotNull(ebookStore), renderChapters,
-                        renderDocument.text, renderDocument.readyChapters, chapterIndex, settings, annotations, foreground,
-                        dualPage, einkMode, chineseConverter, ebookSession)
-                    }
                 }
                 chapterPageCount == 0 -> Text("这一章没有可阅读的内容", Modifier.align(Alignment.Center), color = muted)
                 settings.readingMode == ReadingMode.SCROLL -> {

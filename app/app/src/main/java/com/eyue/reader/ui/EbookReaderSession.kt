@@ -4,7 +4,7 @@ import android.content.Context
 import android.view.ViewGroup
 import java.io.Closeable
 
-/** Activity-owned: keep only this book's current and adjacent chapter DOMs. */
+/** Reader-owned: keep only this book's current and adjacent chapter DOMs. */
 internal class EbookReaderSession(private val context: Context) : Closeable {
     private data class Entry(val book: String, val chapter: Int, val view: EbookWebView,
         var owner: Any? = null, var leased: Boolean = false)

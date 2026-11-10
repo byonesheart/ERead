@@ -121,7 +121,7 @@ class ReaderLegacyEpubRobolectricTest {
         } finally { compose.runOnIdle { session.close() }; root.deleteRecursively() }
     }
 
-    @Test fun pagedReaderPreparesANeighborsDomBeforeItIsFirstOpened() {
+    @Test fun pagedReaderOnlyAttachesTheVisibleChapterBrowser() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val root = File(context.cacheDir, "reader-preload-${UUID.randomUUID()}").apply { mkdirs() }
         val source = EpubFixtures.create(context, root, "preload", paragraphs = 15)
@@ -149,24 +149,29 @@ class ReaderLegacyEpubRobolectricTest {
             val first = browsers().first()
             send(first, """{"type":"ready"}""")
             send(first, """{"type":"viewport","offset":0,"endOffset":120,"pages":8}""")
-            compose.waitUntil(15_000) { compose.runOnIdle { browsers().size == 2 && browsers().last().onBridgeEvent != null } }
-            val neighbor = browsers().last()
-            send(neighbor, """{"type":"ready"}""")
-            send(neighbor, """{"type":"viewport","offset":0,"endOffset":4,"pages":1}""")
-            compose.runOnIdle { assertTrue(progress.all { it == 0 }); assertTrue(neighbor.pageReady) }
+            compose.waitUntil { compose.runOnIdle { 0 in progress } }
+            compose.runOnIdle {
+                assertEquals(listOf(first), browsers())
+                assertFalse(first.settings.offscreenPreRaster)
+                assertTrue(progress.all { it == 0 })
+            }
             send(first, """{"type":"tap"}""")
             compose.onNodeWithContentDescription("下一章").performClick()
-            compose.waitUntil(15_000) { compose.runOnIdle { browsers().firstOrNull() === neighbor && neighbor.onBridgeEvent != null } }
+            compose.waitUntil(15_000) { compose.runOnIdle {
+                browsers().singleOrNull()?.let { it !== first && it.onBridgeEvent != null } == true
+            } }
+            val neighbor = compose.runOnIdle { browsers().single() }
             compose.runOnIdle {
-                assertTrue(shadowOf(neighbor).lastEvaluatedJavascript.contains("type:'resume'"))
-                assertFalse(neighbor.disposed)
+                assertFalse(neighbor.settings.offscreenPreRaster)
+                assertFalse(neighbor.pageReady)
             }
             val before = progress.size
             send(neighbor, """{"type":"viewport","offset":4,"endOffset":4,"pages":1}""")
-            compose.runOnIdle { assertEquals("The preloader's queued position must not become the new reader position", before, progress.size) }
+            compose.runOnIdle { assertEquals("An unready chapter must not save its position", before, progress.size) }
             send(neighbor, """{"type":"ready"}""")
             send(neighbor, """{"type":"viewport","offset":0,"endOffset":4,"pages":1}""")
             compose.waitUntil { compose.runOnIdle { 1 in progress } }
+            compose.runOnIdle { assertEquals(listOf(neighbor), browsers()) }
         } finally {
             compose.runOnIdle { session.close() }
             root.deleteRecursively()

@@ -57,7 +57,7 @@ async function open(config = {}, options = {}) {
   if (page) await page.close();
   page = await browser.newPage({ viewport: options.viewport || { width: 392, height: 760 }, hasTouch: true, deviceScaleFactor: 1 });
   page.on('pageerror', error => consoleErrors.push(error.message));
-  await page.addInitScript(conversion => {
+  await page.addInitScript(({conversion, conversionEnabled}) => {
     window.events = [];
     window.pageTransitions = [];
     if (document.startViewTransition) {
@@ -82,7 +82,13 @@ async function open(config = {}, options = {}) {
         return JSON.stringify({ text: display, forward });
       }
     };
-  }, options.conversion);
+    if (conversionEnabled !== undefined) {
+      window.__ERead.conversionEnabled = () => conversionEnabled;
+      const convert = window.__ERead.convert;
+      window.conversionCalls = 0;
+      window.__ERead.convert = text => { window.conversionCalls++; return convert(text); };
+    }
+  }, {conversion:options.conversion, conversionEnabled:options.conversionEnabled});
   await page.route('https://eread.local/**', async route => {
     const url = new URL(route.request().url());
     if (url.href === (options.source?.baseUrl || 'https://eread.local/book/archive/chapter.html')) {
@@ -872,9 +878,11 @@ try {
   });
 
   await test('live-conversion-keeps-the-document-and-canonical-selection', async () => {
-    await open();
+    await open({}, {conversionEnabled:false});
+    assert.equal(await page.evaluate(() => window.conversionCalls), 0);
     await page.evaluate(() => {
       window.savedBody = document.body;
+      window.__ERead.conversionEnabled = () => true;
       window.__ERead.convert = text => {
         let display = ''; const forward = [0];
         for (const char of text) { display += char === '书' ? '冊📘' : char; forward.push(display.length); }
@@ -893,7 +901,10 @@ try {
     await page.waitForFunction(() => window.events.some(e => e.type === 'selection' && e.end > e.start));
     const selection = await page.evaluate(() => window.events.findLast(e => e.type === 'selection' && e.end > e.start));
     assert.equal(canonical.substring(selection.start, selection.end), '原书结构');
-    await page.evaluate(() => { window.__ERead.convert = text => JSON.stringify({text}); });
+    await page.evaluate(() => {
+      window.__ERead.conversionEnabled = () => false;
+      window.__ERead.convert = () => { throw new Error('Conversion is disabled'); };
+    });
     await command({type:'convert'});
     assert.ok((await page.locator('#intro').textContent()).includes('原书结构'));
     return {sameBody:true, selection};

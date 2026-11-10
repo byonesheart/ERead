@@ -66,8 +66,6 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             updateSession.configureDeveloperMode(developerPreferences.enabled)
             updateSession.checkOnStartup()
         }
-        val ebookSession = remember(context) { EbookReaderSession(context) }
-        DisposableEffect(ebookSession) { onDispose { ebookSession.close() } }
         val direction = LocalLayoutDirection.current
         var safeViewport by remember { mutableStateOf(IntSize.Zero) }
         Box(Modifier.fillMaxSize().safeDrawingPadding().onSizeChanged { safeViewport = it })
@@ -229,6 +227,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             }
         }
         if (book != null) {
+            val ebookSession = remember(context, book.id) { EbookReaderSession(context) }
+            DisposableEffect(ebookSession) { onDispose { ebookSession.close() } }
             var showSpeechSettings by remember(book.id) { mutableStateOf(false) }
             var resumeSearch by remember(book.id) { mutableStateOf<ReaderSearchDraft?>(null) }
             key(book.id, book.contentVersion, book.chapters) {

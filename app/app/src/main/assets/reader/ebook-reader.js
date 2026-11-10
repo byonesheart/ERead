@@ -126,6 +126,7 @@
     const frameChapter = continuousHost ? Number(window.frameElement.dataset.chapter) : -1;
     const bridge = continuousHost ? {
         event:json => continuousHost.event(frameChapter, JSON.parse(json), window.frameElement),
+        conversionEnabled:() => window.parent.__ERead.conversionEnabled?.() ?? true,
         convert:text => window.parent.__ERead.convert(text)
     } : window.__ERead;
     function viewBounds() { return continuousHost ? continuousHost.bounds(frameChapter) : {top:0, bottom:innerHeight, height:innerHeight}; }
@@ -169,7 +170,8 @@
     }
     function send(type, values) { bridge.event(JSON.stringify(Object.assign({type: type}, values || {}))); }
     function fail(error) { send('error', {message: '原书排版失败：' + (error.message || String(error))}); }
-    function whitespace(c) { return /[\s\u00a0\u200b\ufeff]/.test(c); }
+    const whitespacePattern = /[\s\u00a0\u200b\ufeff]/;
+    function whitespace(c) { return whitespacePattern.test(c); }
     function markBodyParagraphs() {
         captureProseMetrics();
         const structural = 'h1,h2,h3,h4,h5,h6,blockquote,pre,table,aside,figure,figcaption,header,footer,nav';
@@ -185,37 +187,49 @@
         });
         const dominantSize = Array.from(sizes).sort((a, b) => b[1] - a[1])[0];
         const bodySize = dominantSize ? dominantSize[0] : 16;
-        const scale = (node, ratio) => {
-            const value = String(Math.round(ratio * 10000) / 10000);
-            node.dataset.ereadScale = value; sourceFontRatios.add(value);
-        };
+        // Finish reading the publisher's styles before marking paragraphs.
+        // On long chapters, mixing DOM writes with computed-style reads forces
+        // WebView to repeatedly update styles during chapter startup.
+        const scales = new Map(), paragraphFlags = new Map(), bodySizeNodes = [], bodyWeightNodes = [];
         document.body.querySelectorAll('*').forEach(node => {
             if (!node.textContent.trim() || node.closest('script,style,noscript,template')) return;
-            scale(node, parseFloat(getComputedStyle(node).fontSize) / bodySize);
+            scales.set(node, parseFloat(getComputedStyle(node).fontSize) / bodySize);
         });
         candidates.forEach(node => {
             const style = getComputedStyle(node), text = node.textContent.trim(), size = parseFloat(style.fontSize);
-            if (!/^(?:center|right|end|-webkit-center|-webkit-right)$/.test(style.textAlign)) node.dataset.ereadParagraph = '1';
-            const special = /^(?:center|right|end|-webkit-center|-webkit-right)$/.test(style.textAlign) ||
+            const paragraph = !/^(?:center|right|end|-webkit-center|-webkit-right)$/.test(style.textAlign);
+            if (paragraph) paragraphFlags.set(node, {body:false, indent:false});
+            const special = !paragraph ||
                 style.fontStyle !== 'normal' || Number(style.fontWeight) >= 600 ||
                 (text.length <= 80 && (size > bodySize * 1.15 || size < bodySize * .85));
             if (special) return;
-            if (!node.closest('ul,ol,li,dl,dt,dd') && parseFloat(style.textIndent) >= 0 &&
+            const indent = !node.closest('ul,ol,li,dl,dt,dd') && parseFloat(style.textIndent) >= 0 &&
                 !/^(?:flex|inline-flex|grid|inline-grid)$/.test(style.display) && style.cssFloat === 'none' &&
-                /^(?:static|relative)$/.test(style.position)) node.dataset.ereadIndent = '1';
+                /^(?:static|relative)$/.test(style.position);
             // Keep emphasis and note markers, while ordinary EPUB span/font wrappers
             // inherit the software body size instead of pinning the publisher's size.
-            node.dataset.ereadBody = '1';
-            scale(node, 1);
+            paragraphFlags.set(node, {body:true, indent:indent});
+            scales.set(node, 1);
             node.querySelectorAll('*').forEach(child => {
                 if (child.closest('sup,sub,ruby,rt,code,kbd')) return;
                 const childStyle = getComputedStyle(child);
                 if (Math.abs(parseFloat(childStyle.fontSize) - size) < .1) {
-                    scale(child, 1); child.dataset.ereadBodySize = '1';
+                    scales.set(child, 1); bodySizeNodes.push(child);
                 }
-                if (childStyle.fontWeight === style.fontWeight) child.dataset.ereadBodyWeight = '1';
+                if (childStyle.fontWeight === style.fontWeight) bodyWeightNodes.push(child);
             });
         });
+        scales.forEach((ratio, node) => {
+            const value = String(Math.round(ratio * 10000) / 10000);
+            node.dataset.ereadScale = value; sourceFontRatios.add(value);
+        });
+        paragraphFlags.forEach(({body, indent}, node) => {
+            node.dataset.ereadParagraph = '1';
+            if (body) node.dataset.ereadBody = '1';
+            if (indent) node.dataset.ereadIndent = '1';
+        });
+        bodySizeNodes.forEach(node => { node.dataset.ereadBodySize = '1'; });
+        bodyWeightNodes.forEach(node => { node.dataset.ereadBodyWeight = '1'; });
     }
     function lowerBound(array, value) {
         let low = 0, high = array.length;
@@ -854,6 +868,7 @@
             node.style.setProperty('letter-spacing', tracking, 'important');
         });
         applyPublicationAppearance();
+        if (!started) return;
         applyImageCrop();
         fitPageBoundary();
         measureChapter();
@@ -957,6 +972,7 @@
         });
         for (let index = 0; index < canonical.length; index++) if (!whitespace(canonical[index])) { wanted.push(canonical[index]); wantedLocations.push(index); }
         let a = 0, b = 0, missing = 0;
+        let sliceStarted = performance.now();
         const pairs = [];
         while (a < wanted.length && b < domChars.length) {
             if (wanted[a] === domChars[b]) { pairs.push([a++, b++]); }
@@ -974,7 +990,10 @@
                 if (!match) throw new Error('原书文字与阅读记录无法定位，请重新导入');
                 missing += match[0] + match[1]; a += match[0]; b += match[1];
             }
-            if (a % 8192 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+            if (a % 8192 === 0 && performance.now() - sliceStarted >= 30) {
+                await new Promise(resolve => setTimeout(resolve, 0));
+                sliceStarted = performance.now();
+            }
         }
         missing += wanted.length - a + domChars.length - b;
         if (missing > Math.max(4, wanted.length * .015)) throw new Error('原书文字与阅读记录不一致，未改动阅读位置');
@@ -986,11 +1005,12 @@
     }
     let hasForwardMapping = false;
     function convertText() {
-        const all = entries.map(entry => entry.original).join('');
-        const converted = JSON.parse(bridge.convert(all));
-        const forward = converted.forward;
+        const converted = bridge.conversionEnabled?.() === false ? null :
+            JSON.parse(bridge.convert(entries.map(entry => entry.original).join('')));
+        const forward = converted?.forward;
         const displayOffset = offset => forward ? forward[Math.max(0, Math.min(forward.length - 1, offset))] : offset;
-        const display = entries.map(entry => converted.text.substring(displayOffset(entry.base), displayOffset(entry.base + entry.original.length)));
+        const display = entries.map(entry => converted ?
+            converted.text.substring(displayOffset(entry.base), displayOffset(entry.base + entry.original.length)) : entry.original);
         const changed = entries.some((entry, index) => entry.node.data !== display[index]);
         if (started && !changed && !forward && !hasForwardMapping) return;
         if (started && changed) { finishPageAnimation(); keepPagedViewport(); }
@@ -1087,7 +1107,9 @@
             await Promise.all(nodes.map(node => node.complete || node.tagName !== 'IMG' ? Promise.resolve() : new Promise(resolve => {
                 node.addEventListener('load', resolve, {once:true}); node.addEventListener('error', resolve, {once:true}); setTimeout(resolve, 1000);
             })));
-            requestAnimationFrame(function () {
+            function finishStartup() {
+                cancelAnimationFrame(startupFrame);
+                clearTimeout(startupTimer);
                 try {
                     applyImageCrop();
                     fitPageBoundary();
@@ -1098,7 +1120,10 @@
                     send('ready'); report(true);
                 }
                 catch (error) { fail(error); }
-            });
+            }
+            // Android can defer frames while the native reader is still hidden.
+            const startupFrame = requestAnimationFrame(finishStartup);
+            const startupTimer = setTimeout(finishStartup, 120);
         } catch (error) { fail(error); }
     }
     async function command(value) {
