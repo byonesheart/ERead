@@ -1,27 +1,25 @@
 {
-  "versionCode": 85,
-  "versionName": "1.11.26",
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.26",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.26/ERead-1.11.26-release.apk",
+  "versionCode": 95,
+  "versionName": "1.11.28",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.28",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.28/ERead-1.11.28-release.apk",
   "mirrors": [
     {
       "name": "百度网盘",
-      "url": "https://pan.baidu.com/s/1KKlOgddA4VpWfuYJaIOemA?pwd=READ",
+      "url": "https://pan.baidu.com/s/1iKnzkeN60uwdneDecfP0rQ?pwd=READ",
       "extractionCode": "READ"
     },
     {
       "name": "夸克网盘",
-      "url": "https://pan.quark.cn/s/d3c74406952a",
-      "extractionCode": "LP81"
+      "url": "https://pan.quark.cn/s/94709aa26e4d",
+      "extractionCode": "mwg2"
     }
   ],
   "changelog": [
-    "GitHub 更新支持应用内后台下载、暂停、继续和取消，下载完成后提示安装。",
-    "恢复本地修改扫描开关，默认手动重载，支持按需启用自动重载。",
-    "修复 EPUB／MOBI 换行和 EPUB 行末追加文字时的源文件定位，默认启用原书 CSS。",
-    "优化 EPUB／MOBI 正文字距、行距与亮度拖动，保留标题、注音和图表样式。",
-    "优化退出阅读时的自动云同步，移除书籍时显示实际云端占用，并可选择删除本地原文件。",
-    "修正系统翻译应用名称显示。",
+    "优化 EPUB／MOBI 滑动翻页和切章，减少图文页、长章节和重开书籍后的卡顿。",
+    "修复长插图裁切、反向翻页回跳章首及连贯滚动错位。图片和 PDF 支持双击或双指放大。",
+    "优化朗读与页面同步，手动移页后可返回当前朗读位置。",
+    "应用内更新可在后台续传，通知栏显示下载进度并提供暂停、继续和安装入口。",
     "更多功能请自行体验。"
   ]
 }
