@@ -1,12 +1,12 @@
 {
-  "versionCode": 92,
-  "versionName": "1.11.27-beta.6",
+  "versionCode": 93,
+  "versionName": "1.11.27-beta.7",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.27-beta.6",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.27-beta.6/ERead-1.11.27-beta.6-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.27-beta.7",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.27-beta.7/ERead-1.11.27-beta.7-release.apk",
   "mirrors": [],
   "changelog": [
-    "优化 EPUB／MOBI 长章节的左右翻页，减少滑动动画卡顿。",
+    "减少 EPUB／MOBI 切换章节和重新打开后的卡顿，退出阅读时释放章节页面。",
     "更多功能请自行体验。"
   ]
 }
