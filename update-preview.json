@@ -1,12 +1,14 @@
 {
-  "versionCode": 94,
-  "versionName": "1.11.27-beta.8",
+  "versionCode": 96,
+  "versionName": "1.11.29-beta.1",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.27-beta.8",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.27-beta.8/ERead-1.11.27-beta.8-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.29-beta.1",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.29-beta.1/ERead-1.11.29-beta.1-release.apk",
   "mirrors": [],
   "changelog": [
-    "优化 EPUB／MOBI 滑动翻页，减少图文页与长章节翻页时的停顿。",
+    "从 WebDAV 网盘批量选书，支持后台下载并自动导入书架。",
+    "优化 WebDAV 备份和阅读记录同步，减少云端目录查询及上传断点记录的写入。",
+    "新增全局对话颜色，可选择预设或输入自定义颜色，默认关闭。",
     "更多功能请自行体验。"
   ]
 }
