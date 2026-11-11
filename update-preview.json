@@ -1,14 +1,13 @@
 {
-  "versionCode": 96,
-  "versionName": "1.11.29-beta.1",
+  "versionCode": 97,
+  "versionName": "1.11.29-beta.2",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.29-beta.1",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.29-beta.1/ERead-1.11.29-beta.1-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.29-beta.2",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.29-beta.2/ERead-1.11.29-beta.2-release.apk",
   "mirrors": [],
   "changelog": [
-    "从 WebDAV 网盘批量选书，支持后台下载并自动导入书架。",
-    "优化 WebDAV 备份和阅读记录同步，减少云端目录查询及上传断点记录的写入。",
-    "新增全局对话颜色，可选择预设或输入自定义颜色，默认关闭。",
+    "WebDAV 上传优先读取同名候选，减少扫描整套云端书架的次数。",
+    "云端书架复用已验证的书籍记录，详情并行读取，封面在还原后加载。",
     "更多功能请自行体验。"
   ]
 }
