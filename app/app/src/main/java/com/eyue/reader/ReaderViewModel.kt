@@ -16,6 +16,7 @@ import androidx.work.WorkInfo
 import com.eyue.reader.data.*
 import com.eyue.reader.data.Annotation
 import com.eyue.reader.data.cloud.CloudBackupService
+import com.eyue.reader.data.cloud.WebDavImports
 import com.eyue.reader.data.LegacyLocatorFiles
 import com.eyue.reader.ui.prepaginateBook
 import com.eyue.reader.ui.readerLayoutSpec
@@ -30,6 +31,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -86,7 +88,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         onSaved = {},
         onError = { message = "阅读记录保存失败：${it.message ?: "请重试"}" })
     private data class ImportRequest(val id: String, val uris: List<Uri>, val mode: LibraryMode,
-        val folder: Boolean = false, val external: Boolean = false, val mimeType: String? = null, val requestId: String? = null)
+        val folder: Boolean = false, val external: Boolean = false, val mimeType: String? = null,
+        val requestId: String? = null, val webDavId: java.util.UUID? = null)
     private val importRequests = Channel<ImportRequest>(Channel.UNLIMITED)
     private var activeImportId: String? = null
     private val externalRequestIds = mutableSetOf<String>()
@@ -124,6 +127,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     var importProgress by mutableStateOf<ImportProgress?>(null)
         private set
     var pendingImports by mutableStateOf<List<PendingImport>>(emptyList())
+        private set
+    var pendingWebDavDownloads by mutableStateOf<List<PendingImport>>(emptyList())
         private set
     val pendingImport: PendingImport? get() = pendingImports.firstOrNull()
     val openingExternalImport: PendingImport? get() = pendingImports.firstOrNull { it.external && it.id !in dismissedExternalOpens }
@@ -321,6 +326,35 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         viewModelScope.launch {
+            val seen = mutableSetOf<java.util.UUID>()
+            val completedDownloads = mutableSetOf<java.util.UUID>()
+            val reportedFailures = mutableSetOf<java.util.UUID>()
+            var first = true
+            androidx.work.WorkManager.getInstance(application)
+                .getWorkInfosByTagFlow(WebDavImports.TAG).collect { downloads ->
+                    val scanReady = first || downloads.filter { it.state == WorkInfo.State.SUCCEEDED }
+                        .map { it.id }.let(completedDownloads::addAll)
+                    if (first) reportedFailures += downloads.filter { it.state.isFinished }.map { it.id }
+                    first = false
+                    pendingWebDavDownloads = downloads.filter { !it.state.isFinished }.mapNotNull { work ->
+                        val name = work.progress.getString(WebDavImports.NAME) ?: return@mapNotNull null
+                        val mode = LibraryMode.valueOf(work.progress.getString(WebDavImports.MODE) ?: return@mapNotNull null)
+                        val fraction = work.progress.getFloat(WebDavImports.FRACTION, -1f).takeIf { it in 0f..1f }
+                        PendingImport(name.substringBeforeLast('.'), mode, ImportProgress("正在下载", fraction = fraction),
+                            id = work.id.toString())
+                    }
+                    downloads.filter { it.state == WorkInfo.State.FAILED && reportedFailures.add(it.id) }.forEach {
+                        message = it.outputData.getString(WebDavImports.ERROR) ?: "网盘图书下载失败"
+                    }
+                    while (loading) delay(100)
+                    if (storageReady && scanReady) {
+                        val ready = withContext(Dispatchers.IO) { WebDavImports.ready(application) }
+                        for (file in ready) if (seen.add(file.id))
+                            enqueueImport(listOf(Uri.fromFile(file.file)), file.mode, webDavId = file.id)
+                    }
+                }
+        }
+        viewModelScope.launch {
             for (request in importRequests) {
                 while (loading || importing || rebuildingContents || cleaningLibrary || savingBookVoiceRoles) delay(100)
                 if (!storageReady) {
@@ -337,6 +371,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     if (error is CancellationException) throw error
                     message = error.message ?: "导入失败，请确认文件可读取"
                 } finally {
+                    request.webDavId?.let { id ->
+                        if (kotlinx.coroutines.currentCoroutineContext().isActive) withContext(Dispatchers.IO) {
+                            WebDavImports.directory(application, id).deleteRecursively()
+                        }
+                    }
                     importing = false
                     updateImportProgress(null)
                     pendingImports = pendingImports.filterNot { it.id == request.id }
@@ -368,7 +407,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun enqueueImport(uris: List<Uri>, selectedMode: LibraryMode, folder: Boolean = false,
-                              external: Boolean = false, mimeType: String? = null, requestId: String? = null) {
+                              external: Boolean = false, mimeType: String? = null, requestId: String? = null,
+                              webDavId: java.util.UUID? = null) {
         if (uris.isEmpty()) return
         val id = java.util.UUID.randomUUID().toString()
         val sources = uris.distinct()
@@ -376,7 +416,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             ?.substringAfterLast(':')?.substringBeforeLast('.')?.ifBlank { null } ?: "正在读取文件"
             else "导入 ${sources.size} 个文件"
         pendingImports = pendingImports + PendingImport(title, selectedMode, id = id, queued = true, total = sources.size, external = external)
-        if (importRequests.trySend(ImportRequest(id, sources, selectedMode, folder, external, mimeType, requestId)).isFailure)
+        if (importRequests.trySend(ImportRequest(id, sources, selectedMode, folder, external, mimeType, requestId, webDavId)).isFailure)
             pendingImports = pendingImports.filterNot { it.id == id }
     }
 
@@ -421,8 +461,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val notices = mutableListOf<String>()
         var completed = 0
         suspend fun acceptBook(imported: Book) = withContext(Dispatchers.Main) {
-            val incoming = if (imported.format == BookFormat.IMAGES) imported.copy(mode = LibraryMode.COMIC) else imported
-            val book = acceptImportedBook(incoming, notices, prepareLayout = !request.external, compareContents = request.external)
+            val incoming = when {
+                request.webDavId != null -> imported.copy(sourceUri = null)
+                imported.format == BookFormat.IMAGES -> imported.copy(mode = LibraryMode.COMIC)
+                else -> imported
+            }
+            val book = acceptImportedBook(incoming, notices, prepareLayout = !request.external && request.webDavId == null,
+                compareContents = request.external || request.webDavId != null)
             completed++
             pendingImports = pendingImports.map { if (it.id == request.id) it.copy(mode = book?.mode ?: incoming.mode, completed = completed) else it }
             if (completed == 1 && book != null) {
@@ -443,10 +488,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 val info = request.uris.singleOrNull()?.let { uri -> withContext(Dispatchers.IO) {
                     documentSourceFileInfo(application, uri.toString())
                 } }
-                val existing = state.books.firstOrNull { !request.external && !it.cloudOnly && info?.bytes != null &&
+                val existing = state.books.firstOrNull { !request.external && request.webDavId == null && !it.cloudOnly && info?.bytes != null &&
                     it.sourceFileName == info.name && it.sourceFileBytes == info.bytes }
                 if (existing != null) acceptBook(existing)
-                else taskImporter.importFiles(request.uris, request.mode, state.settings.chapterRule, request.mimeType, forceCopy = request.external, onBookImported = ::acceptBook)
+                else taskImporter.importFiles(request.uris, request.mode, state.settings.chapterRule, request.mimeType,
+                    forceCopy = request.external || request.webDavId != null, onBookImported = ::acceptBook)
             }
             notices += taskImporter.lastImportErrors + if (request.external) emptyList() else taskImporter.lastImportWarnings
             message = notices.takeIf { it.isNotEmpty() }?.joinToString("\n")
@@ -893,6 +939,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             }
         } catch (cancelled: CancellationException) { throw cancelled }
           catch (failure: Exception) { localSourceScanIssues = localSourceScanIssues + (id to (failure.message ?: "源文件同步失败")) }
+    }
+
+    fun setDialogueColor(enabled: Boolean, color: Long) {
+        changed(state.copy(dialogueColorEnabled = enabled, dialogueColor = (color and 0xFFFFFF) or 0xFF000000))
     }
 
     fun setShowRecentReading(enabled: Boolean) {

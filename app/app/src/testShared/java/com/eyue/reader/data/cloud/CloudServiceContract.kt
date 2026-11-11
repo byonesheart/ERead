@@ -65,6 +65,24 @@ abstract class CloudServiceContract {
         assertTrue(service.bookStorageBytes(setOf(book.id)).isEmpty())
     }
 
+    @Test fun knownBookProgressUpdatesOnlyItsManifestAndRejectsStaleSnapshots() = runBlocking {
+        val (book, state) = novel()
+        val other = book.copy(id = "other-book", title = "另一本")
+        val first = service.upload(state, book)
+        service.upload(state.copy(books = listOf(other)), other)
+        transport.requests.clear()
+        val progressed = book.copy(characterOffset = 2, progress = .5f, lastReadAt = 1234)
+        val updated = requireNotNull(service.updateKnownBookRecords(state.copy(books = listOf(progressed)), progressed,
+            first.backupAt) {})
+        val manifest = "books/${book.id}/manifest.json"
+        assertEquals(listOf("VERSION GET $manifest", "GET catalog.json", "CONDITIONAL PUT $manifest"), transport.requests)
+        assertEquals(first.revision, updated.revision)
+        assertEquals(2, updated.book.characterOffset)
+        transport.requests.clear()
+        assertNull(service.updateKnownBookRecords(state, book, first.backupAt - 1) {})
+        assertEquals(listOf("VERSION GET $manifest"), transport.requests)
+    }
+
     @Test fun readiumSpineIndexRecoversAtomicBackupAndSurvivesMetadataOnlyProgressUpdate() = runBlocking {
         val (original, originalState) = novel()
         val book = original.copy(format = BookFormat.EPUB, contentVersion = 8)
@@ -609,7 +627,10 @@ abstract class CloudServiceContract {
             assertTrue(operation.isCancelled)
             assertEquals(2, transport.uploadAttempts.size)
             val checkpoint = File(context.filesDir, "cloud-pending/${book.id}").walkTopDown().single { it.name == "checkpoint.json" }
-            assertEquals(1, JSONObject(checkpoint.readText()).getInt("completedParts"))
+            val progress = JSONObject(File(checkpoint.parentFile, "progress.json").readText())
+            assertEquals(JSONObject(checkpoint.readText()).getString("revision"), progress.getString("revision"))
+            assertEquals(1, progress.getInt("completedParts"))
+            assertFalse(progress.has("assets"))
             assertTrue(File(checkpoint.parentFile, "book.zip").isFile)
             assertFalse(transport.files.containsKey("books/${book.id}/manifest.json"))
         }

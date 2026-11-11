@@ -168,7 +168,9 @@ data class LibraryState(
     val showRecentReading: Boolean = true,
     val scanLocalChanges: Boolean = true,
     val scannedBookIds: Set<String> = emptySet(),
-    val autoReloadSources: Boolean = false
+    val autoReloadSources: Boolean = false,
+    val dialogueColorEnabled: Boolean = false,
+    val dialogueColor: Long = 0xFF4A79B3
 ) {
     val sourceScanMode: SourceScanMode get() = if (!scanLocalChanges) SourceScanMode.OFF
         else if (autoReloadSources) SourceScanMode.AUTO else SourceScanMode.MANUAL

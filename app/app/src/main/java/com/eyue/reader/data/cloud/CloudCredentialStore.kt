@@ -40,14 +40,16 @@ internal object CloudCredentialPayload {
 }
 
 /** The preferences contain only authenticated ciphertext; the key stays in Android Keystore. */
-class EncryptedCloudCredentialStore(context: Context) : CloudCredentialStore {
-    private val preferences = context.getSharedPreferences("cloud-credentials", Context.MODE_PRIVATE)
+class EncryptedCloudCredentialStore(context: Context, private val importProfile: String? = null) : CloudCredentialStore {
+    private val preferences = context.getSharedPreferences(
+        if (importProfile == null) "cloud-credentials" else "webdav-import-credentials", Context.MODE_PRIVATE)
+    private val entry = importProfile ?: "encrypted"
     private val alias = "EReadJianguoyunCredentials"
-    private val aad = "ERead/Jianguoyun/v1".toByteArray(Charsets.UTF_8)
+    private val aad = (importProfile?.let { "ERead/WebDAV-import/v1/$it" } ?: "ERead/Jianguoyun/v1").toByteArray(Charsets.UTF_8)
 
     @Synchronized
     override fun read(): CloudCredentials? {
-        val encoded = preferences.getString("encrypted", null) ?: return null
+        val encoded = preferences.getString(entry, null) ?: return null
         require(encoded.length <= 65_536) { "云端账号配置损坏，请重新填写" }
         try {
             val data = Base64.decode(encoded, Base64.NO_WRAP)
@@ -71,12 +73,12 @@ class EncryptedCloudCredentialStore(context: Context) : CloudCredentialStore {
             cipher.updateAAD(aad)
             check(cipher.iv.size == 12)
             val encrypted = byteArrayOf(1) + cipher.iv + cipher.doFinal(plain)
-            check(preferences.edit().putString("encrypted", Base64.encodeToString(encrypted, Base64.NO_WRAP)).commit()) { "云端账号保存失败" }
+            check(preferences.edit().putString(entry, Base64.encodeToString(encrypted, Base64.NO_WRAP)).commit()) { "云端账号保存失败" }
         } finally { plain.fill(0) }
     }
 
     @Synchronized
-    override fun clear() { check(preferences.edit().remove("encrypted").commit()) { "云端账号解绑失败" } }
+    override fun clear() { check(preferences.edit().remove(entry).commit()) { "云端账号解绑失败" } }
 
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

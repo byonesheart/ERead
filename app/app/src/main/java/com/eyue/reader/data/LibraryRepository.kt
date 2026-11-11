@@ -53,6 +53,8 @@ class LibraryRepository(private val context: Context) {
                 tabletDualPage = json.optBoolean("tabletDualPage", false),
                 appTheme = enumValue(json.optString("appTheme"), AppThemeStyle.CLASSIC),
                 showRecentReading = json.optBoolean("showRecentReading", true),
+                dialogueColorEnabled = json.optBoolean("dialogueColorEnabled", false),
+                dialogueColor = (json.optLong("dialogueColor", 0xFF4A79B3) and 0xFFFFFF) or 0xFF000000,
                 scanLocalChanges = json.optBoolean("scanLocalChanges", true),
                 scannedBookIds = if (json.has("scannedBookIds")) json.array("scannedBookIds").let { rows ->
                     (0 until rows.length()).map { rows.getString(it) }.toSet()
@@ -88,6 +90,7 @@ class LibraryRepository(private val context: Context) {
             .put("einkMode", state.einkMode).put("tabletDualPage", state.tabletDualPage)
             .put("appTheme", state.appTheme.name)
             .put("showRecentReading", state.showRecentReading)
+            .put("dialogueColorEnabled", state.dialogueColorEnabled).put("dialogueColor", state.dialogueColor)
             .put("scanLocalChanges", state.scanLocalChanges)
             .put("scannedBookIds", JSONArray(state.scannedBookIds.toList())).put("autoReloadSources", state.autoReloadSources)
             .put("commonVoiceRoles", JSONArray(state.commonVoiceRoles.map { it.toJson() }))

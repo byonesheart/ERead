@@ -174,6 +174,28 @@ async function test(name, callback) {
 }
 
 try {
+  await test('dialogue-color-spans-inline-elements-without-changing-book-text', async () => {
+    const canonicalText = '她说：“今天见。”他点头。';
+    const source = {
+      baseUrl: 'https://eread.local/book/archive/chapter.html', canonicalText, images: [], noteTargets: {},
+      html: '<!doctype html><html><head><style>span{display:block}</style></head><body>' +
+        '<p>她说：“<em>今天</em>见。”他点头。</p></body></html>'
+    };
+    await open({}, { source });
+    assert.equal(await page.locator('[data-eread-dialogue]').count(), 0);
+    await open({ dialogueColor: '#4a79b3' }, { source });
+    const evidence = await page.locator('p').evaluate(node => ({
+      body: node.textContent,
+      parts: Array.from(node.querySelectorAll('[data-eread-dialogue]'), part =>
+        [part.textContent, getComputedStyle(part).color, getComputedStyle(part).display]),
+      narration: getComputedStyle(node).color
+    }));
+    assert.equal(evidence.body, canonicalText);
+    assert.equal(evidence.parts.map(part => part[0]).join(''), '“今天见。”');
+    assert.ok(evidence.parts.every(part => part[1] === 'rgb(74, 121, 179)' && part[2] === 'contents'));
+    assert.notEqual(evidence.narration, evidence.parts[0][1]);
+    return evidence;
+  });
   for (const mode of ['SCROLL', 'PAGED', 'VERTICAL_PAGED']) await test(`publication-background-and-protected-ink-${mode}`, async () => {
     const paragraphs = Array.from({ length: 25 }, (_, i) => `第${i}段原书画布和插图配色应保持完整。`.repeat(5));
     const text = paragraphs.join('\n\n');

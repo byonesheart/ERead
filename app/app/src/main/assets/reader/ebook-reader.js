@@ -791,6 +791,7 @@
         const width = Math.max(32, column - config.left - config.right);
         const height = Math.max(32, viewBounds().height - config.top - config.bottom);
         const family = config.font === 'eread-selected' ? 'eread-selected' : config.font;
+        const dialogueColor = /^#[a-f\d]{6}$/i.test(config.dialogueColor || '') ? config.dialogueColor : null;
         const software = !config.authorCss ? `
             ${Array.from(sourceFontRatios).map(ratio => `[data-eread-scale="${ratio}"] { font-size:${config.fontSize * Number(ratio)}px!important; }`).join('\n')}
             [data-eread-body] { font-size:${config.fontSize}px!important; line-height:${config.lineHeight}px!important;
@@ -815,6 +816,8 @@
                 column-gap:${vertical ? config.top + config.bottom : config.left + config.right}px!important; column-fill:auto!important; background:transparent!important;
                 color:${config.color}!important; font-size:${config.fontSize}px; -webkit-text-size-adjust:none!important; overflow:visible!important; }
             body,body * { font-family:${family}!important; }
+            ${dialogueColor ? `body [data-eread-dialogue] { display:contents!important; font:inherit!important;
+                letter-spacing:inherit!important; color:${dialogueColor}!important; -webkit-text-fill-color:${dialogueColor}!important; }` : ''}
             ${vertical ? 'body * { writing-mode:inherit!important; text-orientation:inherit!important; }' : ''}
             ${software}
             ${!config.authorCss ? 'h1,h2,h3 { break-after:avoid; break-inside:avoid; }' : ''}
@@ -947,13 +950,60 @@
             if (start !== null && end !== null) send('selection', Object.assign({start:start, end:end, page:pageIndex()}, bounds(range.getBoundingClientRect())));
         }, 60);
     }
-    async function buildMap() {
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-            acceptNode: function (node) { return node.parentElement.closest('script,style,noscript,template,#eread-overlays') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; }
-        });
-        const originals = [];
-        let node;
-        while ((node = walker.nextNode())) originals.push(node);
+    function markDialogue(nodes) {
+        const blockSelector = 'p,div,li,dt,dd,blockquote,section,article,h1,h2,h3,h4,h5,h6,td,th';
+        let group = [], block;
+        function markGroup() {
+            const text = group.map(node => node.data).join('');
+            const quotes = Array.from(text.matchAll(/“[^”\r\n]+”|「[^」\r\n]+」|『[^』\r\n]+』|"[^"\r\n]+"/g));
+            let offset = 0, index = 0;
+            for (const node of group) {
+                const limit = offset + node.length;
+                while (index < quotes.length && quotes[index].index + quotes[index][0].length <= offset) index++;
+                const parts = [];
+                for (let i = index; i < quotes.length && quotes[i].index < limit; i++) {
+                    const quote = quotes[i];
+                    parts.push([Math.max(0, quote.index - offset), Math.min(node.length, quote.index + quote[0].length - offset)]);
+                }
+                for (const [start, end] of parts.reverse()) {
+                    if (end <= start) continue;
+                    if (end < node.length) node.splitText(end);
+                    const quoted = start > 0 ? node.splitText(start) : node;
+                    const span = document.createElement('span');
+                    span.dataset.ereadDialogue = '1';
+                    quoted.before(span);
+                    span.appendChild(quoted);
+                }
+                offset = limit;
+            }
+        }
+        for (const node of nodes) {
+            const parent = node.parentElement;
+            const next = parent.closest(blockSelector) || document.body;
+            if (next !== block || parent.closest('pre,code,ruby,svg,math')) {
+                markGroup();
+                group = [];
+                block = next;
+            }
+            if (!parent.closest('pre,code,ruby,svg,math')) group.push(node);
+        }
+        markGroup();
+    }
+    async function buildMap(dialogueColor) {
+        function textNodes() {
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+                acceptNode: function (node) { return node.parentElement.closest('script,style,noscript,template,#eread-overlays') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; }
+            });
+            const nodes = [];
+            let node;
+            while ((node = walker.nextNode())) nodes.push(node);
+            return nodes;
+        }
+        let originals = textNodes();
+        if (dialogueColor) {
+            markDialogue(originals);
+            originals = textNodes();
+        }
         const domChars = [], domLocations = [], wanted = [], wantedLocations = [];
         let position = 0;
         originals.forEach((node, index) => {
@@ -1055,7 +1105,7 @@
             });
             markBodyParagraphs();
             document.head.appendChild(readerStyle);
-            await buildMap();
+            await buildMap(options.config.dialogueColor);
             // Let the browser track sparse paragraphs between sampling rows.
             // Only visible parents contribute text candidates on each report.
             entries.filter(entry => entry.canonical.length).forEach(entry => {

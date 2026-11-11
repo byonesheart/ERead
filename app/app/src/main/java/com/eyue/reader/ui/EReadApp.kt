@@ -16,6 +16,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.*
@@ -76,6 +78,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
         var tab by rememberSaveable { mutableIntStateOf(0) }
         var query by rememberSaveable { mutableStateOf("") }
         var showImport by remember { mutableStateOf(false) }
+        var showWebDavImport by remember { mutableStateOf(false) }
         var showNotes by remember { mutableStateOf(false) }
         var showChapterRules by remember { mutableStateOf(false) }
         var missingSpeechConfig by remember { mutableStateOf(false) }
@@ -239,7 +242,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                         fallbackEnabled = state.aiSpeechFallback, rolesProvider = { book.voiceRoles }, commonRolesProvider = { state.commonVoiceRoles },
                         bookProvider = { book }, onCacheChanged = vm::notifyAiSpeechCacheChanged) else ReaderSpeech(context) }
                 }
-                CompositionLocalProvider(LocalReaderSpeechFactory provides speechFactory) {
+                CompositionLocalProvider(LocalReaderSpeechFactory provides speechFactory,
+                    LocalReaderDialogueColor provides state.dialogueColor.takeIf { state.dialogueColorEnabled }) {
                 ReaderScreen(book, settings, vm.readerAnnotations(book.id),
                     onClose = ::closeReader, ebookSession = ebookSession,
                     onProgress = { chapter, page, offset, progress, imagePath -> vm.progress(chapter, page, offset, progress, book.id, imagePath) },
@@ -351,7 +355,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                         onRemoveWithCloud = vm::removeBook, onClearSpeechWithCloud = { book, _ -> vm.clearAiSpeechCache(book) },
                                         cloudConfigured = vm.cloudConfigured, meteredNetwork = vm.meteredNetwork,
                                         speechCacheRevision = vm.aiSpeechCacheRevision, cloudTransfers = vm.cloudTransfers,
-                                        cloudDirtyBookIds = vm.cloudDirtyBookIds, pendingImports = vm.pendingImports.filter { it.mode == vm.mode },
+                                        cloudDirtyBookIds = vm.cloudDirtyBookIds,
+                                        pendingImports = (vm.pendingImports + vm.pendingWebDavDownloads).filter { it.mode == vm.mode },
                                         onRemoveBatch = vm::removeBooks, restoreProgress = vm.cloudRestoreProgress,
                                         onRemovalCloudBytes = vm::removalCloudBytes, onRemoveOriginal = vm::removeBooksWithOriginal,
                                         onRenameBook = vm::renameBook)
@@ -378,6 +383,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                     restoreProgress = vm.cloudRestoreProgress,
                                     onAppTheme = vm::setAppTheme, availableUpdate = updateSession.availableUpdate,
                                     onCheckUpdate = updateSession::checkNow, onShowRecentReading = vm::setShowRecentReading,
+                                    onDialogueColor = vm::setDialogueColor,
                                     onScanLocalChanges = vm::setScanLocalChanges, onScanSourcesNow = vm::scanLocalSourcesNow,
                                     localSourceScanIssues = vm.localSourceScanIssues, scanningLocalSources = vm.scanningLocalSources,
                                     sourceAuthorizations = vm.sourceAuthorizations, sourceSyncing = vm.reloadingSourceIds,
@@ -411,10 +417,10 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             onTestConnection = vm::testAiSpeechConnection,
             fallbackEnabled = state.aiSpeechFallback, onFallbackEnabled = vm::setAiSpeechFallback)
         if (showImport) {
-            ModalBottomSheet(onDismissRequest = { showImport = false }, containerColor = Paper) {
-                Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 28.dp)) {
-                    Text("把故事带进来", fontFamily = FontFamily.Serif, fontSize = 26.sp)
-                    Text("优先直接读取原文件，仅保存必要的阅读缓存", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp, bottom = 24.dp))
+            ModalBottomSheet(onDismissRequest = { showImport = false }, containerColor = Paper,
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+                Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 28.dp)) {
+                    Text("导入书籍", fontFamily = FontFamily.Serif, fontSize = 26.sp, modifier = Modifier.padding(bottom = 12.dp))
                     ImportOption(Icons.Outlined.Description, "导入文件", "EPUB、TXT、MOBI、PDF、图片 · 自动分类，支持多选") {
                         selectedImportMode = vm.mode; showImport = false; tab = 1
                         files.launch(arrayOf("*/*"))
@@ -422,8 +428,16 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                     ImportOption(Icons.Outlined.FolderOpen, "导入漫画文件夹", "多分支分章分节，单一子目录递归合并") {
                         showImport = false; tab = 1; vm.mode = LibraryMode.COMIC; folder.launch(null)
                     }
+                    ImportOption(Icons.Outlined.Cloud, "从 WebDAV 导入", "浏览网盘，多选图书并在后台下载") {
+                        selectedImportMode = vm.mode; showImport = false; showWebDavImport = true
+                    }
                 }
             }
+        }
+        if (showWebDavImport) WebDavImportDialog(selectedImportMode, { showWebDavImport = false }) {
+            showWebDavImport = false
+            tab = 1
+            vm.message = "图书已加入下载队列，下载后自动入库"
         }
         if (showNotes) {
             NotebookDialog(state, onDismiss = { showNotes = false }, onDelete = vm::deleteAnnotation, onOpen = { annotation ->

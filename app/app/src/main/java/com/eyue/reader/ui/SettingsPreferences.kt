@@ -81,9 +81,11 @@ private enum class SettingsPage(val title: String) {
     sourceSyncing: Set<String> = emptySet(), sourcePending: Set<String> = emptySet(),
     onScannedBooks: (Set<String>) -> Unit = {}, onAutoReload: (Boolean) -> Unit = {},
     onGrantScanBooks: (Set<String>) -> Unit = {}, onGrantScanFolder: () -> Unit = {},
-    onScanLocalChanges: (Boolean) -> Unit = {}, onScanSourcesNow: () -> Unit = {}) {
+    onScanLocalChanges: (Boolean) -> Unit = {}, onScanSourcesNow: () -> Unit = {},
+    onDialogueColor: (Boolean, Long) -> Unit = { _, _ -> }) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
+    var showDialogueColor by remember { mutableStateOf(false) }
     val page = pages.lastOrNull()
     val pageScroll = remember(page) { ScrollState(0) }
     val context = LocalContext.current
@@ -124,6 +126,9 @@ private enum class SettingsPage(val title: String) {
                             Text("夜间模式", Modifier.weight(1f), fontSize = 14.sp)
                             SettingsNightModeSegment(state.themeMode, onThemeMode)
                         }
+                        SettingsSeparator()
+                        SettingsLink(Icons.Outlined.Palette, "对话颜色", if (state.dialogueColorEnabled) "已开启" else "已关闭",
+                            "settings_dialogue_color", { showDialogueColor = true })
                     }
                     SettingsCard(Modifier.testTag("settings_reading_card")) {
                         SettingsToggle("最近阅读", "在阅读首页显示最近阅读的书籍", state.showRecentReading, onShowRecentReading,
@@ -228,6 +233,11 @@ private enum class SettingsPage(val title: String) {
             }
         }
     }
+    if (showDialogueColor) DialogueColorDialog(state.dialogueColorEnabled, state.dialogueColor,
+        onDismiss = { showDialogueColor = false }, onSave = { enabled, color ->
+            onDialogueColor(enabled, color)
+            showDialogueColor = false
+        })
     cleanup?.let { kind ->
         CleanupDialog(cleanupTitle(kind) + "？", when (kind) {
             LibraryCleanupKind.HISTORY -> "阅读首页的历史记录将清空。书架、阅读进度和书签笔记继续保留。"

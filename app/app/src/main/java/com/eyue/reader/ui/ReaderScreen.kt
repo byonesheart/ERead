@@ -1966,16 +1966,20 @@ internal fun readerPageText(text: String, page: ReaderTextPage): String = text.s
 @Composable
 private fun rememberReaderAnnotatedPage(text: String, page: ReaderTextPage, bookId: String, chapter: Int,
     annotations: List<Annotation>, query: String, searchColor: Color, night: Boolean, sourceStyles: ReaderSourceStyles?,
-    baseStyle: TextStyle, spoken: IntRange?, sourceFootnotes: List<SourceFootnote>): AnnotatedString =
-    remember(text, page, bookId, chapter, annotations, query, searchColor, night, sourceStyles, baseStyle, spoken, sourceFootnotes) {
-        readerAnnotatedPage(text, page, bookId, chapter, annotations, query, searchColor, night, sourceStyles, baseStyle, spoken, sourceFootnotes)
+    baseStyle: TextStyle, spoken: IntRange?, sourceFootnotes: List<SourceFootnote>): AnnotatedString {
+    val dialogueColor = LocalReaderDialogueColor.current
+    return remember(text, page, bookId, chapter, annotations, query, searchColor, night, sourceStyles, baseStyle, spoken, sourceFootnotes, dialogueColor) {
+        readerAnnotatedPage(text, page, bookId, chapter, annotations, query, searchColor, night, sourceStyles, baseStyle,
+            spoken, sourceFootnotes, dialogueColor)
     }
+}
 
 private fun readerAnnotatedPage(text: String, page: ReaderTextPage, bookId: String, chapter: Int, annotations: List<Annotation>,
     query: String, searchColor: Color, night: Boolean, sourceStyles: ReaderSourceStyles?, baseStyle: TextStyle,
-    spoken: IntRange? = null, sourceFootnotes: List<SourceFootnote> = emptyList()): AnnotatedString {
+    spoken: IntRange? = null, sourceFootnotes: List<SourceFootnote> = emptyList(), dialogueColor: Long? = null): AnnotatedString {
     val visible = readerPageText(text, page)
     val result = AnnotatedString.Builder(sourceStyles?.apply(text, page.start, page.end, baseStyle) ?: AnnotatedString(visible))
+    dialogueColor?.let { result.colorDialogue(text, page.start, page.start + visible.length, it) }
     readerSearchHighlight(visible, query, searchColor).spanStyles.forEach { result.addStyle(it.item, it.start, it.end) }
     sourceFootnotes.filter { it.imagePath == null }.forEach { item ->
         val start = (item.start - page.start).coerceIn(0, visible.length)

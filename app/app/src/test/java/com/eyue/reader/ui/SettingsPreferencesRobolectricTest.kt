@@ -22,6 +22,19 @@ import org.robolectric.annotation.LooperMode
 class SettingsPreferencesRobolectricTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun globalDialogueColorStartsOffAndSavesTheChosenColor() {
+        var state by mutableStateOf(LibraryState())
+        compose.setContent { MaterialTheme { SettingsScreen(state, {}, {}, {}, {}, onDialogueColor = { enabled, color ->
+            state = state.copy(dialogueColorEnabled = enabled, dialogueColor = color)
+        }) } }
+        compose.onNodeWithTag("settings_dialogue_color").assertTextContains("已关闭").performClick()
+        compose.onNodeWithTag("dialogue_color_enabled").assertIsOff().performClick()
+        compose.onNodeWithContentDescription("紫色").performClick()
+        compose.onNodeWithText("保存").performClick()
+        compose.onNodeWithTag("settings_dialogue_color").assertTextContains("已开启")
+        compose.runOnIdle { assertEquals(0xFF8A5DA8L, state.dialogueColor) }
+    }
+
     @Test fun compactHomeOpensSecondaryPagesAndThemeUsesThreeChoices() {
         var selected: ThemeMode? = null
         compose.setContent { MaterialTheme { SettingsScreen(LibraryState(), {}, {}, {}, {}, onThemeMode = { selected = it }) } }

@@ -97,7 +97,14 @@ class CloudBackupService(
         } finally { cancellation.cancel(); transport.cancel() }
     }
 
-    suspend fun upload(state: LibraryState, book: Book, checkAllowed: () -> Unit = {}): CloudBookInfo = cloudOperationMutex.withBook(book.id) { withContext(Dispatchers.IO) {
+    suspend fun upload(state: LibraryState, book: Book, checkAllowed: () -> Unit = {}): CloudBookInfo =
+        requireNotNull(uploadInternal(state, book, null, checkAllowed))
+
+    internal suspend fun updateKnownBookRecords(state: LibraryState, book: Book, expectedBackupAt: Long,
+        checkAllowed: () -> Unit): CloudBookInfo? = uploadInternal(state, book, expectedBackupAt, checkAllowed)
+
+    private suspend fun uploadInternal(state: LibraryState, book: Book, expectedBackupAt: Long?,
+        checkAllowed: () -> Unit): CloudBookInfo? = cloudOperationMutex.withBook(book.id) { withContext(Dispatchers.IO) {
         require(!book.cloudOnly) { "请先下载书籍，再上传备份" }
         CloudArchive.safeId(book.id)
         val job = currentCoroutineContext()
@@ -111,7 +118,21 @@ class CloudBackupService(
         }
         try {
             // A new catalog entry needs a usable version before any large transfer starts.
-            preflightCatalog(transport, book.id)
+            val directory = "books/${book.id}/"
+            val manifestPath = directory + "manifest.json"
+            val known = if (expectedBackupAt != null) {
+                val current = try { transport.versionedMetadata(manifestPath) }
+                    catch (_: IllegalArgumentException) { return@withContext null }
+                current ?: return@withContext null
+                val saved = readManifest(current.bytes, book.id)
+                if (saved.info.backupAt != expectedBackupAt || saved.info.book.title != book.title) return@withContext null
+                val catalog = transport.metadata("catalog.json") ?: return@withContext null
+                if (book.id !in readCatalog(catalog)) return@withContext null
+                current to saved
+            } else {
+                preflightCatalog(transport, book.id)
+                null
+            }
             onProgress(CloudOperationProgress("整理《${book.title}》的备份"))
             val assets = LinkedHashMap<String, CloudAsset>()
             val references = HashMap<String, String>()
@@ -142,23 +163,28 @@ class CloudBackupService(
                     AtomicFile(sidecar).openRead()
                 }
             }
-            val directory = "books/${book.id}/"
             val assetList = assets.values.toList()
             val inspected = CloudArchive.inspect(assetList, check, resourceHashes)
             val contentIdentity = cloudBookContentIdentity(context, book, check, resourceHashes)
             resourceHashes.save()
             val sourceHash = inspected.firstOrNull { it.name == portable.sourcePath }?.sha256
-            val previous = transport.metadata(directory + "manifest.json")?.let { readManifest(it, book.id) }
+            val previous = known?.second ?: transport.metadata(manifestPath)?.let { readManifest(it, book.id) }
             if (previous != null && previous.assets == inspected && contentBook(previous.info.book) == contentBook(portable)) {
                 val info = previous.info.copy(book = portable, annotations = annotations, settings = settings,
                     group = group, backupAt = backupAt, readingSeconds = state.readingSeconds,
                     contentIdentity = contentIdentity, sourceSha256 = sourceHash)
                 onProgress(CloudOperationProgress("更新《${book.title}》的云端阅读记录", 1f))
-                transport.putMetadata(directory + "manifest.json", writeManifest(info, inspected, previous.cover))
-                cloudOperationMutex.withCatalog(credentials.identity) { publishCatalog(transport, book.id, check) }
+                val updated = writeManifest(info, inspected, previous.cover)
+                if (known != null) {
+                    if (!transport.putVersionedMetadata(manifestPath, updated, known.first.etag)) return@withContext null
+                } else {
+                    transport.putMetadata(manifestPath, updated)
+                    cloudOperationMutex.withCatalog(credentials.identity) { publishCatalog(transport, book.id, check) }
+                }
                 temporary.deleteRecursively()
                 return@withContext info
             }
+            if (expectedBackupAt != null) return@withContext null
             val archive = File(temporary, "book.zip")
             val contentDigest = digest(repository.writeBook(contentBook(portable)).toString())
             val cached = readPending(temporary)?.takeIf { it.contentDigest == contentDigest && it.assets == inspected &&
@@ -167,13 +193,15 @@ class CloudBackupService(
                 temporary.deleteRecursively()
                 check(temporary.mkdirs())
                 val revision = "backup-${UUID.randomUUID()}"
+                val archiveDigest = MessageDigest.getInstance("SHA-256")
                 CloudArchive.write(archive, assetList, { items ->
                     require(items == inspected) { "备份时源文件发生变化，请重试" }
                     writeMetadata(portable, annotations, settings, group, backupAt, items, state.readingSeconds)
                         .toString().toByteArray(Charsets.UTF_8)
-                }, check)
+                }, archiveDigest, check)
                 check()
-                PendingUpload(revision, archive.length(), CloudArchive.hash(archive, check), contentDigest, inspected)
+                PendingUpload(revision, archive.length(), archiveDigest.digest().joinToString("") { "%02x".format(it) },
+                    contentDigest, inspected)
                     .also { writePending(temporary, it) }
             }
             val revision = pending.revision
@@ -193,7 +221,7 @@ class CloudBackupService(
                     }
                     pending = pending.copy(completedParts = index + 1)
                     // Only a successful server response confirms a block for the next run.
-                    writePending(temporary, pending)
+                    writePendingProgress(temporary, pending)
                 }
                 done += part.bytes
                 onProgress(CloudOperationProgress("上传《${book.title}》", done.toFloat() / bytes))
@@ -211,7 +239,7 @@ class CloudBackupService(
                 if (!pending.coverUploaded) {
                     transport.upload(directory + name, thumbnail, 0, thumbnail.length()) { check() }
                     pending = pending.copy(coverUploaded = true)
-                    writePending(temporary, pending)
+                    writePendingProgress(temporary, pending)
                 }
                 name
             }
@@ -251,7 +279,9 @@ class CloudBackupService(
         } finally { transport.cancel() }
     }
 
-    suspend fun list(expectedIdentity: String? = null): List<CloudBookInfo> = withContext(Dispatchers.IO) {
+    suspend fun list(expectedIdentity: String? = null): List<CloudBookInfo> = list(expectedIdentity, includeCovers = true)
+
+    internal suspend fun list(expectedIdentity: String?, includeCovers: Boolean): List<CloudBookInfo> = withContext(Dispatchers.IO) {
         val job = currentCoroutineContext()
         val credentials = requireNotNull(credentialStore.read()) { "请先配置 WebDAV 服务器、账户与密码" }
         require(expectedIdentity == null || credentials.identity == expectedIdentity) { "WebDAV 配置已更改，请重新还原书籍信息" }
@@ -268,7 +298,7 @@ class CloudBackupService(
                 check()
                 transport.metadata("catalog.json")?.let(::readCatalog) ?: legacyIds(transport)
             }
-            val covers = cloudCoverDirectory(credentials).apply { check(mkdirs() || isDirectory) }
+            val covers = if (includeCovers) cloudCoverDirectory(credentials).apply { check(mkdirs() || isDirectory) } else null
             onProgress(CloudOperationProgress("读取云端书籍信息 0 / ${ids.size}", if (ids.isEmpty()) 1f else 0f))
             ids.mapIndexedNotNull { index, id ->
                 check()
@@ -277,7 +307,7 @@ class CloudBackupService(
                 val info = bytes?.let {
                     val manifest = readManifest(it, id)
                     val coverName = manifest.cover
-                    val cover = if (coverName != null) {
+                    val cover = if (covers != null && coverName != null) {
                         val file = File(covers, "$id-${manifest.info.revision}.jpg")
                         if (!file.exists()) {
                             val partial = File(covers, "$id-${UUID.randomUUID()}.tmp")
@@ -516,9 +546,17 @@ class CloudBackupService(
             val completed = json.getInt("completedParts")
             val partBytes = if (version == 1) 4L * 1024 * 1024 else json.getLong("partBytes")
             require(partBytes == CLOUD_PART_BYTES || partBytes == 4L * 1024 * 1024)
-            require(completed in 0..CloudArchive.parts(archiveBytes, revision, partBytes).size)
-            PendingUpload(revision, archiveBytes, archiveSha256, contentDigest, readAssets(json), completed,
+            val partCount = CloudArchive.parts(archiveBytes, revision, partBytes).size
+            require(completed in 0..partCount)
+            val base = PendingUpload(revision, archiveBytes, archiveSha256, contentDigest, readAssets(json), completed,
                 json.getBoolean("coverUploaded"), partBytes)
+            val progress = runCatching {
+                JSONObject(AtomicFile(File(directory, "progress.json")).readFully().decodeToString())
+            }.getOrNull()
+            val saved = progress?.optInt("completedParts", -1) ?: -1
+            if (progress?.optString("revision") == revision && saved in completed..partCount)
+                base.copy(completedParts = saved, coverUploaded = base.coverUploaded || progress.optBoolean("coverUploaded"))
+            else base
         } catch (_: Exception) { null }
     }
 
@@ -530,7 +568,17 @@ class CloudBackupService(
                 JSONObject().put("name", it.name).put("bytes", it.bytes).put("sha256", it.sha256)
             })).toString().toByteArray(Charsets.UTF_8)
         require(bytes.size <= CLOUD_METADATA_LIMIT) { "图书断点记录过大" }
-        val file = AtomicFile(File(directory, "checkpoint.json"))
+        writeCheckpoint(File(directory, "checkpoint.json"), bytes)
+    }
+
+    private fun writePendingProgress(directory: File, pending: PendingUpload) {
+        val bytes = JSONObject().put("revision", pending.revision).put("completedParts", pending.completedParts)
+            .put("coverUploaded", pending.coverUploaded).toString().toByteArray(Charsets.UTF_8)
+        writeCheckpoint(File(directory, "progress.json"), bytes)
+    }
+
+    private fun writeCheckpoint(path: File, bytes: ByteArray) {
+        val file = AtomicFile(path)
         val output = file.startWrite()
         try { output.write(bytes); file.finishWrite(output) }
         catch (error: Throwable) { file.failWrite(output); throw error }

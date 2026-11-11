@@ -308,7 +308,43 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
                 require(service.identity() == account && service.configured()) { "WebDAV 配置已变更，请重新上传" }
                 val beforeLock = currentBook(repository.load()) ?: run { completed = true; return@withUploadIdentity }
                 if (cloudUploadIdentityKeys(account, hydrateBookSourceIdentity(applicationContext, beforeLock)) != keys) return@withUploadIdentity
-                val catalog = service.list(account)
+                if (manualBookId == null && history.uploadedDigest(account, bookId) != null) {
+                    val linkedId = history.cloudBookId(account, bookId)
+                    cloudOperationMutex.withBooks(listOf(bookId, linkedId)) {
+                        val snapshot = cloudBackupHistoryState(repository.load()) { history.backupAt(account, it) }
+                        val current = currentBook(snapshot)
+                        if (current == null || history.automaticPaused(account, bookId)) {
+                            completed = true
+                            return@withBooks
+                        }
+                        if (cloudUploadIdentityKeys(account, hydrateBookSourceIdentity(applicationContext, current)) != keys ||
+                            linkedId != history.cloudBookId(account, bookId)) return@withBooks
+                        val prepared = CloudBookFingerprint(repository, snapshot, current)
+                        if (prepared.matches(current, history.digest(account, bookId))) {
+                            completed = true
+                            return@withBooks
+                        }
+                        val expected = history.backupAt(account, bookId)
+                        if (expected <= 0) return@withBooks
+                        val (uploadState, uploadBook) = cloudUploadSnapshot(snapshot, current, linkedId)
+                        val info = try {
+                            service.updateKnownBookRecords(uploadState, uploadBook, expected) {
+                                if (history.automaticPaused(account, bookId)) throw CancellationException("已暂停本书自动备份")
+                            }
+                        } catch (cancelled: CancellationException) {
+                            currentCoroutineContext().ensureActive()
+                            if (!history.automaticPaused(account, bookId)) throw cancelled
+                            completed = true
+                            return@withBooks
+                        } ?: return@withBooks
+                        completed = true
+                        if (!history.automaticPaused(account, bookId)) {
+                            history.record(account, bookId, prepared.fingerprint(current), info.backupAt)
+                        }
+                    }
+                    if (completed) return@withUploadIdentity
+                }
+                val catalog = service.list(account, includeCovers = false)
                 val identities = service.restoreBookMatches(LibraryState(books = listOf(beforeLock)), catalog)
                 val targetId = cloudUploadTargetId(beforeLock, catalog, identities, history.cloudBookId(account, bookId))
                 cloudOperationMutex.withBooks(listOf(bookId, targetId)) {
@@ -317,7 +353,7 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
                     val latest = cloudBackupHistoryState(repository.load()) { history.backupAt(account, it) }
                     val current = currentBook(latest) ?: run { completed = true; return@withBooks }
                     if (cloudUploadIdentityKeys(account, hydrateBookSourceIdentity(applicationContext, current)) != keys) return@withBooks
-                    val freshCatalog = service.list(account)
+                    val freshCatalog = service.list(account, includeCovers = false)
                     val matches = service.restoreBookMatches(LibraryState(books = listOf(current)), freshCatalog)
                     val freshTarget = cloudUploadTargetId(current, freshCatalog, matches, history.cloudBookId(account, bookId))
                     if (freshTarget != targetId) return@withBooks

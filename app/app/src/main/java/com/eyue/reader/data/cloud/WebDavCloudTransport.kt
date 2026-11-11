@@ -1,6 +1,8 @@
 package com.eyue.reader.data.cloud
 
 import okhttp3.Credentials
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -18,6 +20,7 @@ import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.util.concurrent.TimeUnit
 import javax.xml.parsers.DocumentBuilderFactory
+import org.w3c.dom.Element
 
 interface CloudTransport {
     fun ensureCollection(path: String)
@@ -76,6 +79,40 @@ class WebDavCloudTransport internal constructor(
         }
         return parseCollections(bytes, path, credentials.rootUrl)
     }
+
+    internal fun importEntries(path: List<String>): List<WebDavImportEntry> {
+        val base = importUrl(path, directory = true)
+        val body = """<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/></d:prop></d:propfind>"""
+            .toRequestBody("application/xml; charset=utf-8".toMediaType())
+        val bytes = execute(request(base, "PROPFIND", body).newBuilder().header("Depth", "1").build()).use { response ->
+            if (response.code != 207) fail(response)
+            readBounded(response, CLOUD_METADATA_LIMIT)
+        }
+        return parseImportEntries(bytes, base)
+    }
+
+    internal fun downloadImport(path: List<String>, file: File, progress: (Long, Long) -> Unit) {
+        require(path.isNotEmpty() && supportedWebDavBook(path.last())) { "不支持的图书文件" }
+        execute(request(importUrl(path, directory = false), "GET")).use { response ->
+            if (response.code != 200) fail(response)
+            val body = requireNotNull(response.body) { "网盘文件为空" }
+            val total = body.contentLength()
+            require(total <= CLOUD_ARCHIVE_LIMIT) { "网盘文件过大" }
+            val copied = body.byteStream().use { input -> file.outputStream().buffered().use { output ->
+                CloudArchive.copy(input, output, CLOUD_ARCHIVE_LIMIT, checkActive, progress = { progress(it, total) })
+            } }
+            if (copied == 0L || total >= 0 && copied != total) throw IOException("网盘文件未下载完整")
+        }
+    }
+
+    private fun importUrl(path: List<String>, directory: Boolean): HttpUrl =
+        credentials.serverUrl.toHttpUrl().newBuilder().apply {
+            path.forEach { segment ->
+                require(validWebDavImportName(segment)) { "网盘文件路径无效" }
+                addPathSegment(segment)
+            }
+            if (directory && path.isNotEmpty()) addPathSegment("")
+        }.build()
 
     override fun metadata(path: String, maximum: Int): ByteArray? = execute(request(path, "GET")).use { response ->
         if (response.code == 404) return null
@@ -154,9 +191,12 @@ class WebDavCloudTransport internal constructor(
         val relative = path.trimEnd('/')
         if (relative.isNotEmpty()) CloudArchive.safeName(relative)
         val url = credentials.rootUrl + relative + if (path.endsWith('/') && relative.isNotEmpty()) "/" else ""
-        return Request.Builder().url(url).header("Authorization", authorization)
-            .header("User-Agent", "ERead-Android-WebDAV").method(method, body).build()
+        return request(url.toHttpUrl(), method, body)
     }
+
+    private fun request(url: HttpUrl, method: String, body: RequestBody? = null): Request =
+        Request.Builder().url(url).header("Authorization", authorization)
+            .header("User-Agent", "ERead-Android-WebDAV").method(method, body).build()
 
     private fun execute(request: Request): Response {
         // These requests read or replace the same resource. Retrying never appends file bytes.
@@ -216,7 +256,7 @@ class WebDavCloudTransport internal constructor(
         const val ROOT = DEFAULT_WEBDAV_SERVER + "ERead/"
         private val RETRYABLE_CODES = setOf(429, 500, 502, 503, 504)
 
-        internal fun parseCollections(bytes: ByteArray, path: String, rootUrl: String = ROOT): List<String> {
+        private fun webDavResponses(bytes: ByteArray): org.w3c.dom.NodeList {
             require(bytes.size <= CLOUD_METADATA_LIMIT)
             val xml = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString()
@@ -228,10 +268,43 @@ class WebDavCloudTransport internal constructor(
             val builder = factory.newDocumentBuilder().apply {
                 setEntityResolver { _, _ -> throw org.xml.sax.SAXException("不允许外部 XML 实体") }
             }
-            val document = builder.parse(org.xml.sax.InputSource(StringReader(xml)))
-            val base = URI(rootUrl + path.trimEnd('/') + "/")
-            val responses = document.getElementsByTagNameNS("DAV:", "response")
+            val responses = builder.parse(org.xml.sax.InputSource(StringReader(xml))).getElementsByTagNameNS("DAV:", "response")
             require(responses.length <= 10_001) { "云端图书数量超过限制" }
+            return responses
+        }
+
+        internal fun parseImportEntries(bytes: ByteArray, base: HttpUrl): List<WebDavImportEntry> {
+            val prefix = base.pathSegments.dropLast(1)
+            val responses = webDavResponses(bytes)
+            return (0 until responses.length).mapNotNull { index ->
+                val response = responses.item(index) as Element
+                val href = response.getElementsByTagNameNS("DAV:", "href").item(0)?.textContent ?: return@mapNotNull null
+                val url = base.resolve(href) ?: return@mapNotNull null
+                if (url.scheme != base.scheme || url.host != base.host || url.port != base.port ||
+                    url.query != null || url.fragment != null || url.username.isNotEmpty() || url.password.isNotEmpty()) return@mapNotNull null
+                val segments = url.pathSegments.let { if (it.lastOrNull() == "") it.dropLast(1) else it }
+                if (segments.size != prefix.size + 1 || segments.dropLast(1) != prefix) return@mapNotNull null
+                val name = segments.last().takeIf(::validWebDavImportName) ?: return@mapNotNull null
+                val properties = response.getElementsByTagNameNS("DAV:", "propstat")
+                var directory = false
+                var successful = false
+                var bytes: Long? = null
+                for (propertyIndex in 0 until properties.length) {
+                    val property = properties.item(propertyIndex) as Element
+                    val status = property.getElementsByTagNameNS("DAV:", "status").item(0)?.textContent.orEmpty()
+                    if ((status.trim().split(Regex("\\s+"), limit = 3).getOrNull(1)?.toIntOrNull() ?: 0) !in 200..299) continue
+                    successful = true
+                    directory = directory || property.getElementsByTagNameNS("DAV:", "collection").length > 0
+                    bytes = property.getElementsByTagNameNS("DAV:", "getcontentlength").item(0)?.textContent
+                        ?.trim()?.toLongOrNull()?.takeIf { it >= 0 } ?: bytes
+                }
+                if (successful && (directory || supportedWebDavBook(name))) WebDavImportEntry(name, directory, bytes) else null
+            }.distinctBy { it.name }.sortedWith(compareBy<WebDavImportEntry> { !it.directory }.thenBy { it.name.lowercase(java.util.Locale.ROOT) })
+        }
+
+        internal fun parseCollections(bytes: ByteArray, path: String, rootUrl: String = ROOT): List<String> {
+            val responses = webDavResponses(bytes)
+            val base = URI(rootUrl + path.trimEnd('/') + "/")
             return (0 until responses.length).mapNotNull { index ->
                 val response = responses.item(index) as org.w3c.dom.Element
                 if (response.getElementsByTagNameNS("DAV:", "collection").length == 0) return@mapNotNull null

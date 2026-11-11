@@ -13,6 +13,46 @@ import java.nio.file.Files
 import java.util.concurrent.CancellationException
 
 class WebDavTransportTest {
+    @Test fun importListsOnlyDirectSupportedChildrenAndDownloadsOriginalBytes() {
+        val source = "网盘原始文件".toByteArray()
+        val root = "/library/"
+        val title = "书名 + 1.epub"
+        fun item(href: String, properties: String = "", status: Int = 200) =
+            """<d:response><d:href>$href</d:href><d:propstat><d:prop>$properties</d:prop><d:status>HTTP/1.1 $status Test</d:status></d:propstat></d:response>"""
+        val xml = """<d:multistatus xmlns:d="DAV:">""" + listOf(
+            item(root, "<d:resourcetype><d:collection/></d:resourcetype>"),
+            item(root + "novels/", "<d:resourcetype><d:collection/></d:resourcetype>"),
+            item(root + "%E4%B9%A6%E5%90%8D%20%2B%201.epub", "<d:getcontentlength>${source.size}</d:getcontentlength>"),
+            item(root + "folder/nested.epub"), item(root + "cover.jpg"), item(root + "forbidden.pdf", status = 403),
+            item(root + "unsafe%2Fname.epub"), item("https://foreign.invalid/library/foreign.epub")
+        ).joinToString("") + "</d:multistatus>"
+        val credentials = CloudCredentials("reader", "password", "https://example.invalid/library")
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            assertEquals("example.invalid", request.url.host)
+            val listing = request.method == "PROPFIND"
+            if (listing) {
+                assertEquals(root, request.url.encodedPath)
+                assertEquals("1", request.header("Depth"))
+            } else assertEquals(listOf("library", title), request.url.pathSegments)
+            response(request, if (listing) 207 else 200).newBuilder()
+                .body(if (listing) xml.toResponseBody() else source.toResponseBody()).build()
+        }.build()
+        val transport = WebDavCloudTransport(credentials, {}, client, {})
+        assertEquals(listOf(WebDavImportEntry("novels", true, null), WebDavImportEntry(title, false, source.size.toLong())),
+            transport.importEntries(emptyList()))
+        val file = Files.createTempFile("webdav-book", ".epub").toFile()
+        try {
+            var transferred = 0L
+            transport.downloadImport(listOf(title), file) { done, total ->
+                transferred = done
+                assertEquals(source.size.toLong(), total)
+            }
+            assertArrayEquals(source, file.readBytes())
+            assertEquals(source.size.toLong(), transferred)
+        } finally { file.delete() }
+    }
+
     private fun response(request: Request, code: Int = 200, etag: String? = null, retryAfter: String? = null): Response =
         Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(code).message("test")
             .body("{}".toResponseBody()).apply {

@@ -4,6 +4,8 @@ import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.security.MessageDigest
+import java.security.DigestOutputStream
+import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
@@ -48,13 +50,16 @@ internal object CloudArchive {
         return result
     }
 
-    fun write(destination: File, assets: List<CloudAsset>, metadata: (List<CloudAssetRecord>) -> ByteArray, checkActive: () -> Unit = {}): List<CloudAssetRecord> {
+    fun write(destination: File, assets: List<CloudAsset>, metadata: (List<CloudAssetRecord>) -> ByteArray,
+        archiveDigest: MessageDigest? = null, checkActive: () -> Unit = {}): List<CloudAssetRecord> {
         require(assets.size < CLOUD_ENTRY_LIMIT)
         val names = HashSet<String>()
         var expanded = 0L
         val records = mutableListOf<CloudAssetRecord>()
         try {
-            ZipOutputStream(destination.outputStream().buffered()).use { zip ->
+            val output = destination.outputStream().buffered()
+            ZipOutputStream(if (archiveDigest == null) output else DigestOutputStream(output, archiveDigest)).use { zip ->
+                zip.setLevel(Deflater.BEST_SPEED)
                 for (asset in assets) {
                     checkActive()
                     safeName(asset.name)
