@@ -1620,8 +1620,19 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             val submitted = mutableSetOf<String>()
             try {
                 val service = CloudBackupService(getApplication())
-                val available = service.list(account)
-                val matches = service.restoreBookMatches(state, available)
+                val snapshot = state
+                val selectedIds = selected.map { it.id }.toSet()
+                val selectedState = snapshot.copy(books = selected)
+                val linked = selectedIds.map { cloudHistory.cloudBookId(account, it) }.toSet()
+                // A previously detected conflict must remain visible even if the server rejected index repair.
+                val verify = selectedIds.any { cloudHistory.automaticPaused(account, it) }
+                var available = service.uploadCandidates(account, selected, linked, verify)
+                var matches = service.restoreBookMatches(selectedState, available)
+                if (!verify && cloudUploadConflicts(snapshot, selectedIds, available, matches).isNotEmpty()) {
+                    // A destructive choice requires current candidates, including changes from older clients.
+                    available = service.uploadCandidates(account, selected, linked, verify = true)
+                    matches = service.restoreBookMatches(snapshot, available)
+                }
                 while (cloudBusy) delay(100)
                 require(cloudIdentity == account) { "WebDAV 配置已变更，请重新上传" }
                 selected.forEach { original ->
@@ -1732,6 +1743,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             for (book in discarded) stopAiSpeechConversion(book.id)
             changed(restored)
             persistNow()
+            fillCloudCovers(account, incoming.filter { it.book.id in retainedRemoteIds })
             withContext(Dispatchers.IO) { discarded.forEach { book ->
                 cloudHistory.forget(account, book.id)
                 repository.removeBookFiles(book)
@@ -1799,7 +1811,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     viewModelScope.launch { cloudRestoreState.update(progressToken, progress) }
                 })
                 // Metadata reads deliberately use no transfer slot, even when all three uploads are busy.
-                val info = service.list(account)
+                val info = service.list(account, includeCovers = false)
                 val matches = service.restoreBookMatches(state, info)
                 cloudRestoreState.update(progressToken, com.eyue.reader.data.cloud.CloudOperationProgress("核对最新云端书架"))
                 var needsDecision = false
@@ -1823,6 +1835,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 if (!needsDecision) {
                     cloudRestoreState.update(progressToken, com.eyue.reader.data.cloud.CloudOperationProgress("保存书架与阅读记录"))
                     persistNow()
+                    fillCloudCovers(account, info)
                 }
             } catch (error: CancellationException) { throw error }
               catch (error: Exception) { message = error.message ?: "还原云端书籍信息失败，请稍后重试" }
@@ -1916,6 +1929,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             for (book in discarded) stopAiSpeechConversion(book.id)
             changed(restored)
             persistNow()
+            pendingRestoreIdentity?.let { fillCloudCovers(it, info) }
             withContext(Dispatchers.IO) { discarded.forEach { book ->
                 repository.removeBookFiles(book)
                 AiSpeechCache(getApplication()).clear(book.id)
@@ -1953,10 +1967,34 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 if (applied) {
                     cloudRestoreState.update(progressToken, com.eyue.reader.data.cloud.CloudOperationProgress("保存书架与阅读记录"))
                     persistNow()
+                    fillCloudCovers(account, info)
                 }
             } catch (error: CancellationException) { throw error }
               catch (error: Exception) { message = error.message ?: "还原云端书籍信息失败，请稍后重试" }
             finally { if (cloudRestoreState.finish(progressToken)) cloudMetadataJob = null }
+        }
+    }
+
+    private fun fillCloudCovers(account: String, info: List<com.eyue.reader.data.cloud.CloudBookInfo>) {
+        val versions = state.books.filter { it.cloudOnly && it.coverPath == null }.associate { it.id to it.cloudBackupAt }
+        val missing = info.filter { it.cloudCover != null && versions[it.book.id] == it.backupAt }
+        if (missing.isEmpty()) return
+        viewModelScope.launch {
+            val covers = try { CloudBackupService(getApplication()).loadCloudCovers(account, missing) }
+            catch (error: Exception) {
+                if (error is CancellationException) throw error
+                return@launch
+            }
+            if (cloudIdentity != account || covers.isEmpty()) return@launch
+            val merged = state.books.map { book ->
+                val cover = covers[book.id]
+                if (cover != null && book.cloudOnly && book.coverPath == null && book.cloudBackupAt == versions[book.id])
+                    book.copy(coverPath = cover) else book
+            }
+            if (merged != state.books) {
+                state = state.copy(books = merged)
+                saves.schedule()
+            }
         }
     }
 

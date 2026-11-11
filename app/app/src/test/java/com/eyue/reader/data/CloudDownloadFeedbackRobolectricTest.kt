@@ -262,6 +262,8 @@ class CloudDownloadFeedbackRobolectricTest {
         await { DownloadServiceShadow.pendingList != null }
         val cloud = CloudBookInfo(remote, emptyList(), ReaderSettings(), null, 1234, "revision", 1, "hash", emptyList())
         DownloadServiceShadow.pendingList!!.also { DownloadServiceShadow.pendingList = null; it.resumeWith(Result.success(listOf(cloud))) }
+        await { DownloadServiceShadow.pendingList != null }
+        DownloadServiceShadow.pendingList!!.also { DownloadServiceShadow.pendingList = null; it.resumeWith(Result.success(listOf(cloud))) }
         await { vm.pendingCloudUpload != null && vm.cloudUploadConflicts.singleOrNull()?.locals?.size == 2 }
         vm.resolveCloudUploadSelections(mapOf(remote.id to CloudRestoreSelection(setOf(first.id, second.id), true)), true)
         assertNull("A valid confirmation must dismiss the foreground dialog immediately", vm.pendingCloudUpload)
@@ -311,11 +313,16 @@ class CloudDownloadFeedbackRobolectricTest {
             continuation: Continuation<Map<Pair<String, String>, CloudBookMatch>>): Any = emptyMap<Pair<String, String>, CloudBookMatch>()
 
         @Suppress("UNUSED_PARAMETER")
-        @Implementation fun list(expectedIdentity: String?, continuation: Continuation<List<CloudBookInfo>>): Any {
+        @Implementation fun list(expectedIdentity: String?, includeCovers: Boolean,
+            continuation: Continuation<List<CloudBookInfo>>): Any {
             listCalls++
             pendingList = continuation
             return COROUTINE_SUSPENDED
         }
+
+        @Suppress("UNUSED_PARAMETER")
+        @Implementation fun uploadCandidates(account: String, selected: List<Book>, linkedIds: Set<String>, verify: Boolean,
+            continuation: Continuation<List<CloudBookInfo>>): Any = list(account, false, continuation)
 
         @Suppress("UNUSED_PARAMETER")
         @Implementation fun download(bookId: String, continuation: Continuation<CloudRestoredBook>): Any {

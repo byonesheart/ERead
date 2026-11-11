@@ -293,6 +293,7 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
         history: CloudBackupHistory, account: String, bookId: String) {
         fun currentBook(state: LibraryState): Book? =
             (if (manualBookId == null) cloudBackupBooks(state) else state.books.filterNot { it.cloudOnly }).find { it.id == bookId }
+        var proposedTarget = history.cloudBookId(account, bookId)
         while (true) {
             currentCoroutineContext().ensureActive()
             val initial = cloudBackupHistoryState(repository.load()) { history.backupAt(account, it) }
@@ -344,19 +345,21 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
                     }
                     if (completed) return@withUploadIdentity
                 }
-                val catalog = service.list(account, includeCovers = false)
-                val identities = service.restoreBookMatches(LibraryState(books = listOf(beforeLock)), catalog)
-                val targetId = cloudUploadTargetId(beforeLock, catalog, identities, history.cloudBookId(account, bookId))
+                val targetId = proposedTarget
                 cloudOperationMutex.withBooks(listOf(bookId, targetId)) {
                     if (manualBookId != null) setProgress(progressData("准备上传备份", null))
-                    // Recheck the source and catalog after waiting for a book lock: neither old matches nor old aliases authorize a write.
+                    // The catalogue is verified after waiting for the book lock.
                     val latest = cloudBackupHistoryState(repository.load()) { history.backupAt(account, it) }
                     val current = currentBook(latest) ?: run { completed = true; return@withBooks }
                     if (cloudUploadIdentityKeys(account, hydrateBookSourceIdentity(applicationContext, current)) != keys) return@withBooks
-                    val freshCatalog = service.list(account, includeCovers = false)
+                    val linkedId = history.cloudBookId(account, bookId)
+                    val freshCatalog = service.uploadCandidates(account, listOf(current), setOf(linkedId, targetId), verify = true)
                     val matches = service.restoreBookMatches(LibraryState(books = listOf(current)), freshCatalog)
-                    val freshTarget = cloudUploadTargetId(current, freshCatalog, matches, history.cloudBookId(account, bookId))
-                    if (freshTarget != targetId) return@withBooks
+                    val freshTarget = cloudUploadTargetId(current, freshCatalog, matches, linkedId)
+                    if (freshTarget != targetId) {
+                        proposedTarget = freshTarget
+                        return@withBooks
+                    }
                     completed = true
                     if (manualBookId == null && history.automaticPaused(account, bookId)) return@withBooks
                     val prepared = CloudBookFingerprint(repository, latest, current)

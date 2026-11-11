@@ -19,6 +19,7 @@ import java.net.URI
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
 import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Element
 
@@ -26,6 +27,8 @@ interface CloudTransport {
     fun ensureCollection(path: String)
     fun collections(path: String): List<String>
     fun metadata(path: String, maximum: Int = CLOUD_METADATA_LIMIT): ByteArray?
+    fun readMetadata(path: String, etag: String?): CloudMetadataResponse = CloudMetadataResponse(metadata(path))
+    fun manifestETags(): Map<String, String> = emptyMap()
     fun putMetadata(path: String, bytes: ByteArray)
     fun versionedMetadata(path: String): CloudVersionedMetadata?
     /** Returns false only when another device changed the resource (HTTP 412). */
@@ -37,6 +40,15 @@ interface CloudTransport {
 }
 
 data class CloudVersionedMetadata(val bytes: ByteArray, val etag: String)
+data class CloudMetadataResponse(val bytes: ByteArray?, val etag: String? = null, val unchanged: Boolean = false)
+
+internal fun cloudReadETag(value: String?): String? {
+    val tag = value?.trim(' ', '\t') ?: return null
+    val weak = tag.startsWith("W/")
+    val opaque = if (weak) tag.drop(2) else tag
+    if (weak && !opaque.startsWith('"')) return null
+    return runCatching { cloudStrongETag(opaque); tag }.getOrNull()
+}
 
 /** Jianguoyun may return an unquoted opaque tag; preserve it for its If-Match comparison. */
 internal fun cloudStrongETag(value: String?): String {
@@ -74,6 +86,7 @@ class WebDavCloudTransport internal constructor(
         val body = "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>"
             .toRequestBody("application/xml; charset=utf-8".toMediaType())
         val bytes = execute(request(path, "PROPFIND", body).newBuilder().header("Depth", "1").build()).use { response ->
+            if (response.code == 404) return emptyList()
             if (response.code != 207) fail(response)
             readBounded(response, CLOUD_METADATA_LIMIT)
         }
@@ -118,6 +131,43 @@ class WebDavCloudTransport internal constructor(
         if (response.code == 404) return null
         if (!response.isSuccessful) fail(response)
         readBounded(response, maximum)
+    }
+
+    override fun readMetadata(path: String, etag: String?): CloudMetadataResponse {
+        val validator = cloudReadETag(etag)
+        val request = request(path, "GET").newBuilder().apply {
+            if (validator != null) header("If-None-Match", validator)
+        }.build()
+        return execute(request).use { response ->
+            when (response.code) {
+                404 -> CloudMetadataResponse(null)
+                304 -> if (validator != null) CloudMetadataResponse(null, validator, unchanged = true) else fail(response)
+                200 -> CloudMetadataResponse(readBounded(response, CLOUD_METADATA_LIMIT), cloudReadETag(response.header("ETag")))
+                else -> fail(response)
+            }
+        }
+    }
+
+    override fun manifestETags(): Map<String, String> {
+        val root = credentials.rootUrl
+        val now = System.nanoTime()
+        if (manifestListingRetryAt[root]?.let { now - it < 0 } == true) return emptyMap()
+        val query = """<d:propfind xmlns:d="DAV:"><d:prop><d:getetag/></d:prop></d:propfind>"""
+            .toRequestBody("application/xml; charset=utf-8".toMediaType())
+        val request = request("books/", "PROPFIND", query).newBuilder().header("Depth", "infinity").build()
+        val tags = try {
+            checkActive()
+            client.newCall(request).execute().use { response ->
+                if (response.code != 207) emptyMap()
+                else parseManifestETags(readBounded(response, 2 * 1024 * 1024), request.url)
+            }
+        } catch (error: Exception) {
+            if (error is java.util.concurrent.CancellationException) throw error
+            checkActive()
+            emptyMap()
+        }
+        if (tags.isEmpty()) manifestListingRetryAt[root] = now + TimeUnit.MINUTES.toNanos(10)
+        return tags
     }
 
     override fun putMetadata(path: String, bytes: ByteArray) {
@@ -255,6 +305,33 @@ class WebDavCloudTransport internal constructor(
     companion object {
         const val ROOT = DEFAULT_WEBDAV_SERVER + "ERead/"
         private val RETRYABLE_CODES = setOf(429, 500, 502, 503, 504)
+        private val manifestListingRetryAt = ConcurrentHashMap<String, Long>()
+
+        internal fun parseManifestETags(bytes: ByteArray, base: HttpUrl): Map<String, String> {
+            val rows = webDavResponses(bytes)
+            val prefix = base.pathSegments.dropLast(1)
+            return buildMap {
+                for (i in 0 until rows.length) {
+                    val row = rows.item(i) as Element
+                    val href = row.getElementsByTagNameNS("DAV:", "href").item(0)?.textContent ?: continue
+                    val url = base.resolve(href) ?: continue
+                    if (url.scheme != base.scheme || url.host != base.host || url.port != base.port ||
+                        url.query != null || url.fragment != null || url.username.isNotEmpty() || url.password.isNotEmpty()) continue
+                    val path = url.pathSegments
+                    if (path.size != prefix.size + 2 || path.dropLast(2) != prefix || path.last() != "manifest.json") continue
+                    val id = runCatching { CloudArchive.safeId(path[path.lastIndex - 1]) }.getOrNull() ?: continue
+                    val properties = row.getElementsByTagNameNS("DAV:", "propstat")
+                    for (index in 0 until properties.length) {
+                        val group = properties.item(index) as Element
+                        val status = group.getElementsByTagNameNS("DAV:", "status").item(0)?.textContent.orEmpty()
+                        if (status.trim().split(' ', limit = 3).getOrNull(1) != "200") continue
+                        val value = group.getElementsByTagNameNS("DAV:", "getetag").item(0)?.textContent
+                        val etag = runCatching { cloudStrongETag(value) }.getOrNull() ?: continue
+                        put(id, etag)
+                    }
+                }
+            }
+        }
 
         private fun webDavResponses(bytes: ByteArray): org.w3c.dom.NodeList {
             require(bytes.size <= CLOUD_METADATA_LIMIT)

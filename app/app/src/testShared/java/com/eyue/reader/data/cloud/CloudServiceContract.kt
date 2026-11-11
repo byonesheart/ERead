@@ -83,6 +83,69 @@ abstract class CloudServiceContract {
         assertEquals(listOf("VERSION GET $manifest"), transport.requests)
     }
 
+    @Test fun indexedPreflightFetchesOnlyCandidatesAndVerificationSeesAnOlderClientRename() = runBlocking {
+        val (base, state) = novel()
+        val books = (1..5).map { n -> base.copy(id = "entry-$n", title = "云端$n", sourceFileName = "cloud-$n.mobi") }
+        books.forEach { service.upload(state.copy(books = listOf(it)), it) }
+        transport.conditionalMetadata = true
+        transport.bulkMetadataTags = true
+        val account = requireNotNull(credentials.read()).identity
+        val local = base.copy(id = "local-copy", title = books.first().title, sourceFileName = "local.mobi")
+        transport.requests.clear()
+        assertEquals(listOf(books.first().id), service.uploadCandidates(account, listOf(local), emptySet()).map { it.book.id })
+        assertEquals(listOf("GET catalog.json", "GET books/entry-1/manifest.json"), transport.requests.toList())
+
+        service.list(account, includeCovers = false) // Warm per-resource ETags from a normal restore.
+        val renamed = "旧版设备改名"
+        val path = "books/entry-4/manifest.json"
+        transport.files[path] = JSONObject(transport.files.getValue(path).decodeToString()).apply {
+            getJSONObject("book").put("title", renamed)
+        }.toString().toByteArray()
+        val current = local.copy(title = renamed)
+        assertTrue(service.uploadCandidates(account, listOf(current), emptySet()).isEmpty())
+        transport.requests.clear()
+        assertEquals(listOf(books[3].id), service.uploadCandidates(account, listOf(current), emptySet(), verify = true).map { it.book.id })
+        assertTrue(transport.requests.contains("MANIFEST ETAGS"))
+        assertEquals(listOf("GET $path"), transport.requests.filter { it.startsWith("GET books/") })
+        val index = CloudCatalog.read(transport.files.getValue("catalog.json"))
+        assertEquals(renamed, index.summaries.getValue(books[3].id).title)
+    }
+
+    @Test fun legacyCatalogReadsConditionalManifestsAndBackfillsWithoutChangingItsVersion() = runBlocking {
+        val (first, state) = novel()
+        val second = first.copy(id = "legacy-second", title = "旧目录的书")
+        service.upload(state, first)
+        service.upload(state.copy(books = listOf(second)), second)
+        val legacy = JSONObject().put("version", 1).put("bookIds", JSONArray(listOf(first.id, second.id)))
+        transport.files["catalog.json"] = legacy.toString().toByteArray()
+        transport.conditionalMetadata = true
+        val account = requireNotNull(credentials.read()).identity
+        assertEquals(setOf(first.id, second.id), service.list(account, includeCovers = false).map { it.book.id }.toSet())
+        val changed = "books/${second.id}/manifest.json"
+        transport.files[changed] = JSONObject(transport.files.getValue(changed).decodeToString()).apply {
+            getJSONObject("book").put("characterOffset", 2)
+        }.toString().toByteArray()
+        transport.requests.clear()
+        val restored = service.list(account, includeCovers = false)
+        assertEquals(2, restored.single { it.book.id == second.id }.book.characterOffset)
+        assertEquals(listOf("GET $changed"), transport.requests.filter { it.startsWith("GET books/") })
+        assertTrue("304 books/${first.id}/manifest.json" in transport.requests)
+        assertTrue(transport.requests.none { it.startsWith("MKCOL") })
+        assertEquals(setOf(first.id, second.id), CloudCatalog.read(transport.files.getValue("catalog.json")).summaries.keys)
+    }
+
+    @Test fun informationRestoreCanFinishBeforeFetchingTheCover() = runBlocking {
+        val (book, state) = novel()
+        service.upload(state, book)
+        val account = requireNotNull(credentials.read()).identity
+        val info = service.list(account, includeCovers = false).single()
+        assertEquals(book.id, info.book.id)
+        assertNull(info.book.coverPath)
+        val cover = service.loadCloudCovers(account, listOf(info)).getValue(book.id)
+        assertTrue(File(cover).isFile)
+        assertEquals(cover, service.list(account, includeCovers = false).single().book.coverPath)
+    }
+
     @Test fun readiumSpineIndexRecoversAtomicBackupAndSurvivesMetadataOnlyProgressUpdate() = runBlocking {
         val (original, originalState) = novel()
         val book = original.copy(format = BookFormat.EPUB, contentVersion = 8)
@@ -890,7 +953,9 @@ abstract class CloudServiceContract {
         var catalogPutAttempts = 0
         var metadataConflict: Pair<String, ByteArray>? = null
         val conditionalPutAttempts = mutableListOf<Pair<String, String?>>()
-        val requests = mutableListOf<String>()
+        val requests = java.util.Collections.synchronizedList(mutableListOf<String>())
+        var conditionalMetadata = false
+        var bulkMetadataTags = false
 
         override fun ensureCollection(path: String) { requests += "MKCOL $path"; directories += path.trimEnd('/') }
         override fun collections(path: String): List<String> {
@@ -902,6 +967,21 @@ abstract class CloudServiceContract {
         override fun metadata(path: String, maximum: Int): ByteArray? {
             requests += "GET $path"
             return files[path]?.also { require(it.size <= maximum) }?.copyOf()
+        }
+        @Synchronized override fun readMetadata(path: String, etag: String?): CloudMetadataResponse {
+            if (!conditionalMetadata) return CloudMetadataResponse(metadata(path))
+            val current = etag(path)
+            if (current != null && current == etag) {
+                requests += "304 $path"
+                return CloudMetadataResponse(null, current, unchanged = true)
+            }
+            return CloudMetadataResponse(metadata(path), current)
+        }
+        @Synchronized override fun manifestETags(): Map<String, String> {
+            if (!bulkMetadataTags) return emptyMap()
+            requests += "MANIFEST ETAGS"
+            return files.keys.filter { it.startsWith("books/") && it.endsWith("/manifest.json") }
+                .associate { it.split('/')[1] to requireNotNull(etag(it)) }
         }
         override fun putMetadata(path: String, bytes: ByteArray) { requests += "PUT $path"; files[path] = bytes.copyOf() }
         override fun cancel() { heldCancelled.countDown() }

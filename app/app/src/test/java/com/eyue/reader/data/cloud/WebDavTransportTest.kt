@@ -13,6 +13,34 @@ import java.nio.file.Files
 import java.util.concurrent.CancellationException
 
 class WebDavTransportTest {
+    @Test fun readOnlyMetadataUsesConditionalGetAndSupportsWeakTags() {
+        val client = transport { request ->
+            assertEquals("W/\"old\"", request.header("If-None-Match"))
+            response(request, 304, "W/\"old\"")
+        }
+        assertEquals(CloudMetadataResponse(null, "W/\"old\"", unchanged = true),
+            client.readMetadata("books/id/manifest.json", "W/\"old\""))
+    }
+
+    @Test fun bulkManifestTagsOnlyAcceptStrongValidatorsForSameOriginBookRecords() {
+        fun row(href: String, tag: String, status: Int = 200) = """
+            <d:response><d:href>$href</d:href><d:propstat><d:prop><d:getetag>$tag</d:getetag></d:prop>
+            <d:status>HTTP/1.1 $status Test</d:status></d:propstat></d:response>
+        """.trimIndent()
+        val root = "/dav/ERead/books/"
+        val xml = "<d:multistatus xmlns:d=\"DAV:\">" + listOf(
+            row(root + "book/manifest.json", "\"version\""), row(root + "book/file.bin", "\"part\""),
+            row(root + "weak/manifest.json", "W/\"weak\""), row(root + "forbidden/manifest.json", "\"none\"", 403),
+            row("https://foreign.invalid${root}other/manifest.json", "\"foreign\"")
+        ).joinToString("") + "</d:multistatus>"
+        val client = transport { request ->
+            assertEquals("PROPFIND", request.method)
+            assertEquals("infinity", request.header("Depth"))
+            response(request, 207).newBuilder().body(xml.toResponseBody()).build()
+        }
+        assertEquals(mapOf("book" to "\"version\""), client.manifestETags())
+    }
+
     @Test fun importListsOnlyDirectSupportedChildrenAndDownloadsOriginalBytes() {
         val source = "网盘原始文件".toByteArray()
         val root = "/library/"

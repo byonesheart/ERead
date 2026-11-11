@@ -23,6 +23,9 @@ import com.eyue.reader.data.withLocalDocument
 import com.eyue.reader.data.cloudOperationMutex
 import com.eyue.reader.data.withDefaultComicMargins
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -30,11 +33,15 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
+
+private val cloudMetadataReads = Semaphore(3)
 
 class CloudBackupService(
     private val context: Context,
@@ -58,7 +65,15 @@ class CloudBackupService(
         val content = HashMap<String, String?>()
         val source = HashMap<String, String?>()
         onProgress(CloudOperationProgress("核对本地同名书籍"))
-        val identified = state.copy(books = state.books.map { hydrateBookSourceIdentity(context, it) })
+        val relevant = incoming.map { it.book }
+        val identified = state.copy(books = state.books.filterNot { it.cloudOnly }.map { local ->
+            if (local.sourceUri != null || relevant.any { remote -> local.id != remote.id && (
+                    local.mode == remote.mode && local.title.trim().equals(remote.title.trim(), ignoreCase = true) ||
+                        local.sourceFileName == remote.sourceFileName && !local.sourceFileName.isNullOrBlank() ||
+                        local.sourceFileName.isNullOrBlank() && !remote.sourceFileName.isNullOrBlank()) })
+                hydrateBookSourceIdentity(context, local)
+            else local
+        })
         buildMap {
             for (info in incoming) for (local in sameTitleLocalBooks(identified, info.book)) {
                 check()
@@ -66,18 +81,20 @@ class CloudBackupService(
                     put(local.id to info.book.id, CloudBookMatch.SAME)
                     continue
                 }
-                val originalHash = if (info.sourceSha256 == null) null else source.getOrPut(local.id) {
-                    val path = if (local.sourceLinked) local.sourceUri ?: local.sourcePath else local.sourcePath ?: local.sourceUri
-                    path?.let { runCatching { cloudSourceHash(context, it, check) }.getOrElse { error ->
-                        if (error is CancellationException) throw error
-                        null
-                    } }
-                }
                 val identity = if (info.contentIdentity == null) null else content.getOrPut(local.id) { cloudBookContentIdentity(context, local, check) }
                 put(local.id to info.book.id, when {
                     identity != null && identity == info.contentIdentity -> CloudBookMatch.SAME
                     identity != null && info.contentIdentity != null && identity.substringBefore(':') == info.contentIdentity.substringBefore(':') -> CloudBookMatch.DIFFERENT
-                    originalHash != null && originalHash == info.sourceSha256 && !local.hasTextEdits && !info.book.hasTextEdits -> CloudBookMatch.SAME
+                    info.sourceSha256 != null && !local.hasTextEdits && !info.book.hasTextEdits -> {
+                        val hash = source.getOrPut(local.id) {
+                            val path = if (local.sourceLinked) local.sourceUri ?: local.sourcePath else local.sourcePath ?: local.sourceUri
+                            path?.let { runCatching { cloudSourceHash(context, it, check) }.getOrElse { error ->
+                                if (error is CancellationException) throw error
+                                null
+                            } }
+                        }
+                        if (hash == info.sourceSha256) CloudBookMatch.SAME else CloudBookMatch.UNKNOWN
+                    }
                     else -> CloudBookMatch.UNKNOWN
                 })
             }
@@ -179,7 +196,9 @@ class CloudBackupService(
                     if (!transport.putVersionedMetadata(manifestPath, updated, known.first.etag)) return@withContext null
                 } else {
                     transport.putMetadata(manifestPath, updated)
-                    cloudOperationMutex.withCatalog(credentials.identity) { publishCatalog(transport, book.id, check) }
+                }
+                if (known == null || !CloudBookSummary.from(known.second.info).sameIdentity(CloudBookSummary.from(info))) {
+                    cloudOperationMutex.withCatalog(credentials.identity) { publishCatalog(transport, info, check) }
                 }
                 temporary.deleteRecursively()
                 return@withContext info
@@ -249,7 +268,7 @@ class CloudBackupService(
             onProgress(CloudOperationProgress("提交云端图书记录", 1f))
             // The old manifest remains valid until all parts and the cover are uploaded successfully.
             transport.putMetadata(directory + "manifest.json", writeManifest(info, inspected, cloudCover))
-            cloudOperationMutex.withCatalog(credentials.identity) { publishCatalog(transport, book.id, check) }
+            cloudOperationMutex.withCatalog(credentials.identity) { publishCatalog(transport, info, check) }
             temporary.deleteRecursively()
             info
         } catch (error: Exception) {
@@ -281,50 +300,129 @@ class CloudBackupService(
 
     suspend fun list(expectedIdentity: String? = null): List<CloudBookInfo> = list(expectedIdentity, includeCovers = true)
 
-    internal suspend fun list(expectedIdentity: String?, includeCovers: Boolean): List<CloudBookInfo> = withContext(Dispatchers.IO) {
+    suspend fun list(expectedIdentity: String?, includeCovers: Boolean): List<CloudBookInfo> =
+        scanCatalog(expectedIdentity, includeCovers = includeCovers)
+
+    suspend fun uploadCandidates(account: String, selected: List<Book>, linkedIds: Set<String>,
+        verify: Boolean = false): List<CloudBookInfo> = withContext(Dispatchers.IO) {
+        val books = selected.map { hydrateBookSourceIdentity(context, it) }
+        scanCatalog(account, includeCovers = false, verify = verify) { entry ->
+            entry.id in linkedIds || books.any(entry::matches)
+        }
+    }
+
+    private suspend fun scanCatalog(expectedIdentity: String?, includeCovers: Boolean, verify: Boolean = true,
+        candidate: ((CloudBookSummary) -> Boolean)? = null): List<CloudBookInfo> = withContext(Dispatchers.IO) {
         val job = currentCoroutineContext()
         val credentials = requireNotNull(credentialStore.read()) { "请先配置 WebDAV 服务器、账户与密码" }
         require(expectedIdentity == null || credentials.identity == expectedIdentity) { "WebDAV 配置已更改，请重新还原书籍信息" }
-        val check = {
-            job.ensureActive()
-            require(credentialStore.read()?.identity == credentials.identity) { "WebDAV 配置已更改，请重新还原书籍信息" }
-        }
+        val check = { job.ensureActive() }
         val transport = transportFactory(credentials, check)
+        val cancellation = launch { try { awaitCancellation() } finally { transport.cancel() } }
+        val cache = CloudMetadataCache(context, credentials.identity)
         onProgress(CloudOperationProgress("读取云端书架"))
         try {
-            transport.ensureCollection("")
-            transport.ensureCollection("books/")
-            val ids = cloudOperationMutex.withCatalog(credentials.identity) {
-                check()
-                transport.metadata("catalog.json")?.let(::readCatalog) ?: legacyIds(transport)
+            val saved = cache.read(transport, "catalog.json", "index", parse = CloudCatalog::read)
+            val catalog = saved ?: CloudCatalog(legacyIds(transport))
+            val ids = catalog.ids.filter { id ->
+                verify || catalog.summaries[id]?.let { candidate?.invoke(it) } != false
             }
-            val covers = if (includeCovers) cloudCoverDirectory(credentials).apply { check(mkdirs() || isDirectory) } else null
+            val verifiedTags = if (verify && ids.size >= 4 && cache.hasBookRecords()) transport.manifestETags() else emptyMap()
+            val covers = cloudCoverDirectory(credentials)
+            val observed = LinkedHashMap<String, CloudBookSummary>()
             onProgress(CloudOperationProgress("读取云端书籍信息 0 / ${ids.size}", if (ids.isEmpty()) 1f else 0f))
-            ids.mapIndexedNotNull { index, id ->
-                check()
-                CloudArchive.safeId(id)
-                val bytes = transport.metadata("books/$id/manifest.json")
-                val info = bytes?.let {
-                    val manifest = readManifest(it, id)
-                    val coverName = manifest.cover
-                    val cover = if (covers != null && coverName != null) {
-                        val file = File(covers, "$id-${manifest.info.revision}.jpg")
-                        if (!file.exists()) {
-                            val partial = File(covers, "$id-${UUID.randomUUID()}.tmp")
-                            try {
-                                transport.download("books/$id/$coverName", partial, false, 4L * 1024 * 1024) { check() }
-                                check(partial.renameTo(file)) { "封面保存失败" }
-                            } finally { partial.delete() }
+            var done = 0
+            val books = buildList {
+                for (batch in ids.chunked(3)) {
+                    val rows = coroutineScope {
+                        batch.map { id -> async {
+                            cloudMetadataReads.withPermit {
+                                cache.read(transport, "books/$id/manifest.json", id, verifiedTags[id]) { bytes ->
+                                    require(bytes.size <= CLOUD_METADATA_LIMIT) { "云端图书记录过大" }
+                                    val json = JSONObject(bytes.decodeToString())
+                                    val row = manifestSummary(json, id)
+                                    val info = if (candidate == null || candidate(row)) readManifest(json, id).info else null
+                                    row to info
+                                }
+                            }
+                        } }.awaitAll()
+                    }
+                    for (record in rows) {
+                        if (record != null) {
+                            val (row, info) = record
+                            observed[row.id] = row
+                            if (info != null) {
+                                val file = coverFile(covers, info)
+                                val cover = if (file?.isFile == true) file.absolutePath
+                                    else if (includeCovers) readCloudCover(transport, covers, info, check) else null
+                                add(info.copy(book = info.book.copy(coverPath = cover, cloudOnly = true,
+                                    cloudEnabled = true, sourceUri = null, sourceLinked = false, cloudBackupAt = info.backupAt)))
+                            }
                         }
-                        file.absolutePath
-                    } else null
-                    manifest.info.copy(book = manifest.info.book.copy(coverPath = cover, cloudOnly = true,
-                        cloudEnabled = true, sourceUri = null, sourceLinked = false, cloudBackupAt = manifest.info.backupAt))
+                        done++
+                        onProgress(CloudOperationProgress("读取云端书籍信息 $done / ${ids.size}", done.toFloat() / ids.size))
+                    }
                 }
-                onProgress(CloudOperationProgress("读取云端书籍信息 ${index + 1} / ${ids.size}", (index + 1).toFloat() / ids.size))
-                info
             }
-        } finally { transport.cancel() }
+            require(credentialStore.read()?.identity == credentials.identity) { "WebDAV 配置已更改，请重新还原书籍信息" }
+            if (verify && saved != null && observed.any { (id, row) -> saved.summaries[id]?.sameIdentity(row) != true }) {
+                cloudOperationMutex.withCatalog(credentials.identity) {
+                    try {
+                        val latest = transport.versionedMetadata("catalog.json")
+                        if (latest != null && CloudCatalog.read(latest.bytes) == saved) {
+                            transport.putVersionedMetadata("catalog.json", saved.copy(summaries = saved.summaries + observed).write(), latest.etag)
+                        }
+                    } catch (error: Exception) {
+                        if (error is CancellationException) throw error
+                    }
+                }
+            }
+            books
+        } finally {
+            cancellation.cancel()
+            transport.cancel()
+            cache.prune()
+        }
+    }
+
+    internal suspend fun loadCloudCovers(account: String, books: List<CloudBookInfo>): Map<String, String> =
+        withContext(Dispatchers.IO) {
+            val job = currentCoroutineContext()
+            val credentials = credentialStore.read()?.takeIf { it.identity == account } ?: return@withContext emptyMap()
+            val transport = transportFactory(credentials) { job.ensureActive() }
+            val cancellation = launch { try { awaitCancellation() } finally { transport.cancel() } }
+            val directory = cloudCoverDirectory(credentials)
+            try {
+                buildMap {
+                    for (info in books) {
+                        job.ensureActive()
+                        val cover = try {
+                            cloudMetadataReads.withPermit { readCloudCover(transport, directory, info) { job.ensureActive() } }
+                        } catch (error: Exception) {
+                            if (error is CancellationException) throw error
+                            null
+                        }
+                        if (cover != null) put(info.book.id, cover)
+                    }
+                }
+            } finally { cancellation.cancel(); transport.cancel() }
+        }
+
+    private fun coverFile(directory: File, info: CloudBookInfo): File? = info.cloudCover?.let {
+        File(directory, "${info.book.id}-${info.revision}.jpg")
+    }
+
+    private fun readCloudCover(transport: CloudTransport, directory: File, info: CloudBookInfo, check: () -> Unit): String? {
+        val file = coverFile(directory, info) ?: return null
+        if (!file.isFile) {
+            check(directory.isDirectory || directory.mkdirs() || directory.isDirectory)
+            val partial = File(directory, "${info.book.id}-${UUID.randomUUID()}.tmp")
+            try {
+                transport.download("books/${info.book.id}/${info.cloudCover}", partial, false, 4L * 1024 * 1024) { check() }
+                check(partial.renameTo(file) || file.isFile) { "封面保存失败" }
+            } finally { partial.delete() }
+        }
+        return file.absolutePath
     }
 
     /** The caller may hold the short catalog lock while validating and merging a metadata snapshot. */
@@ -333,7 +431,10 @@ class CloudBackupService(
         val credentials = requireNotNull(credentialStore.read()) { "请先配置 WebDAV 网盘" }
         require(credentials.identity == expectedIdentity) { "WebDAV 配置已更改，请重新还原书籍信息" }
         val transport = transportFactory(credentials) { job.ensureActive() }
-        try { (transport.metadata("catalog.json")?.let(::readCatalog) ?: legacyIds(transport)).toSet() }
+        try {
+            val index = CloudMetadataCache(context, credentials.identity).read(transport, "catalog.json", "index", parse = CloudCatalog::read)
+            (index?.ids ?: legacyIds(transport)).toSet()
+        }
         finally { transport.cancel() }
     }
 
@@ -359,9 +460,8 @@ class CloudBackupService(
                 discardCloudCovers(id)
                 return@withCatalog
             }
-            val ids = readCatalog(current.bytes).filterNot { it == id }
-            val bytes = JSONObject().put("version", 1).put("bookIds", JSONArray(ids))
-                .toString().toByteArray(Charsets.UTF_8)
+            val index = CloudCatalog.read(current.bytes)
+            val bytes = index.copy(ids = index.ids - id, summaries = index.summaries - id).write()
             onProgress(CloudOperationProgress("更新云端书籍索引"))
             if (transport.putVersionedMetadata("catalog.json", bytes, current.etag)) {
                 discardPendingUpload(id)
@@ -584,14 +684,7 @@ class CloudBackupService(
         catch (error: Throwable) { file.failWrite(output); throw error }
     }
 
-    private fun readCatalog(bytes: ByteArray): List<String> {
-        require(bytes.size <= CLOUD_METADATA_LIMIT)
-        val json = JSONObject(bytes.toString(Charsets.UTF_8))
-        require(json.getInt("version") == 1) { "云端书籍索引版本不受支持" }
-        val array = json.getJSONArray("bookIds")
-        require(array.length() <= 10_000) { "云端书籍数量超过限制" }
-        return (0 until array.length()).map { CloudArchive.safeId(array.getString(it)) }.distinct()
-    }
+    private fun readCatalog(bytes: ByteArray): List<String> = CloudCatalog.read(bytes).ids
 
     private fun legacyIds(transport: CloudTransport): List<String> = transport.collections("books/").also {
         // Jianguoyun limits one PROPFIND response to 750 entries including the parent.
@@ -608,20 +701,38 @@ class CloudBackupService(
         }
     }
 
-    private fun publishCatalog(transport: CloudTransport, bookId: String, check: () -> Unit) {
+    private fun publishCatalog(transport: CloudTransport, info: CloudBookInfo, check: () -> Unit) {
+        val entry = CloudBookSummary.from(info)
+        var registered = false
         repeat(4) {
             check()
-            val bytes = transport.metadata("catalog.json")
-            if (bytes != null && bookId in readCatalog(bytes)) return
-            val current = transport.versionedMetadata("catalog.json")
-            val previousIds = current?.let { readCatalog(it.bytes) } ?: legacyIds(transport)
-            if (current != null && bookId in previousIds) return
-            val ids = previousIds + bookId
-            require(ids.distinct().size <= 10_000) { "云端书籍数量超过限制" }
-            val updated = JSONObject().put("version", 1).put("bookIds", JSONArray(ids.distinct().sorted()))
-                .toString().toByteArray(Charsets.UTF_8)
-            if (transport.putVersionedMetadata("catalog.json", updated, current?.etag)) return
+            val remote = transport.readMetadata("catalog.json", null)
+            val snapshot = remote.bytes?.let(CloudCatalog::read)
+            registered = snapshot?.ids?.contains(entry.id) == true
+            val previous = snapshot?.summaries?.get(entry.id)
+            // A progress-only write leaves the catalogue unchanged. Manifest ETags validate the records.
+            if (previous != null && previous.sameIdentity(entry)) return
+            val tag = runCatching { cloudStrongETag(remote.etag) }.getOrNull()
+            val current = try {
+                if (tag != null && remote.bytes != null) CloudVersionedMetadata(remote.bytes, tag)
+                else transport.versionedMetadata("catalog.json")
+            } catch (error: IllegalArgumentException) {
+                if (registered) return
+                throw error
+            }
+            val catalog = current?.let { CloudCatalog.read(it.bytes) } ?: CloudCatalog(legacyIds(transport))
+            val ids = (catalog.ids + entry.id).distinct()
+            require(ids.size <= 10_000) { "云端书籍数量超过限制" }
+            val updated = catalog.copy(ids = ids, summaries = catalog.summaries + (entry.id to entry)).write()
+            try {
+                if (transport.putVersionedMetadata("catalog.json", updated, current?.etag)) return
+            } catch (error: CloudHttpException) {
+                // An existing record is already committed; a summary remains an optional lookup hint.
+                if (registered && !error.retryable) return
+                throw error
+            }
         }
+        if (registered) return
         error("其他设备正在更新云端书籍索引，请稍后重新上传")
     }
 
@@ -684,9 +795,34 @@ class CloudBackupService(
 
     private data class Manifest(val info: CloudBookInfo, val assets: List<CloudAssetRecord>, val cover: String?)
 
+    private fun manifestSummary(json: JSONObject, id: String): CloudBookSummary {
+        require(json.getInt("version") == 1) { "云端备份版本不受支持" }
+        val book = json.getJSONObject("book")
+        require(book.getString("id") == id) { "云端图书标识不匹配" }
+        val fileName = book.optString("sourceFileName").takeIf { !book.isNull("sourceFileName") && it.isNotBlank() }
+        var size = book.optLong("sourceFileBytes", -1).takeIf { it >= 0 }
+        if (size == null && fileName != null && book.optString("format") != BookFormat.IMAGES.name) {
+            val assets = json.getJSONArray("assets")
+            val source = book.optString("sourcePath")
+            for (index in 0 until assets.length()) {
+                val asset = assets.getJSONObject(index)
+                if (asset.getString("name") == source) {
+                    size = asset.getLong("bytes").takeIf { it >= 0 }
+                    break
+                }
+            }
+        }
+        val mode = LibraryMode.entries.firstOrNull { it.name == book.optString("mode") } ?: LibraryMode.NOVEL
+        return CloudBookSummary(id, book.getString("title"), mode, fileName, size, CloudArchive.safeId(json.getString("revision")),
+            json.getLong("backupAt"))
+    }
+
     private fun readManifest(bytes: ByteArray, id: String): Manifest {
         require(bytes.size <= CLOUD_METADATA_LIMIT) { "云端图书记录过大" }
-        val json = JSONObject(bytes.toString(Charsets.UTF_8))
+        return readManifest(JSONObject(bytes.decodeToString()), id)
+    }
+
+    private fun readManifest(json: JSONObject, id: String): Manifest {
         val data = readMetadata(json)
         require(data.book.id == id) { "云端图书标识不匹配" }
         val revision = json.getString("revision")
@@ -718,7 +854,7 @@ class CloudBackupService(
             data.book.copy(sourceFileBytes = sourceBytes) else data.book
         return Manifest(CloudBookInfo(identified, data.annotations, data.settings, data.group, data.backupAt,
             revision, archiveBytes, sha256, parts, data.readingSeconds, identity,
-            assets.firstOrNull { it.name == data.book.sourcePath }?.sha256), assets, cover)
+            assets.firstOrNull { it.name == data.book.sourcePath }?.sha256, cloudCover = cover), assets, cover)
     }
 
     private fun readAssets(json: JSONObject): List<CloudAssetRecord> {

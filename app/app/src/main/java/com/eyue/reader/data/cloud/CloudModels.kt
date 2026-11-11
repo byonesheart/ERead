@@ -20,7 +20,8 @@ data class CloudBookInfo(
     val parts: List<CloudArchivePart>,
     val readingSeconds: Long = 0,
     val contentIdentity: String? = null,
-    val sourceSha256: String? = null
+    val sourceSha256: String? = null,
+    val cloudCover: String? = null
 )
 data class CloudRestoredBook(
     val book: Book,
