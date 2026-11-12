@@ -1,13 +1,13 @@
 {
-  "versionCode": 98,
-  "versionName": "1.11.29-beta.3",
+  "versionCode": 99,
+  "versionName": "1.11.29-beta.4",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.29-beta.3",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.29-beta.3/ERead-1.11.29-beta.3-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.29-beta.4",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.29-beta.4/ERead-1.11.29-beta.4-release.apk",
   "mirrors": [],
   "changelog": [
-    "修复大型 EPUB 备份整理失败，以及还原旧云端书架时可能闪退的问题。",
-    "WebDAV 支持保存多个配置，备份可快速切换，网盘导入可直接使用已保存的配置。",
-    "对话颜色移至阅读界面的「文字与排版」。"
+    "书架支持标签、二级分组、多选移动分组和记住上次筛选。",
+    "支持替换书架封面，原始书籍文件保持原样。",
+    "书籍上传和下载通知显示百分比。修复点击笔记输入框时编辑气泡消失的问题。"
   ]
 }
