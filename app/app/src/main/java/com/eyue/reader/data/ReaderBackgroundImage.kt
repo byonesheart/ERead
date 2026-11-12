@@ -13,7 +13,7 @@ import java.io.File
 import java.util.UUID
 
 /** Keep a bounded, portable image rather than a picker grant or a full-resolution bitmap. */
-internal suspend fun importReaderBackground(context: Context, uri: Uri): String = withContext(Dispatchers.IO) {
+internal suspend fun importReaderBackground(context: Context, uri: Uri, folder: File = File(context.filesDir, "backgrounds")): String = withContext(Dispatchers.IO) {
     val temporary = File.createTempFile("reader-background-", ".tmp", context.cacheDir)
     var destination: File? = null
     try {
@@ -25,7 +25,7 @@ internal suspend fun importReaderBackground(context: Context, uri: Uri): String 
                 val count = input.read(buffer)
                 if (count < 0) break
                 total += count
-                require(total <= 32L * 1024 * 1024) { "背景图片不能超过 32 MB" }
+                require(total <= 32L * 1024 * 1024) { "图片不能超过 32 MB" }
                 output.write(buffer, 0, count)
             }
         } }
@@ -51,7 +51,7 @@ internal suspend fun importReaderBackground(context: Context, uri: Uri): String 
                 if (corrected !== bitmap) bitmap.recycle()
                 bitmap = corrected
             }
-            val folder = File(context.filesDir, "backgrounds").apply { check(mkdirs() || isDirectory) }
+            check(folder.mkdirs() || folder.isDirectory)
             val transparent = bitmap.hasAlpha()
             val image = File(folder, "${UUID.randomUUID()}.${if (transparent) "png" else "jpg"}")
             destination = image
@@ -61,4 +61,11 @@ internal suspend fun importReaderBackground(context: Context, uri: Uri): String 
         } finally { bitmap.recycle() }
     } catch (error: Throwable) { destination?.delete(); throw error }
       finally { temporary.delete() }
+}
+
+internal fun bookCoverDirectory(context: Context, bookId: String): File {
+    val root = File(context.filesDir, "books").canonicalFile
+    val book = File(root, bookId).canonicalFile
+    require(book.parentFile == root) { "图书目录越界" }
+    return File(book, "custom-covers").canonicalFile.also { require(it.parentFile == book) }
 }

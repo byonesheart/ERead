@@ -65,7 +65,8 @@ class LibraryRepository(private val context: Context) {
                 readingSeconds = json.optLong("readingSeconds", 0),
                 comicSettings = comic.copy(nightMode = settings.nightMode),
                 groups = json.array("groups").objects().map {
-                    ShelfGroup(it.getString("name"), enumValue(it.optString("mode"), LibraryMode.NOVEL), it.getString("id"))
+                    ShelfGroup(it.getString("name"), enumValue(it.optString("mode"), LibraryMode.NOVEL),
+                        it.getString("id"), it.nullableString("parentId"))
                 },
                 cloudAutoBackup = json.optBoolean("cloudAutoBackup", false),
                 cloudAutoBackupMetered = json.optBoolean("cloudAutoBackupMetered", false),
@@ -103,7 +104,7 @@ class LibraryRepository(private val context: Context) {
             .put("settings", writeSettings(state.settings))
             .put("comicSettings", writeSettings(state.comicSettings.copy(nightMode = state.settings.nightMode)))
             .put("groups", JSONArray(state.groups.map {
-                JSONObject().put("id", it.id).put("name", it.name).put("mode", it.mode.name)
+                JSONObject().put("id", it.id).put("name", it.name).put("mode", it.mode.name).put("parentId", it.parentId)
             }))
             .put("readingSeconds", state.readingSeconds).put("cloudAutoBackup", state.cloudAutoBackup)
             .put("cloudAutoBackupMetered", state.cloudAutoBackupMetered).put("cloudIdentity", state.cloudIdentity)
@@ -295,7 +296,9 @@ class LibraryRepository(private val context: Context) {
         sourceFileBytes = if (json.isNull("sourceFileBytes")) null else json.optLong("sourceFileBytes", -1).takeIf { it >= 0 },
         publicationContents = if (json.isNull("publicationContents")) null else json.array("publicationContents").objects().map {
             PublicationContentsEntry(it.getString("id"), it.getString("title"), it.getInt("chapter"), it.nullableString("parentId"))
-        }
+        },
+        tags = json.array("tags").let { tags -> normalizeShelfTags((0 until tags.length()).mapNotNull { tags.optString(it, "").takeIf(String::isNotBlank) }) },
+        customCover = json.optBoolean("customCover")
     )
 
     internal fun readChapter(chapter: JSONObject): Chapter =
@@ -332,7 +335,11 @@ class LibraryRepository(private val context: Context) {
         .apply { book.publicationContents?.let { contents -> put("publicationContents", JSONArray(contents.map {
             JSONObject().put("id", it.id).put("title", it.title).put("chapter", it.chapter).put("parentId", it.parentId)
         })) } }
-        .apply { if (book.voiceRoles.isNotEmpty()) put("voiceRoles", JSONArray(book.voiceRoles.map { it.toJson() })) }
+        .apply {
+            if (book.voiceRoles.isNotEmpty()) put("voiceRoles", JSONArray(book.voiceRoles.map { it.toJson() }))
+            if (book.tags.isNotEmpty()) put("tags", JSONArray(book.tags))
+            if (book.customCover) put("customCover", true)
+        }
 
     internal fun writeChapter(chapter: Chapter): JSONObject =
             JSONObject().put("id", chapter.id).put("title", chapter.title).put("textPath", chapter.textPath)

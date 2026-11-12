@@ -2,6 +2,9 @@ package com.eyue.reader.ui
 
 import com.eyue.reader.ui.AppIcon as Icon
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -19,6 +22,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
+import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -180,8 +184,6 @@ import java.util.Locale
     }
 }
 
-private const val UNGROUPED_FILTER = "@ungrouped"
-
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable fun Bookshelf(books: List<Book>, query: String, onQuery: (String) -> Unit, onOpen: (Book) -> Unit,
     onDelete: (Book) -> Unit, onImport: () -> Unit, groups: List<ShelfGroup> = emptyList(),
@@ -202,7 +204,12 @@ private const val UNGROUPED_FILTER = "@ungrouped"
     restoreProgress: CloudOperationProgress? = null,
     onRenameBook: ((String, String) -> Boolean)? = null,
     onRemovalCloudBytes: (suspend (List<Book>) -> Map<String, Long>)? = null,
-    onRemoveOriginal: ((List<Book>, Set<String>, Boolean) -> Unit)? = null) {
+    onRemoveOriginal: ((List<Book>, Set<String>, Boolean) -> Unit)? = null,
+    libraryMode: LibraryMode = books.firstOrNull()?.mode ?: groups.firstOrNull()?.mode ?: LibraryMode.NOVEL,
+    onCreateSubgroup: ((String, String) -> Unit)? = null,
+    onMoveBooks: ((List<String>, String?) -> Unit)? = null,
+    onEditTags: ((String, List<String>) -> Unit)? = null,
+    onEditCover: ((String, Uri) -> Unit)? = null) {
     fun transfer(book: Book) = cloudTransfers[book.id] ?: if (cloudBookId == book.id)
         CloudTransferProgress(cloudTaskLabel, cloudFraction, cloudCanCancel) else null
     var selectingBackup by remember { mutableStateOf(false) }
@@ -219,22 +226,70 @@ private const val UNGROUPED_FILTER = "@ungrouped"
     var details by remember { mutableStateOf<Book?>(null) }
     var locating by remember { mutableStateOf<Book?>(null) }
     var actionBookId by remember { mutableStateOf<String?>(null) }
-    var groupFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    val shelfContext = LocalContext.current
+    val browsePreferences = remember(shelfContext, libraryMode) { ShelfBrowsePreferences(shelfContext, libraryMode) }
+    var storedBrowse by remember(browsePreferences) { mutableStateOf(browsePreferences.read()) }
+    var hiddenRevision by remember { mutableIntStateOf(0) }
+    var hidingTags by remember { mutableStateOf(false) }
+    var editingTags by remember { mutableStateOf<String?>(null) }
+    var coverBookId by rememberSaveable { mutableStateOf<String?>(null) }
+    val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val id = coverBookId
+        coverBookId = null
+        if (uri != null && id != null) {
+            retainBookAccess(shelfContext, uri)
+            onEditCover?.invoke(id, uri)
+        }
+    }
     var managingGroups by remember { mutableStateOf(false) }
     var groupEditor by remember { mutableStateOf(false) }
     var editingGroup by remember { mutableStateOf<ShelfGroup?>(null) }
+    var newParentId by remember { mutableStateOf<String?>(null) }
     var groupName by remember { mutableStateOf("") }
     var deletingGroup by remember { mutableStateOf<ShelfGroup?>(null) }
-    var moving by remember { mutableStateOf<Book?>(null) }
+    var moving by remember { mutableStateOf<List<Book>?>(null) }
     var renaming by remember { mutableStateOf<Book?>(null) }
     var renamedTitle by remember { mutableStateOf("") }
     fun rename(book: Book) { renaming = book; renamedTitle = book.title }
-    val groupCounts = remember(books) { books.groupingBy { it.groupId }.eachCount() }
-    val displayed = books.filter {
-        (it.title.contains(query, true) || it.displayAuthor.contains(query, true)) &&
-            (groupFilter == null || groupFilter == UNGROUPED_FILTER && it.groupId == null || it.groupId == groupFilter) &&
-            (filter == 0 || filter == 1 && it.lastReadAt > 0 && it.progress < .999f || filter == 2 && it.progress >= .999f)
-    }.let { list -> when (sort) { 1 -> list.sortedBy { it.title }; 2 -> list.sortedByDescending { it.progress }; else -> list.sortedByDescending { maxOf(it.addedAt, it.lastReadAt) } } }
+    val groupRows = remember(groups) { shelfGroupRows(groups) }
+    val groupCounts = remember(books, groups) {
+        val parents = groups.associate { it.id to it.parentId }
+        val counts = books.groupingBy { it.groupId }.eachCount().toMutableMap()
+        books.forEach { book -> parents[book.groupId]?.let { parent -> counts[parent] = (counts[parent] ?: 0) + 1 } }
+        counts
+    }
+    val tags = remember(books) { books.flatMap { it.tags }.distinct().sorted() }
+    val hiddenTags = remember(browsePreferences, storedBrowse.groupId, storedBrowse.subgroupIds, hiddenRevision) {
+        val children = storedBrowse.subgroupIds.map(browsePreferences::hidden)
+        browsePreferences.hidden(null) + browsePreferences.hidden(storedBrowse.groupId) +
+            (children.reduceOrNull { left, right -> left intersect right }.orEmpty())
+    }
+    val browse = remember(storedBrowse, groups, tags, hiddenTags) { storedBrowse.available(groups, tags.toSet(), hiddenTags) }
+    fun selectBrowse(next: ShelfBrowseFilter) {
+        storedBrowse = next
+        browsePreferences.save(next)
+    }
+    val subgroupChoices = remember(groups, browse.groupId) { groups.filter { it.parentId != null && it.parentId == browse.groupId } }
+    val childIds = remember(subgroupChoices) { subgroupChoices.mapTo(mutableSetOf()) { it.id } }
+    val visibleTags = remember(books, childIds, browse, tags, hiddenTags) {
+        if (browse.tagMode) tags else {
+            books.asSequence().filter { browse.includesGroup(it, childIds) }.flatMap { it.tags.asSequence() }
+                .filterNot { it in hiddenTags }.distinct().sorted().toList()
+        }
+    }
+    val activeTag = browse.tag?.takeIf { it in visibleTags }
+    val displayed = remember(books, query, browse, childIds, activeTag, filter, sort) {
+        val matched = books.filter {
+            (it.title.contains(query, true) || it.displayAuthor.contains(query, true)) &&
+                browse.includesGroup(it, childIds) && (activeTag == null || activeTag in it.tags) &&
+                (filter == 0 || filter == 1 && it.lastReadAt > 0 && it.progress < .999f || filter == 2 && it.progress >= .999f)
+        }
+        when (sort) {
+            1 -> matched.sortedBy { it.title }
+            2 -> matched.sortedByDescending { it.progress }
+            else -> matched.sortedByDescending { maxOf(it.addedAt, it.lastReadAt) }
+        }
+    }
     Column(Modifier.fillMaxSize().testTag("bookshelf")) {
         OutlinedTextField(query, onQuery, placeholder = { Text("搜索书名或作者", fontSize = 13.sp, color = Muted) }, singleLine = true,
             leadingIcon = { Icon(Icons.Outlined.Search, null, Modifier.size(19.dp)) },
@@ -243,23 +298,55 @@ private const val UNGROUPED_FILTER = "@ungrouped"
             colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = Line, focusedBorderColor = Olive,
                 unfocusedContainerColor = MaterialTheme.colorScheme.surface, focusedContainerColor = MaterialTheme.colorScheme.surface))
         Row(Modifier.fillMaxWidth().padding(end = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            LazyRow(Modifier.weight(1f), contentPadding = PaddingValues(start = 24.dp, end = 8.dp),
+            if (browse.tagMode) Text("按标签浏览", Modifier.weight(1f).padding(start = 24.dp), fontSize = 13.sp)
+            else LazyRow(Modifier.weight(1f), contentPadding = PaddingValues(start = 24.dp, end = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
-                    FilterChip(groupFilter == null, { groupFilter = null }, { Text("全部 ${books.size}", fontSize = 12.sp) },
+                    FilterChip(browse.groupId == null, { selectBrowse(ShelfBrowseFilter()) }, { Text("全部 ${books.size}", fontSize = 12.sp) },
                         modifier = Modifier.testTag("shelf_group_all"))
                 }
                 item {
-                    FilterChip(groupFilter == UNGROUPED_FILTER, { groupFilter = UNGROUPED_FILTER },
+                    FilterChip(browse.groupId == UNGROUPED_FILTER, { selectBrowse(ShelfBrowseFilter(groupId = UNGROUPED_FILTER)) },
                         { Text("未分组 ${groupCounts[null] ?: 0}", fontSize = 12.sp) }, modifier = Modifier.testTag("shelf_group_ungrouped"))
                 }
-                items(groups, key = { it.id }) { group ->
-                    FilterChip(groupFilter == group.id, { groupFilter = group.id },
+                items(groups.filter { it.parentId == null }, key = { it.id }) { group ->
+                    FilterChip(browse.groupId == group.id, { selectBrowse(ShelfBrowseFilter(groupId = group.id)) },
                         { Text("${group.name} ${groupCounts[group.id] ?: 0}", fontSize = 12.sp) }, modifier = Modifier.testTag("shelf_group_${group.id}"))
                 }
             }
+            IconButton(onClick = { selectBrowse(browse.copy(tag = null, tagMode = !browse.tagMode)) },
+                modifier = Modifier.size(40.dp).testTag("shelf_tag_mode")) {
+                Icon(if (browse.tagMode) Icons.Outlined.Folder else Icons.AutoMirrored.Outlined.Label,
+                    if (browse.tagMode) "按分组浏览" else "按标签浏览", Modifier.size(21.dp), tint = Muted)
+            }
             IconButton(onClick = { managingGroups = true }, modifier = Modifier.size(40.dp).testTag("shelf_manage_groups")) {
                 Icon(Icons.Outlined.FolderOpen, "管理分组", Modifier.size(21.dp), tint = Muted)
+            }
+        }
+        if (!browse.tagMode && subgroupChoices.isNotEmpty()) LazyRow(
+            modifier = Modifier.fillMaxWidth().testTag("shelf_subgroups"),
+            contentPadding = PaddingValues(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item {
+                FilterChip(browse.subgroupIds.isEmpty(), { selectBrowse(browse.copy(subgroupIds = emptySet())) },
+                    { Text("全部子组", fontSize = 12.sp) })
+            }
+            items(subgroupChoices, key = { it.id }) { group ->
+                val selected = group.id in browse.subgroupIds
+                FilterChip(selected, {
+                    selectBrowse(browse.copy(subgroupIds = if (selected) browse.subgroupIds - group.id else browse.subgroupIds + group.id))
+                }, { Text(group.name, fontSize = 12.sp) }, modifier = Modifier.testTag("shelf_subgroup_${group.id}"))
+            }
+        }
+        if (visibleTags.isNotEmpty() || browse.tagMode) LazyRow(
+            modifier = Modifier.fillMaxWidth().testTag("shelf_tags"),
+            contentPadding = PaddingValues(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item {
+                FilterChip(activeTag == null, { selectBrowse(browse.copy(tag = null)) }, { Text("全部标签", fontSize = 12.sp) })
+            }
+            items(visibleTags, key = { it }) { tag ->
+                FilterChip(activeTag == tag, { selectBrowse(browse.copy(tag = tag.takeUnless { it == activeTag })) },
+                    { Text(tag, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    modifier = Modifier.widthIn(max = 175.dp).testTag("shelf_tag_$tag"))
             }
         }
         Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, bottom = 12.dp).testTag("shelf_status_filters"), verticalAlignment = Alignment.CenterVertically) {
@@ -269,7 +356,7 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                     modifier = Modifier.clip(appShape(9.dp)).clickable { filter = i }.padding(end = 19.dp, top = 8.dp, bottom = 8.dp))
             }
             Spacer(Modifier.weight(1f))
-            if (onCloudBatch != null || onRemoveBatch != null) {
+            if (onCloudBatch != null || onRemoveBatch != null || onMoveBooks != null) {
                 IconButton(onClick = { selectingBackup = true },
                     modifier = Modifier.size(34.dp).testTag("shelf_batch_manage")) {
                     Icon(Icons.Outlined.Checklist, "批量管理", Modifier.size(20.dp), tint = Muted)
@@ -310,6 +397,10 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 Text("上传或下载", fontSize = 11.sp, maxLines = 1)
             }
             Spacer(Modifier.width(5.dp))
+            if (onMoveBooks != null) IconButton(enabled = selected.isNotEmpty(), onClick = { moving = selected },
+                modifier = Modifier.size(36.dp).testTag("shelf_batch_move")) {
+                Icon(Icons.Outlined.FolderOpen, "移动分组", Modifier.size(19.dp))
+            }
             FilledTonalButton(enabled = selected.isNotEmpty() && onRemoveBatch != null, onClick = { deletingBatch = selected },
                 modifier = Modifier.height(34.dp).testTag("shelf_batch_delete"), contentPadding = PaddingValues(horizontal = 9.dp),
                 colors = ButtonDefaults.filledTonalButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("删除", fontSize = 11.sp) }
@@ -399,7 +490,11 @@ private const val UNGROUPED_FILTER = "@ungrouped"
             onDismiss = { actionBookId = null },
             onDetails = { actionBookId = null; details = book },
             onLocation = { actionBookId = null; locating = book },
-            onMove = { actionBookId = null; moving = book },
+            onMove = { actionBookId = null; moving = listOf(book) },
+            onEditTags = onEditTags?.let { { actionBookId = null; editingTags = book.id } },
+            onEditCover = if (onEditCover != null && !book.cloudOnly) {
+                { actionBookId = null; coverBookId = book.id; coverPicker.launch(arrayOf("image/*")) }
+            } else null,
             onRename = onRenameBook?.let { { actionBookId = null; rename(book) } },
             onGenerateSpeech = if (book.hasSpeechText() && onGenerateSpeech != null) {
                 { actionBookId = null; onGenerateSpeech(book.id) }
@@ -417,6 +512,14 @@ private const val UNGROUPED_FILTER = "@ungrouped"
             } else null,
             onDelete = { actionBookId = null; deleting = book })
     }
+    books.firstOrNull { it.id == editingTags }?.let { book ->
+        ShelfTagsDialog(book, tags, { onEditTags?.invoke(book.id, it) }, { editingTags = null })
+    }
+    if (hidingTags) ShelfHiddenTagsDialog(groups, tags, browse.subgroupIds.singleOrNull() ?: browse.groupId,
+        hidden = browsePreferences::hidden, onSave = { group, hidden ->
+            browsePreferences.saveHidden(group, hidden)
+            hiddenRevision++
+        }, onDismiss = { hidingTags = false })
     renaming?.let { book ->
         AlertDialog(onDismissRequest = { renaming = null },
             modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(.9f).testTag("shelf_rename_dialog"),
@@ -443,13 +546,19 @@ private const val UNGROUPED_FILTER = "@ungrouped"
             title = { Text("管理分组") }, text = {
                 if (groups.isEmpty()) Text("暂无分组", color = Muted)
                 else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(groups, key = { it.id }) { group ->
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    items(groupRows, key = { it.id }) { group ->
+                        Row(Modifier.fillMaxWidth().padding(start = if (group.parentId != null) 16.dp else 0.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(group.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text("${groupCounts[group.id] ?: 0} 本", color = Muted, fontSize = 11.sp)
                             }
-                            IconButton(onClick = { editingGroup = group; groupName = group.name; groupEditor = true },
+                            if (group.parentId == null && onCreateSubgroup != null) IconButton(onClick = {
+                                editingGroup = null; newParentId = group.id; groupName = ""; groupEditor = true
+                            }, modifier = Modifier.testTag("shelf_group_add_subgroup_${group.id}")) {
+                                Icon(Icons.Outlined.CreateNewFolder, "为 ${group.name} 新建二级分组", Modifier.size(20.dp))
+                            }
+                            IconButton(onClick = { editingGroup = group; newParentId = null; groupName = group.name; groupEditor = true },
                                 modifier = Modifier.testTag("shelf_group_rename_${group.id}")) {
                                 Icon(Icons.Outlined.Edit, "重命名分组 ${group.name}", Modifier.size(20.dp))
                             }
@@ -460,45 +569,60 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                     }
                 }
             }, confirmButton = {
-                TextButton(onClick = { editingGroup = null; groupName = ""; groupEditor = true }, modifier = Modifier.testTag("shelf_create_group")) {
+                TextButton(onClick = { editingGroup = null; newParentId = null; groupName = ""; groupEditor = true }, modifier = Modifier.testTag("shelf_create_group")) {
                     Text("新建分组")
                 }
-            }, dismissButton = { TextButton(onClick = { managingGroups = false }) { Text("关闭") } })
+            }, dismissButton = {
+                TextButton(onClick = { managingGroups = false; hidingTags = true }, modifier = Modifier.testTag("shelf_manage_hidden_tags")) { Text("隐藏标签") }
+                TextButton(onClick = { managingGroups = false }) { Text("关闭") }
+            })
     }
     if (groupEditor) {
-        AlertDialog(onDismissRequest = { groupEditor = false }, title = { Text(if (editingGroup == null) "新建分组" else "重命名分组") },
+        AlertDialog(onDismissRequest = { groupEditor = false }, title = { Text(when {
+            editingGroup != null -> "重命名分组"
+            newParentId != null -> "新建二级分组"
+            else -> "新建分组"
+        }) },
             text = { OutlinedTextField(groupName, { groupName = it }, label = { Text("分组名称") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth().testTag("shelf_group_name_input")) },
             confirmButton = { TextButton(onClick = {
                 val name = groupName.trim()
-                editingGroup?.let { onRenameGroup(it.id, name) } ?: onCreateGroup(name)
+                when {
+                    editingGroup != null -> onRenameGroup(requireNotNull(editingGroup).id, name)
+                    newParentId != null -> onCreateSubgroup?.invoke(requireNotNull(newParentId), name)
+                    else -> onCreateGroup(name)
+                }
                 groupEditor = false
             }, enabled = groupName.isNotBlank()) { Text("保存") } },
             dismissButton = { TextButton(onClick = { groupEditor = false }) { Text("取消") } })
     }
     deletingGroup?.let { group ->
         AlertDialog(onDismissRequest = { deletingGroup = null }, title = { Text("删除分组《${group.name}》？") },
-            text = { Text("分组中的书籍将归为未分组，书籍和阅读记录保留。") },
+            text = { Text(if (group.parentId != null) "书籍将移回一级分组。"
+                else "下属二级分组也会移除，其中的书籍将归为未分组。") },
             confirmButton = { TextButton(onClick = {
                 onDeleteGroup(group.id)
-                if (groupFilter == group.id) groupFilter = null
+                if (browse.groupId == group.id) selectBrowse(browse.copy(groupId = null, subgroupIds = emptySet()))
+                else if (group.id in browse.subgroupIds) selectBrowse(browse.copy(subgroupIds = browse.subgroupIds - group.id))
                 deletingGroup = null
             }) { Text("删除分组", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { deletingGroup = null }) { Text("取消") } })
     }
-    moving?.let { book ->
+    moving?.let { selected ->
+        fun moveTo(group: String?) {
+            if (onMoveBooks != null) onMoveBooks(selected.map { it.id }, group) else selected.forEach { onMoveBook(it.id, group) }
+            moving = null
+            if (selectingBackup) { selectingBackup = false; backupSelection = emptySet() }
+        }
         AlertDialog(onDismissRequest = { moving = null }, modifier = Modifier.testTag("shelf_move_dialog"),
-            title = { Text("移动《${book.title}》") }, text = {
+            title = { Text(if (selected.size == 1) "移动《${selected.first().title}》" else "移动 ${selected.size} 本书") }, text = {
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
                     item {
-                        ShelfMoveChoice("未分组", book.groupId == null, Modifier.testTag("shelf_move_ungrouped")) {
-                            onMoveBook(book.id, null); moving = null
-                        }
+                        ShelfMoveChoice("未分组", selected.all { it.groupId == null }, Modifier.testTag("shelf_move_ungrouped")) { moveTo(null) }
                     }
-                    items(groups, key = { it.id }) { group ->
-                        ShelfMoveChoice(group.name, book.groupId == group.id, Modifier.testTag("shelf_move_${group.id}")) {
-                            onMoveBook(book.id, group.id); moving = null
-                        }
+                    items(groupRows, key = { it.id }) { group ->
+                        ShelfMoveChoice(shelfGroupLabel(groups, group), selected.all { it.groupId == group.id },
+                            Modifier.testTag("shelf_move_${group.id}")) { moveTo(group.id) }
                     }
                 }
             }, confirmButton = { TextButton(onClick = { moving = null }) { Text("取消") } })
@@ -534,7 +658,8 @@ private const val UNGROUPED_FILTER = "@ungrouped"
                 if (book.mode == LibraryMode.NOVEL) Text("AI 语音缓存：" + (speechCacheBytes?.let {
                     android.text.format.Formatter.formatShortFileSize(context, it)
                 } ?: "统计中…"), modifier = Modifier.testTag("book_ai_speech_cache_size"))
-                Text("分组：${groups.firstOrNull { it.id == book.groupId }?.name ?: "未分组"}")
+                Text("分组：${groups.firstOrNull { it.id == book.groupId }?.let { shelfGroupLabel(groups, it) } ?: "未分组"}")
+                Text("标签：${book.tags.joinToString(" · ").ifEmpty { "无" }}", modifier = Modifier.testTag("book_info_tags"))
                 if (!book.isDemo) Text(if (book.cloudOnly) "存储：云端，尚未下载" else if (book.sourceLinked) "存储：引用原文件" else "存储：应用内保存")
                 TextButton(onClick = { details = null; locating = book }, modifier = Modifier.testTag("book_storage_location")) { Text("书籍位置") }
                 if (book.cloudBackupAt > 0) Text("云端备份：${SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.CHINA).format(Date(book.cloudBackupAt))}")

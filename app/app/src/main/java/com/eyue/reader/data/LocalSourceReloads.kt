@@ -53,6 +53,7 @@ internal class LocalSourceReloads(private val context: Context) {
             ?: current.chapterIndex.coerceIn(0, prepared.chapters.lastIndex.coerceAtLeast(0))
         val length = prepared.chapters.getOrNull(chapter)?.characterCount?.takeIf { it >= 0 } ?: Int.MAX_VALUE
         return prepared.copy(title = current.title, sourceUri = current.sourceUri ?: prepared.sourceUri,
+            coverPath = if (current.customCover) current.coverPath else prepared.coverPath, customCover = current.customCover, tags = current.tags,
             sourceFileName = if (current.sourceUri != prepared.sourceUri) current.sourceFileName ?: prepared.sourceFileName else prepared.sourceFileName, groupId = current.groupId, voiceRoles = current.voiceRoles,
             cloudEnabled = current.cloudEnabled, cloudBackupAt = current.cloudBackupAt, addedAt = current.addedAt,
             chapterIndex = chapter, characterOffset = current.characterOffset.coerceAtMost(length), pageIndex = 0,

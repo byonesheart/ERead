@@ -1,5 +1,7 @@
 package com.eyue.reader.data.cloud
 
+import com.eyue.reader.data.bookTransferProgress
+
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
@@ -231,8 +233,8 @@ class WebDavBookDownloadWorker(context: Context, parameters: WorkerParameters) :
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(channel, "网盘图书导入", NotificationManager.IMPORTANCE_LOW))
         val notification = NotificationCompat.Builder(applicationContext, channel)
-            .setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle(name).setContentText("下载图书")
-            .setProgress(100, ((fraction ?: 0f) * 100).toInt(), fraction == null).setOnlyAlertOnce(true).setOngoing(true)
+            .setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle(name).bookTransferProgress("下载图书", fraction)
+            .setOnlyAlertOnce(true).setOngoing(true)
             .addAction(android.R.drawable.ic_delete, "取消下载", WorkManager.getInstance(applicationContext).createCancelPendingIntent(id))
             .build()
         val notificationId = id.hashCode().and(Int.MAX_VALUE).coerceAtLeast(1)

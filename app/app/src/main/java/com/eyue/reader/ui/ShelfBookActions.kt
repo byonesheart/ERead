@@ -8,6 +8,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -35,7 +36,7 @@ import kotlinx.coroutines.launch
     cloudBusy: Boolean, cloudDirty: Boolean, onDismiss: () -> Unit, onDetails: () -> Unit, onMove: () -> Unit,
     onRename: (() -> Unit)?, onGenerateSpeech: (() -> Unit)?, onVoiceRoles: (() -> Unit)?,
     onCloud: (() -> Unit)?, onDeleteCloud: (() -> Unit)?, onClearSpeech: (() -> Unit)?, onDelete: () -> Unit,
-    onLocation: (() -> Unit)? = null) {
+    onLocation: (() -> Unit)? = null, onEditTags: (() -> Unit)? = null, onEditCover: (() -> Unit)? = null) {
     val colors = MaterialTheme.colorScheme
     val sheetMaxHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() } * .82f
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -61,6 +62,8 @@ import kotlinx.coroutines.launch
                     Text("${book.chapters.getOrNull(book.chapterIndex)?.title ?: "尚未开始"} · ${(book.progress * 100).toInt()}%",
                         fontSize = 11.sp, color = Olive, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(top = 4.dp))
+                    if (book.tags.isNotEmpty()) Text(book.tags.joinToString(" · "), color = Muted, fontSize = 11.sp,
+                        maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp).testTag("book_action_tags"))
                 }
                 IconButton(onClick = { choose(onDismiss) }, modifier = Modifier.size(36.dp).testTag("book_action_close")) {
                     Icon(Icons.Outlined.Close, "关闭更多选项", Modifier.size(20.dp))
@@ -80,6 +83,8 @@ import kotlinx.coroutines.launch
                 }
             }
             val actions = buildList {
+                onEditCover?.let { add(ShelfAction(Icons.Outlined.Image, "编辑封面", "shelf_edit_cover_${book.id}", onClick = { choose(it) })) }
+                onEditTags?.let { add(ShelfAction(Icons.AutoMirrored.Outlined.Label, "编辑标签", "shelf_edit_tags_${book.id}", onClick = { choose(it) })) }
                 onLocation?.let { add(ShelfAction(Icons.Outlined.FolderOpen, "书籍位置", "shelf_book_location_${book.id}", onClick = { choose(it) })) }
                 onRename?.let { add(ShelfAction(Icons.Outlined.Edit, "重命名书籍", "shelf_book_rename_${book.id}", onClick = { choose(it) })) }
                 onCloud?.let {

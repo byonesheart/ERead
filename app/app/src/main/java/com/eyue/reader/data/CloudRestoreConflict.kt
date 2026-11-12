@@ -86,5 +86,5 @@ internal fun resolveCloudRestoreSelectionsInformation(state: LibraryState, incom
         resolved[it.book.id]?.keepRemote == false }
     val base = state.copy(books = state.books.filterNot { it.id in discarded }, annotations = state.annotations.filterNot { it.bookId in discarded })
     return mergeCloudBookInformation(base, retained.map { it.book }, retained.flatMap { it.annotations },
-        retained.mapNotNull { it.group }, retained.maxOfOrNull { it.readingSeconds } ?: 0)
+        retained.flatMap { listOfNotNull(it.group, it.parentGroup) }, retained.maxOfOrNull { it.readingSeconds } ?: 0)
 }

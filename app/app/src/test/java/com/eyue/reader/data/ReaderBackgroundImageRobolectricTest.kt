@@ -76,6 +76,26 @@ class ReaderBackgroundImageRobolectricTest {
         assertTrue(context.cacheDir.listFiles().orEmpty().isEmpty())
     }
 
+    @Test fun customCoverIsPrivateAndDoesNotModifyTheBookOrImage() = runBlocking {
+        val source = File(root, "book.txt").apply { writeText("第一章\n书籍原文") }
+        val image = File(root, "selected.png")
+        val bitmap = Bitmap.createBitmap(80, 120, Bitmap.Config.ARGB_8888)
+        try { image.outputStream().use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) } }
+        finally { bitmap.recycle() }
+        val originalImage = image.readBytes()
+        val directory = bookCoverDirectory(context, "test-book")
+        val cover = importReaderBackground(context, Uri.parse(image.absolutePath), directory)
+        val repository = LibraryRepository(context)
+        val book = Book(id = "test-book", title = "书籍", format = BookFormat.TXT, mode = LibraryMode.NOVEL,
+            chapters = listOf(Chapter(title = "第一章")), sourcePath = source.absolutePath, coverPath = cover, customCover = true,
+            tags = listOf("短篇", "测试"))
+        repository.save(LibraryState(books = listOf(book)))
+        assertEquals(book, repository.load().books.single())
+        assertEquals(directory, File(cover).parentFile)
+        assertEquals("第一章\n书籍原文", source.readText())
+        assertArrayEquals(originalImage, image.readBytes())
+    }
+
     @Test fun imagePreferencesRoundTripIndependentlyAndOldSettingsDefaultToNoImage() {
         val repository = LibraryRepository(context)
         val novel = ReaderSettings(background = ReaderBackground.IMAGE, backgroundImagePath = "/novel.jpg")

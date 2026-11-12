@@ -69,7 +69,7 @@ internal class CloudBookFingerprint(repository: LibraryRepository, state: Librar
 
 internal class CloudDirtyBookIndex(private val repository: LibraryRepository,
     private val prepare: (LibraryRepository, LibraryState, Book) -> CloudBookFingerprint = ::CloudBookFingerprint) {
-    private data class Inputs(val book: Book, val annotations: List<Annotation>, val settings: ReaderSettings, val group: ShelfGroup?)
+    private data class Inputs(val book: Book, val annotations: List<Annotation>, val settings: ReaderSettings, val groups: List<ShelfGroup>)
     private data class Position(val chapter: Int, val page: Int, val offset: Int, val progress: Float, val image: String?)
     private data class Entry(val inputs: Inputs, val template: CloudBookFingerprint, val position: Position, val digest: String)
     private val entries = mutableMapOf<String, Entry>()
@@ -89,7 +89,7 @@ internal class CloudDirtyBookIndex(private val repository: LibraryRepository,
             val inputs = Inputs(book.withoutReadingPosition().copy(cloudBackupAt = 0, cloudEnabled = true, cloudOnly = false,
                 positionImagePath = book.positionImagePath?.let { "" }), annotations[book.id].orEmpty(),
                 (if (book.mode == LibraryMode.COMIC) state.comicSettings else state.settings).copy(nightMode = false),
-                state.groups.find { it.id == book.groupId })
+                cloudBookGroups(state.groups, book.groupId))
             val previous = entries[book.id]
             val template = previous?.takeIf { !refreshFiles && it.inputs == inputs }?.template
                 ?: prepare(repository, state, book)

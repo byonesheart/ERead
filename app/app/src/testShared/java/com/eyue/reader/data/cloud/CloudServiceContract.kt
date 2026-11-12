@@ -83,6 +83,26 @@ abstract class CloudServiceContract {
         assertEquals(listOf("VERSION GET $manifest"), transport.requests)
     }
 
+    @Test fun nestedGroupsAndTagsRestoreAndTagEditsOnlyUpdateRecords() = runBlocking {
+        val (base, state) = novel()
+        val parent = requireNotNull(state.groups.singleOrNull())
+        val child = ShelfGroup("子分组", parent.mode, parentId = parent.id)
+        val book = base.copy(groupId = child.id, tags = listOf("标签甲", "标签乙"))
+        val shelf = state.copy(books = listOf(book), groups = listOf(parent, child))
+        val first = service.upload(shelf, book)
+        val edited = book.copy(tags = listOf("标签乙", "标签丙"))
+        val latest = requireNotNull(service.updateKnownBookRecords(shelf.copy(books = listOf(edited)), edited, first.backupAt) {})
+        assertEquals(first.revision, latest.revision)
+        val listed = service.list().single()
+        assertEquals(child, listed.group)
+        assertEquals(parent, listed.parentGroup)
+        assertEquals(edited.tags, listed.book.tags)
+        val restored = mergeCloudDownloadedBook(LibraryState(), service.download(listed))
+        assertEquals(listOf(parent, child), restored.groups)
+        assertEquals(edited.tags, restored.books.single().tags)
+        assertEquals(child.id, restored.books.single().groupId)
+    }
+
     @Test fun indexedPreflightFetchesOnlyCandidatesAndVerificationSeesAnOlderClientRename() = runBlocking {
         val (base, state) = novel()
         val books = (1..5).map { n -> base.copy(id = "entry-$n", title = "云端$n", sourceFileName = "cloud-$n.mobi") }

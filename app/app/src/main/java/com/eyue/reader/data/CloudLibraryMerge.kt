@@ -9,13 +9,26 @@ internal fun Chapter.cloudShelfChapter(): Chapter = copy(
     pages = pages.map { it.copy(path = "", textPath = null) }
 )
 
-private fun cloudGroup(groups: List<ShelfGroup>, incoming: ShelfGroup?, mode: LibraryMode): Pair<List<ShelfGroup>, String?> {
+internal fun cloudBookGroups(groups: List<ShelfGroup>, groupId: String?): List<ShelfGroup> {
+    val group = groups.find { it.id == groupId } ?: return emptyList()
+    return listOfNotNull(group, groups.find { it.id == group.parentId && it.mode == group.mode && it.parentId == null })
+}
+
+private fun cloudGroup(groups: List<ShelfGroup>, incoming: ShelfGroup?, mode: LibraryMode,
+    incomingGroups: List<ShelfGroup>): Pair<List<ShelfGroup>, String?> {
     if (incoming == null || incoming.mode != mode) return groups to null
-    val existing = groups.find { it.id == incoming.id && it.mode == mode }
-        ?: groups.find { it.name == incoming.name && it.mode == mode }
-    if (existing != null) return groups to existing.id
-    val group = if (groups.any { it.id == incoming.id }) incoming.copy(id = UUID.randomUUID().toString()) else incoming
-    return (groups + group) to group.id
+    var available = groups
+    fun ensure(group: ShelfGroup, parent: String?): String {
+        val sameLevel = available.filter { it.mode == mode && it.parentId == parent }
+        val existing = sameLevel.find { it.id == group.id } ?: sameLevel.find { it.name == group.name }
+        if (existing != null) return existing.id
+        val local = group.copy(id = if (available.any { it.id == group.id }) UUID.randomUUID().toString() else group.id, parentId = parent)
+        available = available + local
+        return local.id
+    }
+    val parent = incomingGroups.find { it.id == incoming.parentId && it.mode == mode && it.parentId == null }?.let { ensure(it, null) }
+    val group = ensure(incoming, parent)
+    return available to group
 }
 
 /** Information restore never replaces a downloaded local book or downloads its reading content. */
@@ -24,7 +37,7 @@ internal fun mergeCloudBookInformation(state: LibraryState, books: List<Book>, a
     val existing = state.books.associateBy { it.id }
     var groups = state.groups
     val restored = books.distinctBy { it.id }.filter { existing[it.id]?.cloudOnly != false }.map { book ->
-        val (updatedGroups, groupId) = cloudGroup(groups, incomingGroups.find { it.id == book.groupId && it.mode == book.mode }, book.mode)
+        val (updatedGroups, groupId) = cloudGroup(groups, incomingGroups.find { it.id == book.groupId && it.mode == book.mode }, book.mode, incomingGroups)
         groups = updatedGroups
         book.copy(cloudOnly = true, cloudEnabled = true, sourcePath = null, sourceUri = null, sourceLinked = false,
             groupId = groupId, chapters = book.chapters.map(Chapter::cloudShelfChapter))
@@ -39,7 +52,7 @@ internal fun mergeCloudBookInformation(state: LibraryState, books: List<Book>, a
 
 /** A manually downloaded book restores its own records and profile without changing the other mode. */
 internal fun mergeCloudDownloadedBook(state: LibraryState, restored: CloudRestoredBook): LibraryState {
-    val (groups, groupId) = cloudGroup(state.groups, restored.group, restored.book.mode)
+    val (groups, groupId) = cloudGroup(state.groups, restored.group, restored.book.mode, listOfNotNull(restored.parentGroup))
     val book = restored.book.copy(groupId = groupId, cloudOnly = false, cloudEnabled = true, cloudBackupAt = restored.backupAt)
     val current = if (book.mode == LibraryMode.COMIC) state.comicSettings else state.settings
     val settings = restored.settings.copy(nightMode = state.settings.nightMode,

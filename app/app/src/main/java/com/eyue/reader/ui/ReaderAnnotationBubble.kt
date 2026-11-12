@@ -75,9 +75,13 @@ internal fun ReaderAnnotationPopup(anchor: Rect, onDismiss: () -> Unit, focusabl
     val visibleBottom = (visible.bottom - margin).coerceAtLeast(visibleTop)
     val aboveSpace = anchor.top.coerceIn(visibleTop.toFloat(), visibleBottom.toFloat()) - visibleTop
     val belowSpace = visibleBottom - anchor.bottom.coerceIn(visibleTop.toFloat(), visibleBottom.toFloat())
-    val availableHeight = with(density) { (maxOf(aboveSpace, belowSpace).toInt() - tail).coerceAtLeast(1).toDp() }
+    val availableHeight = with(density) {
+        val anchoredHeight = (maxOf(aboveSpace, belowSpace).toInt() - tail).coerceAtLeast(1).toDp()
+        if (focusable) maxOf(anchoredHeight, minOf(280.dp, (visibleBottom - visibleTop - tail).coerceAtLeast(1).toDp()))
+        else anchoredHeight
+    }
     Popup(popupPositionProvider = provider, onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = focusable, dismissOnClickOutside = true)) {
+        properties = PopupProperties(focusable = focusable, dismissOnClickOutside = !focusable)) {
         Box(Modifier.widthIn(max = minOf(360.dp, availableWidth)).testTag("reader_annotation_bubble")) {
             // The tail follows the measured body; it must not expand a short menu to the maximum width.
             Canvas(Modifier.matchParentSize()) {

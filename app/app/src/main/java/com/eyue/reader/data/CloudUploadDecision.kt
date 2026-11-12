@@ -49,6 +49,6 @@ internal fun applyCloudUploadSelections(state: LibraryState, incoming: List<Clou
     val cloud = incoming.filter { info -> selections[info.book.id]?.keepRemote == true && base.books.none { local ->
         !local.cloudOnly && cloudRestoreBookMatch(local, info.book, matches) == CloudBookMatch.SAME
     } }
-    return mergeCloudBookInformation(base, cloud.map { it.book }, cloud.flatMap { it.annotations }, cloud.mapNotNull { it.group },
+    return mergeCloudBookInformation(base, cloud.map { it.book }, cloud.flatMap { it.annotations }, cloud.flatMap { listOfNotNull(it.group, it.parentGroup) },
         cloud.maxOfOrNull { it.readingSeconds } ?: 0)
 }

@@ -982,38 +982,75 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun createGroup(name: String) {
-        val value = groupName(name, mode) ?: return
-        changed(state.copy(groups = state.groups + ShelfGroup(value, mode)))
+    fun createGroup(name: String) = createShelfGroup(name, null)
+
+    fun createSubgroup(parentId: String, name: String) = createShelfGroup(name, parentId)
+
+    private fun createShelfGroup(name: String, parentId: String?) {
+        if (parentId != null && state.groups.none { it.id == parentId && it.mode == mode && it.parentId == null }) return
+        val value = groupName(name, mode, parentId) ?: return
+        changed(state.copy(groups = state.groups + ShelfGroup(value, mode, parentId = parentId)))
     }
 
     fun renameGroup(id: String, name: String) {
         val group = state.groups.find { it.id == id && it.mode == mode } ?: return
-        val value = groupName(name, group.mode, id) ?: return
+        val value = groupName(name, group.mode, group.parentId, id) ?: return
         changed(state.copy(groups = state.groups.map { if (it.id == id) it.copy(name = value) else it }))
     }
 
-    private fun groupName(name: String, selectedMode: LibraryMode, exceptId: String? = null): String? {
+    private fun groupName(name: String, selectedMode: LibraryMode, parentId: String?, exceptId: String? = null): String? {
         val value = name.trim()
         if (value.isEmpty()) { message = "请输入分组名称"; return null }
-        if (state.groups.any { it.mode == selectedMode && it.id != exceptId && it.name == value }) {
-            message = "该模式已有同名分组"; return null
+        if (state.groups.any { it.mode == selectedMode && it.parentId == parentId && it.id != exceptId && it.name == value }) {
+            message = "当前层级已有同名分组"; return null
         }
         return value
     }
 
     fun deleteGroup(id: String) {
-        if (state.groups.none { it.id == id && it.mode == mode }) return
-        changed(state.copy(groups = state.groups.filterNot { it.id == id },
-            books = state.books.map { if (it.groupId == id) it.copy(groupId = null) else it }))
+        val group = state.groups.find { it.id == id && it.mode == mode } ?: return
+        val removed = state.groups.filter { it.id == id || it.parentId == id }.mapTo(mutableSetOf()) { it.id }
+        changed(state.copy(groups = state.groups.filterNot { it.id in removed },
+            books = state.books.map { if (it.groupId in removed) it.copy(groupId = group.parentId) else it }))
     }
 
-    fun moveBookToGroup(bookId: String, groupId: String?) {
-        val book = state.books.find { it.id == bookId } ?: return
-        if (groupId != null && state.groups.none { it.id == groupId && it.mode == book.mode }) {
-            message = "请选择该书所属模式的分组"; return
+    fun moveBookToGroup(bookId: String, groupId: String?) = moveBooksToGroup(listOf(bookId), groupId)
+
+    fun moveBooksToGroup(bookIds: List<String>, groupId: String?) {
+        val ids = bookIds.toSet()
+        val selected = state.books.filter { it.id in ids }
+        if (selected.isEmpty()) return
+        if (groupId != null && state.groups.none { group -> group.id == groupId && selected.all { it.mode == group.mode } }) {
+            message = "请选择书籍所属模式的分组"; return
         }
-        changed(state.copy(books = state.books.map { if (it.id == bookId) it.copy(groupId = groupId) else it }))
+        changed(state.copy(books = state.books.map { if (it.id in ids) it.copy(groupId = groupId) else it }))
+    }
+
+    fun setBookTags(bookId: String, tags: List<String>) {
+        val normalized = normalizeShelfTags(tags)
+        changed(state.copy(books = state.books.map { if (it.id == bookId) it.copy(tags = normalized) else it }))
+    }
+
+    fun setBookCover(bookId: String, uri: Uri) {
+        viewModelScope.launch {
+            try {
+                cloudOperationMutex.withBook(bookId) {
+                    val book = state.books.find { it.id == bookId && !it.cloudOnly } ?: return@withBook
+                    val context = getApplication<Application>()
+                    val path = importReaderBackground(context, uri, bookCoverDirectory(context, bookId))
+                    val latest = state.books.find { it.id == bookId && !it.cloudOnly }
+                    if (latest == null) { withContext(Dispatchers.IO) { File(path).delete() }; return@withBook }
+                    changed(state.copy(books = state.books.map {
+                        if (it.id == bookId) it.copy(coverPath = path, customCover = true) else it
+                    }))
+                    persistNow()
+                    withContext(Dispatchers.IO) {
+                        latest.coverPath?.let(::File)?.takeIf { it.canonicalFile.parentFile == bookCoverDirectory(context, bookId) }?.delete()
+                    }
+                }
+            } catch (error: CancellationException) { throw error }
+              catch (error: Exception) { message = error.message ?: "封面保存失败" }
+        }
     }
 
     fun renameBook(bookId: String, title: String): Boolean = renameBook(bookId, title, null)
@@ -1223,6 +1260,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun cloudOperation(bookId: String? = null, label: String,
         allowImport: Boolean = false,
+        downloadTitle: String? = null,
         beforeLock: suspend (CloudBackupService) -> Unit = {}, action: suspend (CloudBackupService) -> Unit) {
         if (cloudBusy) return
         if (bookId != null && cloudBookJobs.containsKey(bookId)) return
@@ -1242,7 +1280,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             cloudTaskLabel = label
             cloudFraction = null
         } else cloudBookOperations = cloudBookOperations + (bookId to CloudTransferProgress(label))
+        val notification = downloadTitle?.let { BookTransferNotification(getApplication(), "download-$bookId", downloading = true) }
         val service = CloudBackupService(getApplication(), onProgress = { progress ->
+            if (downloadTitle != null) notification?.update(downloadTitle, progress.stage, progress.fraction)
             viewModelScope.launch {
                 if (bookId != null && cloudBookJobs.containsKey(bookId)) {
                     cloudBookOperations = cloudBookOperations + (bookId to CloudTransferProgress(progress.stage, progress.fraction))
@@ -1264,6 +1304,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             catch (error: CancellationException) { throw error }
             catch (error: Exception) { message = error.message ?: "云端操作未完成，请稍后重试" }
             finally {
+                notification?.close()
                 if (bookId == null) {
                     cloudOperationBusy = false
                     cloudBookId = null
@@ -2005,19 +2046,24 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun downloadCloudBook(book: Book) = cloudOperation(book.id, "准备下载《${book.title}》") { service ->
+    fun downloadCloudBook(book: Book) = cloudOperation(book.id, "准备下载《${book.title}》", downloadTitle = book.title) { service ->
         if (state.books.none { it.id == book.id && it.cloudOnly }) return@cloudOperation
         val restored = service.download(book.id)
         if (state.books.none { it.id == book.id }) {
             withContext(Dispatchers.IO) { repository.removeBookFiles(restored.book) }
             return@cloudOperation
         }
-        val localTitle = state.books.first { it.id == book.id }.title
+        val shelfBook = state.books.first { it.id == book.id }
+        val localTitle = shelfBook.title
         val localBook = if (localTitle != restored.book.title) withContext(Dispatchers.IO) {
             BookSourceRename(getApplication(), restored.book).apply(localTitle)
         } else restored.book
         val downloaded = mergeCloudDownloadedBook(state, restored.copy(book = localBook.copy(title = localTitle)))
-        changed(downloaded.copy(settings = downloaded.settings.ensureActiveAppearanceProfile(),
+        val backedUpBook = downloaded.books.first { it.id == book.id }
+        changed(downloaded.copy(books = downloaded.books.map {
+            if (it.id == book.id) it.copy(tags = shelfBook.tags,
+                groupId = shelfBook.groupId?.takeIf { group -> downloaded.groups.any { it.id == group && it.mode == shelfBook.mode } }) else it
+        }, settings = downloaded.settings.ensureActiveAppearanceProfile(),
             comicSettings = downloaded.comicSettings.ensureActiveAppearanceProfile()))
         persistNow()
         val account = withContext(Dispatchers.IO) { service.identity() }
@@ -2025,9 +2071,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val downloadedBook = snapshot.books.first { it.id == book.id }
         withContext(Dispatchers.IO) { runCatching { LocalSourceChanges(getApplication()).accepted(downloadedBook) } }
         if (account != null) withContext(Dispatchers.IO) {
-            // A local shelf rename has not been uploaded merely because the content was downloaded.
+            // Shelf changes made on the placeholder are still pending after the original file is downloaded.
             cloudHistory.record(account, book.id, cloudBackupFingerprint(repository, snapshot,
-                downloadedBook.copy(title = restored.book.title)), restored.backupAt)
+                backedUpBook.copy(title = restored.book.title)), restored.backupAt)
         }
     }
 

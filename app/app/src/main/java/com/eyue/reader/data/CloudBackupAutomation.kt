@@ -106,7 +106,7 @@ internal fun cloudBackupFingerprintTail(repository: LibraryRepository, state: Li
     state.annotations.filter { it.bookId == book.id }.sortedBy { it.id }.forEach { parts += repository.writeAnnotation(it).toString() }
     val settings = if (book.mode == LibraryMode.COMIC) state.comicSettings else state.settings
     parts += repository.writeSettings(nightMode?.let { settings.copy(nightMode = it) } ?: settings).toString()
-    state.groups.find { it.id == book.groupId }?.let { parts += "${it.id}\n${it.name}\n${it.mode}" }
+    cloudBookGroups(state.groups, book.groupId).forEach { parts += "${it.id}\n${it.name}\n${it.mode}" }
     val files = listOfNotNull(book.sourcePath, book.coverPath, repository.epubIndexFile(book)?.absolutePath) + book.chapters.flatMap { chapter ->
         if (!book.hasTextEdits && chapter.lazySourcePath?.let { File(it + ".deferred.json").isFile } == true) emptyList()
         else listOfNotNull(chapter.textPath) + chapter.inlineImages.map { it.path } +
@@ -215,6 +215,7 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
     private val manualBookId get() = inputData.getString(CloudBackupAutomation.KEY_BOOK)
     private var progressBookId: String? = null
     private var progressTitle = ""
+    private val automaticNotification by lazy { BookTransferNotification(applicationContext, "upload-$id", downloading = false) }
 
     override suspend fun getForegroundInfo(): ForegroundInfo = foregroundInfo("准备上传备份", null)
 
@@ -226,8 +227,8 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(applicationContext, channel)
             .setSmallIcon(android.R.drawable.stat_sys_upload).setContentTitle("上传《${progressTitle.ifEmpty { inputData.getString(CloudBackupAutomation.KEY_TITLE).orEmpty() }}》")
-            .setContentText(stage).setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
-            .setProgress(100, ((fraction ?: 0f) * 100).toInt().coerceIn(0, 100), fraction == null)
+            .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
+            .bookTransferProgress(stage, fraction)
             .addAction(android.R.drawable.ic_delete, "取消上传", WorkManager.getInstance(applicationContext).createCancelPendingIntent(id))
             .build()
         val notificationId = id.hashCode().and(Int.MAX_VALUE).coerceAtLeast(1)
@@ -243,6 +244,7 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
         lastStage = progress.stage
         setProgressAsync(progressData(progress.stage, progress.fraction))
         if (manualBookId != null) setForegroundAsync(foregroundInfo(progress.stage, progress.fraction))
+        else automaticNotification.update("上传《$progressTitle》", progress.stage, progress.fraction)
     }
 
     private fun progressData(stage: String, fraction: Float?): Data = workDataOf(
@@ -286,7 +288,7 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
                 Result.retry()
             } else Result.failure(workDataOf(CloudBackupAutomation.KEY_ERROR to message.take(600),
                 CloudBackupAutomation.KEY_CONFLICT to (error is CloudUploadConflictException)))
-        }
+        } finally { if (manualBookId == null) automaticNotification.close() }
     }
 
     private suspend fun uploadBook(service: CloudBackupService, repository: LibraryRepository,

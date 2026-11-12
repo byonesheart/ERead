@@ -9,6 +9,7 @@ import com.eyue.reader.data.Book
 import com.eyue.reader.data.BookFormat
 import com.eyue.reader.data.CloudBookMatch
 import com.eyue.reader.data.cloudBookSourceMatch
+import com.eyue.reader.data.cloudBookGroups
 import com.eyue.reader.data.hydrateBookSourceIdentity
 import com.eyue.reader.data.sameTitleLocalBooks
 import com.eyue.reader.data.ImportedFont
@@ -174,7 +175,9 @@ class CloudBackupService(
                 sourceLinked = false, cloudEnabled = true, cloudOnly = false, cloudBackupAt = backupAt)
             val annotations = state.annotations.filter { it.bookId == book.id }.map { it.copy(imagePath = path(it.imagePath)) }
             val settings = remapSettings(if (book.mode == LibraryMode.COMIC) state.comicSettings else state.settings, ::path)
-            val group = state.groups.firstOrNull { it.id == book.groupId && it.mode == book.mode }
+            val groups = cloudBookGroups(state.groups, book.groupId)
+            val group = groups.getOrNull(0)
+            val parentGroup = groups.getOrNull(1)
             repository.epubIndexFile(book)?.takeIf { book.format == BookFormat.EPUB }?.let { sidecar ->
                 assets["assets/readium-publication.json"] = CloudAsset("assets/readium-publication.json", sidecar.absolutePath) {
                     AtomicFile(sidecar).openRead()
@@ -188,7 +191,7 @@ class CloudBackupService(
             val previous = known?.second ?: transport.metadata(manifestPath)?.let { readManifest(it, book.id) }
             if (previous != null && previous.assets == inspected && contentBook(previous.info.book) == contentBook(portable)) {
                 val info = previous.info.copy(book = portable, annotations = annotations, settings = settings,
-                    group = group, backupAt = backupAt, readingSeconds = state.readingSeconds,
+                    group = group, parentGroup = parentGroup, backupAt = backupAt, readingSeconds = state.readingSeconds,
                     contentIdentity = contentIdentity, sourceSha256 = sourceHash)
                 onProgress(CloudOperationProgress("更新《${book.title}》的云端阅读记录", 1f))
                 val updated = writeManifest(info, inspected, previous.cover)
@@ -215,7 +218,7 @@ class CloudBackupService(
                 val archiveDigest = MessageDigest.getInstance("SHA-256")
                 CloudArchive.write(archive, assetList, { items ->
                     require(items == inspected) { "备份时源文件发生变化，请重试" }
-                    writeMetadata(portable, annotations, settings, group, backupAt, items, state.readingSeconds)
+                    writeMetadata(portable, annotations, settings, group, backupAt, items, state.readingSeconds, parentGroup)
                         .toString().toByteArray(Charsets.UTF_8)
                 }, archiveDigest, check)
                 check()
@@ -263,7 +266,7 @@ class CloudBackupService(
                 name
             }
             val info = CloudBookInfo(portable, annotations, settings, group, backupAt, revision, bytes, pending.archiveSha256, parts,
-                state.readingSeconds, contentIdentity, sourceHash)
+                state.readingSeconds, contentIdentity, sourceHash, parentGroup = parentGroup)
             check()
             onProgress(CloudOperationProgress("提交云端图书记录", 1f))
             // The old manifest remains valid until all parts and the cover are uploaded successfully.
@@ -581,7 +584,8 @@ class CloudBackupService(
                 }
             }
             val settings = remapSettings(info.settings, ::font)
-            CloudRestoredBook(CloudDownloadLocation(context).publish(book, check), annotations, settings, info.group, info.backupAt, info.readingSeconds)
+            CloudRestoredBook(CloudDownloadLocation(context).publish(book, check), annotations, settings, info.group, info.backupAt,
+                info.readingSeconds, info.parentGroup)
         } catch (error: Throwable) {
             // This directory belongs solely to this operation; previously readable files are untouched.
             if (staging.exists()) staging.deleteRecursively()
@@ -754,21 +758,25 @@ class CloudBackupService(
     private fun contentBook(book: Book): Book = book.copy(title = "", author = "", chapterIndex = 0, pageIndex = 0,
         characterOffset = 0, progress = 0f, lastReadAt = 0, addedAt = 0, isDemo = false, positionImagePath = null,
         groupId = null, cloudEnabled = false, cloudOnly = false, cloudBackupAt = 0, voiceRoles = emptyList(),
-        sourceFileName = null, sourceFileBytes = null)
+        sourceFileName = null, sourceFileBytes = null, tags = emptyList())
 
     private fun writeManifest(info: CloudBookInfo, records: List<CloudAssetRecord>, cover: String?): ByteArray =
-        writeMetadata(info.book, info.annotations, info.settings, info.group, info.backupAt, records, info.readingSeconds)
+        writeMetadata(info.book, info.annotations, info.settings, info.group, info.backupAt, records, info.readingSeconds, info.parentGroup)
             .put("revision", info.revision).put("archiveBytes", info.archiveBytes).put("archiveSha256", info.archiveSha256)
             .put("contentIdentity", info.contentIdentity)
             .put("parts", JSONArray(info.parts.map { JSONObject().put("name", it.name).put("bytes", it.bytes) }))
             .put("cloudCover", cover).toString().toByteArray(Charsets.UTF_8)
 
     private fun writeMetadata(book: Book, annotations: List<Annotation>, settings: ReaderSettings, group: ShelfGroup?, backupAt: Long,
-                              records: List<CloudAssetRecord>, readingSeconds: Long): JSONObject = JSONObject().put("version", 1)
+                              records: List<CloudAssetRecord>, readingSeconds: Long, parentGroup: ShelfGroup?): JSONObject = JSONObject().put("version", 1)
         .put("book", repository.writeBook(book)).put("annotations", JSONArray(annotations.map(repository::writeAnnotation)))
         .put("settings", repository.writeSettings(settings)).put("backupAt", backupAt).put("readingSeconds", readingSeconds)
-        .put("group", group?.let { JSONObject().put("id", it.id).put("name", it.name).put("mode", it.mode.name) })
+        .put("group", group?.let(::writeCloudGroup))
+        .put("parentGroup", parentGroup?.let(::writeCloudGroup))
         .put("assets", JSONArray(records.map { JSONObject().put("name", it.name).put("bytes", it.bytes).put("sha256", it.sha256) }))
+
+    private fun writeCloudGroup(group: ShelfGroup): JSONObject =
+        JSONObject().put("id", group.id).put("name", group.name).put("mode", group.mode.name).put("parentId", group.parentId)
 
     private fun readMetadata(json: JSONObject): CloudRestoredBook {
         require(json.getInt("version") == 1) { "云端备份版本不受支持" }
@@ -780,17 +788,22 @@ class CloudBackupService(
         val array = json.getJSONArray("annotations")
         val annotations = (0 until array.length()).map { repository.readAnnotation(array.getJSONObject(it)) }
         require(annotations.all { it.bookId == book.id && it.chapterIndex in book.chapters.indices && it.characterOffset >= 0 && it.pageIndex >= 0 }) { "云端标注记录损坏" }
-        val group = json.optJSONObject("group")?.let {
-            ShelfGroup(it.getString("name"), LibraryMode.valueOf(it.getString("mode")), it.getString("id"))
+        fun groupAt(key: String) = json.optJSONObject(key)?.let {
+            ShelfGroup(it.getString("name"), LibraryMode.valueOf(it.getString("mode")), it.getString("id"),
+                it.optString("parentId").takeIf(String::isNotBlank))
         }
+        val group = groupAt("group")
+        val parentGroup = groupAt("parentGroup")
         require(group == null || group.mode == book.mode) { "云端分组记录损坏" }
+        require(parentGroup == null || parentGroup.mode == book.mode && parentGroup.parentId == null &&
+            group != null && group.parentId == parentGroup.id && group.id != parentGroup.id) { "云端二级分组记录损坏" }
         val defaults = if (book.mode == LibraryMode.COMIC) ReaderSettings().withDefaultComicMargins() else ReaderSettings()
         val settings = repository.readSettings(json.getJSONObject("settings"), defaults)
         val backupAt = json.getLong("backupAt")
         require(backupAt > 0)
         val readingSeconds = json.optLong("readingSeconds", 0)
         require(readingSeconds >= 0)
-        return CloudRestoredBook(book, annotations, settings, group, backupAt, readingSeconds)
+        return CloudRestoredBook(book, annotations, settings, group, backupAt, readingSeconds, parentGroup)
     }
 
     private data class Manifest(val info: CloudBookInfo, val assets: List<CloudAssetRecord>, val cover: String?)
@@ -854,7 +867,7 @@ class CloudBackupService(
             data.book.copy(sourceFileBytes = sourceBytes) else data.book
         return Manifest(CloudBookInfo(identified, data.annotations, data.settings, data.group, data.backupAt,
             revision, archiveBytes, sha256, parts, data.readingSeconds, identity,
-            assets.firstOrNull { it.name == data.book.sourcePath }?.sha256, cloudCover = cover), assets, cover)
+            assets.firstOrNull { it.name == data.book.sourcePath }?.sha256, cloudCover = cover, parentGroup = data.parentGroup), assets, cover)
     }
 
     private fun readAssets(json: JSONObject): List<CloudAssetRecord> {

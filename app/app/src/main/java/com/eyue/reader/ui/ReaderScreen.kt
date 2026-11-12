@@ -999,7 +999,9 @@ internal fun ReaderScreen(
             }
         }
     }
-    LaunchedEffect(scrolling) { if (scrolling) dismissAnnotationBubble() }
+    // Focusing the note field resizes the reader and can change the reported page or scroll state.
+    // Keep the captured selection until the editor is explicitly dismissed.
+    LaunchedEffect(scrolling) { if (scrolling && selectedPassage == null) dismissAnnotationBubble() }
     LaunchedEffect(scrolling, progressDraft, chapterIndex, pageIndex) {
         com.eyue.reader.data.ImportWorkPriority.interaction()
         while (scrolling || progressDraft != null) {
@@ -1007,7 +1009,7 @@ internal fun ReaderScreen(
             com.eyue.reader.data.ImportWorkPriority.interaction()
         }
     }
-    LaunchedEffect(chapterIndex, pageIndex) { dismissAnnotationBubble() }
+    LaunchedEffect(chapterIndex, pageIndex) { if (selectedPassage == null) dismissAnnotationBubble() }
     BackHandler(enabled = selectedPassage != null || tappedNoteIds.isNotEmpty() || tappedSourceFootnote != null) { dismissAnnotationBubble() }
     BackHandler(enabled = (panel == null || panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS) && selectedPassage == null && txtSelection == null &&
         tappedNoteIds.isEmpty() && tappedSourceFootnote == null && speechError == null) {

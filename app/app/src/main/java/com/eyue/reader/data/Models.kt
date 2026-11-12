@@ -14,7 +14,8 @@ enum class UnderlineStyle { STRAIGHT, WAVY }
 enum class SpeechEngine { SYSTEM, AI }
 enum class SourceScanMode(val displayName: String) { AUTO("自动"), MANUAL("手动"), OFF("关闭") }
 
-data class ShelfGroup(val name: String, val mode: LibraryMode, val id: String = UUID.randomUUID().toString())
+data class ShelfGroup(val name: String, val mode: LibraryMode, val id: String = UUID.randomUUID().toString(),
+    val parentId: String? = null)
 
 data class PageSource(val path: String, val pdfPage: Int = -1, val textPath: String? = null)
 data class InlineImage(val offset: Int, val path: String)
@@ -66,7 +67,9 @@ data class Book(
     val voiceRoles: List<BookVoiceRole> = emptyList(),
     val sourceFileName: String? = null,
     val sourceFileBytes: Long? = null,
-    val publicationContents: List<PublicationContentsEntry>? = null
+    val publicationContents: List<PublicationContentsEntry>? = null,
+    val tags: List<String> = emptyList(),
+    val customCover: Boolean = false
 )
 
 data class Annotation(

@@ -89,7 +89,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
         var pendingNotificationTask by remember { mutableStateOf<(() -> Unit)?>(null) }
         val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             val action = pendingNotificationTask; pendingNotificationTask = null
-            if (!granted) vm.message = "通知权限未开启，转化进度可在目录查看"
+            if (!granted) vm.message = "通知权限未开启，仍可在应用内查看进度"
             action?.invoke()
         }
         fun startNotifiedTask(action: () -> Unit) {
@@ -120,8 +120,9 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                 val requestPermission = pendingLegacyDownloads.isEmpty()
                 pendingLegacyDownloads = (pendingLegacyDownloads + target).distinctBy { it.id }
                 if (requestPermission) legacyDownloadPermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            } else if (target.cloudOnly) vm.downloadCloudBook(target)
-            else vm.uploadCloudBook(target)
+            } else startNotifiedTask {
+                if (target.cloudOnly) vm.downloadCloudBook(target) else vm.uploadCloudBook(target)
+            }
         }
         LaunchedEffect(vm.pendingImports.lastOrNull()?.id) {
             if (vm.activeBookId == null) vm.pendingImports.lastOrNull()?.let { tab = 1; vm.mode = it.mode }
@@ -347,7 +348,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                         cloudTaskLabel = vm.cloudTaskLabel, cloudFraction = vm.cloudFraction,
                                         onCancelCloud = vm::cancelCloudUpload, onDeleteCloud = vm::deleteCloudBook,
                                         cloudCanCancel = vm.cloudUploadCancellable, onClearAiSpeechCache = vm::clearAiSpeechCache, onCloudBatch = { books ->
-                                            if (!vm.cloudConfigured) { tab = 2; vm.message = "请先配置 WebDAV 网盘" } else vm.transferCloudBooks(books)
+                                            if (!vm.cloudConfigured) { tab = 2; vm.message = "请先配置 WebDAV 网盘" }
+                                            else startNotifiedTask { vm.transferCloudBooks(books) }
                                         }, onRestoreCloudBookInfo = {
                                             if (!vm.cloudConfigured) { tab = 2; vm.message = "请先配置 WebDAV 网盘" }
                                             else vm.restoreCloudBookInfo()
@@ -360,7 +362,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                         pendingImports = (vm.pendingImports + vm.pendingWebDavDownloads).filter { it.mode == vm.mode },
                                         onRemoveBatch = vm::removeBooks, restoreProgress = vm.cloudRestoreProgress,
                                         onRemovalCloudBytes = vm::removalCloudBytes, onRemoveOriginal = vm::removeBooksWithOriginal,
-                                        onRenameBook = vm::renameBook)
+                                        onRenameBook = vm::renameBook, libraryMode = vm.mode, onCreateSubgroup = vm::createSubgroup,
+                                        onMoveBooks = vm::moveBooksToGroup, onEditTags = vm::setBookTags, onEditCover = vm::setBookCover)
                                 }
                                 else -> SettingsScreen(state, { vm.settings(vm.readerSettings.copy(nightMode = it.nightMode)) }, vm::saveChapterRule,
                                     ::importFont, vm::clearHistory, mode = LibraryMode.NOVEL, cloudAccount = vm.cloudAccount,

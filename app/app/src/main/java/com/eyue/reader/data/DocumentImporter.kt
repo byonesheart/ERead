@@ -301,7 +301,7 @@ class DocumentImporter(private val context: Context) {
                                 }
                             }
                         }
-                        val cover = book.coverPath?.let(::File)?.takeIf(::isValidImage)
+                        val cover = book.coverPath?.takeUnless { book.customCover }?.let(::File)?.takeIf(::isValidImage)
                             ?.let { BitmapLoader.createThumbnail(it, directory) } ?: book.coverPath
                         val upgraded = book.copy(chapters = chapters, chapterIndex = imagePosition?.first ?: textPosition.first,
                             pageIndex = 0, characterOffset = imagePosition?.second?.offset ?: textPosition.second,
@@ -364,7 +364,7 @@ class DocumentImporter(private val context: Context) {
         val directory = File(context.filesDir, "books/${book.id}").apply { mkdirs() }
         val comic = book.copy(mode = LibraryMode.COMIC, chapters = indexed.map { it.second },
             chapterIndex = chapter, pageIndex = page, characterOffset = 0, positionImagePath = null,
-            coverPath = cover(indexed.first().second.pages.first(), directory),
+            coverPath = if (book.customCover) book.coverPath else cover(indexed.first().second.pages.first(), directory),
             groupId = book.groupId?.takeIf { id -> groups.any { it.id == id && it.mode == LibraryMode.COMIC } })
         val migrated = annotations.map { note ->
             if (note.bookId != book.id) note else {

@@ -21,7 +21,8 @@ data class CloudBookInfo(
     val readingSeconds: Long = 0,
     val contentIdentity: String? = null,
     val sourceSha256: String? = null,
-    val cloudCover: String? = null
+    val cloudCover: String? = null,
+    val parentGroup: ShelfGroup? = null
 )
 data class CloudRestoredBook(
     val book: Book,
@@ -29,7 +30,8 @@ data class CloudRestoredBook(
     val settings: ReaderSettings,
     val group: ShelfGroup?,
     val backupAt: Long,
-    val readingSeconds: Long = 0
+    val readingSeconds: Long = 0,
+    val parentGroup: ShelfGroup? = null
 )
 
 const val DEFAULT_WEBDAV_SERVER = "https://dav.jianguoyun.com/dav/"
