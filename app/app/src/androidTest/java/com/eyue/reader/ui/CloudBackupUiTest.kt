@@ -226,7 +226,7 @@ class CloudBackupUiTest {
         val saved = mutableListOf<Pair<String, String>>()
         compose.setContent {
             MaterialTheme {
-                CloudBackupSettings(account, configured, false, false, "", null, onSave = { email, password, server ->
+                CloudBackupSettings(account, configured, false, false, "", null, onSave = { email, password, server, _ ->
                     assertEquals(DEFAULT_WEBDAV_SERVER, server)
                     saved += email to password
                     account = email
@@ -257,7 +257,7 @@ class CloudBackupUiTest {
         compose.setContent {
             MaterialTheme {
                 CloudBackupSettings("reader@example.com", true, autoBackup, busy, "正在还原书架", null,
-                    onSave = { _, _, _ -> }, onTest = { tests++ }, onAutoBackup = { autoBackup = it },
+                    onSave = { _, _, _, _ -> }, onTest = { tests++ }, onAutoBackup = { autoBackup = it },
                     onRestore = { restores++ }, onDisconnect = {})
             }
         }
@@ -277,7 +277,7 @@ class CloudBackupUiTest {
         compose.setContent {
             MaterialTheme {
                 CloudBackupSettings("reader@example.com", true, true, false, "", null,
-                    onSave = { account, password, server -> saved += Triple(account, password, server) },
+                    onSave = { account, password, server, _ -> saved += Triple(account, password, server) },
                     onTest = {}, onAutoBackup = {}, onRestore = {}, onDisconnect = {},
                     autoBackupMetered = metered, onAutoBackupMetered = { metered = it })
             }

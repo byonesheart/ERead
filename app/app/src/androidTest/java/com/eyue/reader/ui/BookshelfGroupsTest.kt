@@ -11,6 +11,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -20,6 +21,7 @@ import com.eyue.reader.data.BookFormat
 import com.eyue.reader.data.Chapter
 import com.eyue.reader.data.LibraryMode
 import com.eyue.reader.data.ShelfGroup
+import com.eyue.reader.data.reorderShelfGroup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -32,6 +34,7 @@ class BookshelfGroupsTest {
     private var books by mutableStateOf(emptyList<Book>())
     private var groups by mutableStateOf(emptyList<ShelfGroup>())
     private var query by mutableStateOf("")
+    private var searchVisible by mutableStateOf(false)
     private var mode by mutableStateOf(LibraryMode.NOVEL)
     private val created = mutableListOf<Pair<LibraryMode, String>>()
     private val renamed = mutableListOf<Pair<String, String>>()
@@ -46,19 +49,21 @@ class BookshelfGroupsTest {
         compose.onNodeWithTag("shelf_group_name_input").performTextInput("旅行")
         compose.onNodeWithText("保存").performClick()
         compose.runOnIdle { assertEquals(listOf(LibraryMode.NOVEL to "旅行"), created) }
-        compose.onNodeWithText("关闭").performClick()
+        compose.onNodeWithContentDescription("返回书架").performClick()
         openMoveDialog("kept")
         compose.onNodeWithTag("shelf_move_created-0").performClick()
         selectGroup("created-0")
         assertBookPresent("kept")
 
         openGroupManager()
+        compose.onNodeWithTag("shelf_group_more_created-0").performClick()
         compose.onNodeWithTag("shelf_group_rename_created-0").performClick()
         compose.onNodeWithTag("shelf_group_name_input").performTextReplacement("远方")
         compose.onNodeWithText("保存").performClick()
         compose.runOnIdle { assertEquals(listOf("created-0" to "远方"), renamed) }
 
         openGroupManager()
+        compose.onNodeWithTag("shelf_group_more_created-0").performClick()
         compose.onNodeWithTag("shelf_group_delete_created-0").performClick()
         compose.onNodeWithText("删除分组《远方》？").assertIsDisplayed()
         compose.onNodeWithText("删除分组").performClick()
@@ -69,8 +74,8 @@ class BookshelfGroupsTest {
             assertEquals(emptyList<ShelfGroup>(), groups)
         }
         compose.onNodeWithTag("shelf_group_delete_created-0").assertDoesNotExist()
-        compose.onNodeWithText("关闭").performClick()
-        compose.onNodeWithTag("shelf_group_all").assertIsSelected()
+        compose.onNodeWithContentDescription("返回书架").performClick()
+        compose.onNodeWithTag("shelf_group_ungrouped").assertIsSelected()
         assertBookPresent("kept")
     }
 
@@ -90,6 +95,8 @@ class BookshelfGroupsTest {
         assertBookAbsent("star-essay")
         assertBookAbsent("loose")
 
+        compose.onNodeWithTag("shelf_search").assertDoesNotExist()
+        compose.onNodeWithTag("top_shelf_search").performClick()
         compose.onNodeWithTag("shelf_search").performTextInput("星河")
         assertBookPresent("star-novel")
         assertBookAbsent("mountain")
@@ -109,6 +116,64 @@ class BookshelfGroupsTest {
         compose.onNodeWithTag("shelf_group_all").assertIsSelected()
         assertBookPresent("star-novel")
         assertBookPresent("mountain")
+    }
+
+    @Test fun hiddenBooksRemainVisibleInTagModeAndManagerOpensAChild() {
+        val main = ShelfGroup("甲", LibraryMode.NOVEL, "tag-parent")
+        val child = ShelfGroup("甲一", main.mode, "tag-child", main.id)
+        val other = ShelfGroup("乙", main.mode, "tag-other")
+        val tag = "范围测试标签"
+        showShelf(listOf(book("child-tag", "组内标签书", groupId = child.id).copy(tags = listOf(tag)),
+            book("child-plain", "组内无标签书", groupId = child.id),
+            book("other-tag", "其他组标签书", groupId = other.id).copy(tags = listOf(tag))), listOf(main, child, other))
+        openGroupManager()
+        compose.onNodeWithTag("shelf_manage_group_${child.id}").assertDoesNotExist()
+        compose.onNodeWithTag("shelf_group_expand_${main.id}").performClick()
+        compose.onNodeWithTag("shelf_manage_group_${child.id}").performClick()
+        compose.onNodeWithTag("shelf_subgroup_${child.id}").assertIsSelected()
+        compose.onNodeWithTag("shelf_tags").assertDoesNotExist()
+        assertBookPresent("child-tag")
+        compose.onNodeWithTag("shelf_subgroup_${child.id}").performTouchInput { longClick() }
+        compose.onNodeWithTag("shelf_chip_delete_${child.id}").assertIsDisplayed()
+        compose.onNodeWithTag("shelf_chip_more_${child.id}").performClick()
+        compose.onNodeWithText("隐藏标签").performClick()
+        compose.onNodeWithText(tag).performClick()
+        compose.onNodeWithText("保存").performClick()
+        assertBookAbsent("child-tag")
+        assertBookPresent("child-plain")
+        compose.onNodeWithTag("shelf_tag_mode").performClick()
+        compose.onNodeWithTag("shelf_tag_$tag").performClick()
+        assertBookPresent("child-tag")
+        assertBookPresent("other-tag")
+        assertBookAbsent("child-plain")
+        compose.onNodeWithTag("shelf_tag_mode").performClick()
+        compose.onNodeWithTag("shelf_subgroup_${child.id}").assertIsSelected()
+        compose.onNodeWithTag("shelf_tags").assertDoesNotExist()
+    }
+
+    @Test fun draggingGroupVerticallyReordersItAndKeepsChildrenTogether() {
+        val a = ShelfGroup("甲", LibraryMode.NOVEL, "drag-a")
+        val b = ShelfGroup("乙", a.mode, "drag-b")
+        val child = ShelfGroup("子组", a.mode, "drag-child", a.id)
+        showShelf(emptyList(), listOf(a, b, child))
+        openGroupManager()
+        compose.onNodeWithTag("shelf_group_expand_${a.id}").performClick()
+        val first = compose.onNodeWithTag("shelf_manage_group_${a.id}")
+        val second = compose.onNodeWithTag("shelf_manage_group_${b.id}")
+        val delta = second.fetchSemanticsNode().boundsInRoot.center.y - first.fetchSemanticsNode().boundsInRoot.center.y
+        first.performTouchInput {
+            down(center)
+            advanceEventTime(700)
+            moveBy(Offset(0f, delta / 2), delayMillis = 40)
+            moveBy(Offset(0f, delta / 2), delayMillis = 40)
+            up()
+        }
+        compose.runOnIdle {
+            assertEquals(listOf(b.id, a.id), groups.filter { it.parentId == null }.map { it.id })
+            assertEquals(a.id, groups.first { it.id == child.id }.parentId)
+        }
+        assertTrue(second.fetchSemanticsNode().boundsInRoot.top < first.fetchSemanticsNode().boundsInRoot.top)
+        compose.onNodeWithTag("shelf_manage_group_${child.id}").assertIsDisplayed()
     }
 
     @Test fun movingBookIntoGroupAndBackToUngroupedImmediatelyUpdatesSelectedGroup() {
@@ -197,25 +262,29 @@ class BookshelfGroupsTest {
         val modeChanges = mutableListOf<LibraryMode>()
         var notesOpened = 0
         var importsOpened = 0
+        var searchesOpened = 0
         compose.setContent {
             MaterialTheme {
                 ModeTabs(selectedMode, onMode = { selectedMode = it; modeChanges += it }, onNotes = { notesOpened++ },
-                    onImport = { importsOpened++ }, importEnabled = importEnabled)
+                    onImport = { importsOpened++ }, importEnabled = importEnabled, onSearch = { searchesOpened++ })
             }
         }
         compose.onNodeWithTag("mode_tabs").assertIsDisplayed()
         val comicLabel = compose.onNodeWithText("漫画")
         val importButton = compose.onNodeWithTag("top_import")
+        val searchButton = compose.onNodeWithTag("top_shelf_search")
         val notebook = compose.onNodeWithTag("notebook_entry")
         comicLabel.assertIsDisplayed()
         importButton.assertIsDisplayed().assertIsEnabled()
         notebook.assertIsDisplayed()
         assertTrue("导入入口应在漫画标签右侧",
             importButton.fetchSemanticsNode().boundsInRoot.left > comicLabel.fetchSemanticsNode().boundsInRoot.right)
-        assertTrue("笔记入口应在导入入口右侧",
-            notebook.fetchSemanticsNode().boundsInRoot.left >= importButton.fetchSemanticsNode().boundsInRoot.right)
+        assertTrue(notebook.fetchSemanticsNode().boundsInRoot.right <= searchButton.fetchSemanticsNode().boundsInRoot.left)
+        assertEquals(importButton.fetchSemanticsNode().boundsInRoot.left, searchButton.fetchSemanticsNode().boundsInRoot.right, .5f)
+        searchButton.performClick()
         notebook.performClick()
         compose.runOnIdle {
+            assertEquals(1, searchesOpened)
             assertEquals(1, notesOpened)
             assertEquals(emptyList<LibraryMode>(), modeChanges)
         }
@@ -239,9 +308,11 @@ class BookshelfGroupsTest {
     private fun showShelf(initialBooks: List<Book>, initialGroups: List<ShelfGroup> = emptyList(), switchable: Boolean = false) {
         books = initialBooks
         groups = initialGroups
+        searchVisible = false
         compose.setContent {
             MaterialTheme {
                 Column(Modifier.fillMaxSize()) {
+                    ModeTabs(mode, { mode = it }, {}, onSearch = { searchVisible = true })
                     if (switchable) Row {
                         TextButton(onClick = { mode = LibraryMode.NOVEL; query = "" }, modifier = Modifier.testTag("test_mode_novel")) { Text("测试小说") }
                         TextButton(onClick = { mode = LibraryMode.COMIC; query = "" }, modifier = Modifier.testTag("test_mode_comic")) { Text("测试漫画") }
@@ -249,6 +320,8 @@ class BookshelfGroupsTest {
                     key(mode) {
                         Bookshelf(books.filter { it.mode == mode }, query, { query = it }, { opened = it.id }, {}, {},
                             groups = groups.filter { it.mode == mode },
+                            searchVisible = searchVisible, onCloseSearch = { searchVisible = false; query = "" },
+                            onReorderGroup = { id, target -> groups = groups.reorderShelfGroup(mode, id, target) },
                             onCreateGroup = { name ->
                                 val id = "created-${created.size}"
                                 created += mode to name

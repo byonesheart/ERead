@@ -103,6 +103,23 @@ abstract class CloudServiceContract {
         assertEquals(child.id, restored.books.single().groupId)
     }
 
+    @Test fun stoppingDownloadCleansPartialFilesAndLeavesTheBackupAvailable() = runBlocking {
+        val (book, state) = novel()
+        service.upload(state, book)
+        val stop = CloudDownloadCancellation()
+        val downloading = CloudBackupService(context, credentials, { _, _ -> transport }) { progress ->
+            if (progress.fraction != null) stop.cancel()
+        }
+        val failure = runCatching { downloading.download(book.id, stop) }.exceptionOrNull()
+        assertTrue(failure is CancellationException)
+        assertTrue(stop.cancelled)
+        assertTrue(context.cacheDir.listFiles().orEmpty().none { it.name.startsWith("cloud-download-") })
+        assertTrue(File(context.filesDir, "books/${book.id}").listFiles().orEmpty().none {
+            it.name.startsWith(".restore-") || it.name.startsWith("cloud-")
+        })
+        assertEquals(book.id, service.download(book.id).book.id)
+    }
+
     @Test fun indexedPreflightFetchesOnlyCandidatesAndVerificationSeesAnOlderClientRename() = runBlocking {
         val (base, state) = novel()
         val books = (1..5).map { n -> base.copy(id = "entry-$n", title = "云端$n", sourceFileName = "cloud-$n.mobi") }

@@ -33,10 +33,34 @@ class ShelfOrganizationRobolectricTest {
         assertTrue(saved.includesGroup(book, setOf(a.id, b.id)))
         assertFalse(saved.includesGroup(book.copy(groupId = parent.id), setOf(a.id, b.id)))
         assertTrue(saved.copy(subgroupIds = emptySet()).includesGroup(book.copy(groupId = parent.id), setOf(a.id, b.id)))
-        val filtered = saved.available(listOf(parent, a), setOf("科幻"), setOf("科幻"))
+        val filtered = saved.available(listOf(parent, a), setOf("科幻"))
         assertEquals(setOf(a.id), filtered.subgroupIds)
-        assertNull(filtered.tag)
-        assertEquals("科幻", saved.copy(tagMode = true).available(listOf(parent, a), setOf("科幻"), setOf("科幻")).tag)
+        assertEquals("科幻", filtered.tag)
+        assertNull(saved.available(listOf(parent, a), emptySet()).tag)
+        val hidden = hiddenShelfTags(listOf(parent, a, b), novel::hidden)
+        assertEquals(setOf("隐藏", "科幻"), hidden[a.id])
+        assertEquals(setOf("隐藏"), hidden[b.id])
+        novel.saveHidden(parent.id, setOf("收藏限定"))
+        val inherited = hiddenShelfTags(listOf(parent, a, b), novel::hidden)
+        assertEquals(setOf("隐藏", "科幻", "收藏限定"), inherited[a.id])
+        assertEquals(setOf("隐藏", "收藏限定"), inherited[b.id])
+        assertEquals(setOf("隐藏"), inherited[null])
+    }
+
+    @Test fun groupOrderMovesOnlySiblingsOfTheSameLibraryMode() {
+        val mode = LibraryMode.NOVEL
+        val a = ShelfGroup("甲", mode, "a")
+        val b = ShelfGroup("乙", mode, "b")
+        val c = ShelfGroup("丙", mode, "c")
+        val a1 = ShelfGroup("甲一", mode, "a1", a.id)
+        val a2 = ShelfGroup("甲二", mode, "a2", a.id)
+        val b1 = ShelfGroup("乙一", mode, "b1", b.id)
+        val comic = ShelfGroup("漫画", LibraryMode.COMIC, "comic")
+        val groups = listOf(a, comic, a1, b, b1, c, a2)
+        assertEquals(listOf(b, comic, a1, c, b1, a, a2), groups.reorderShelfGroup(mode, a.id, c.id))
+        assertEquals(listOf(a, comic, a2, b, b1, c, a1), groups.reorderShelfGroup(mode, a2.id, a1.id))
+        assertSame(groups, groups.reorderShelfGroup(mode, a1.id, b1.id))
+        assertSame(groups, groups.reorderShelfGroup(mode, a.id, comic.id))
     }
 
     @Test fun transferNotificationsDisplayTheSamePercentageAsTheProgressBar() {

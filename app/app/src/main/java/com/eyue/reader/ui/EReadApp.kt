@@ -77,6 +77,10 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
         }
         var tab by rememberSaveable { mutableIntStateOf(0) }
         var query by rememberSaveable { mutableStateOf("") }
+        var showShelfSearch by rememberSaveable { mutableStateOf(false) }
+        var searchRequest by rememberSaveable { mutableIntStateOf(0) }
+        fun closeShelfSearch() { showShelfSearch = false; query = "" }
+        LaunchedEffect(tab) { if (tab != 1) closeShelfSearch() }
         var showImport by remember { mutableStateOf(false) }
         var showWebDavImport by remember { mutableStateOf(false) }
         var showNotes by remember { mutableStateOf(false) }
@@ -110,20 +114,19 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             if (granted) targets.forEach(vm::downloadCloudBook)
             else vm.message = "未获得下载目录写入权限，可在 WebDAV 设置中另选文件夹"
         }
-        fun cloudBook(target: Book) {
+        fun cloudBooks(targets: List<Book>) {
             if (!vm.cloudConfigured) {
                 tab = 2
                 vm.message = "请先在设置中配置 WebDAV 网盘"
-            } else if (target.cloudOnly && Build.VERSION.SDK_INT <= 28 &&
+            } else if (targets.all { it.cloudOnly } && Build.VERSION.SDK_INT <= 28 &&
                 com.eyue.reader.data.cloud.CloudDownloadLocation(context).tree == null &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                 val requestPermission = pendingLegacyDownloads.isEmpty()
-                pendingLegacyDownloads = (pendingLegacyDownloads + target).distinctBy { it.id }
+                pendingLegacyDownloads = (pendingLegacyDownloads + targets).distinctBy { it.id }
                 if (requestPermission) legacyDownloadPermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            } else startNotifiedTask {
-                if (target.cloudOnly) vm.downloadCloudBook(target) else vm.uploadCloudBook(target)
-            }
+            } else startNotifiedTask { vm.transferCloudBooks(targets) }
         }
+        fun cloudBook(target: Book) = cloudBooks(listOf(target))
         LaunchedEffect(vm.pendingImports.lastOrNull()?.id) {
             if (vm.activeBookId == null) vm.pendingImports.lastOrNull()?.let { tab = 1; vm.mode = it.mode }
         }
@@ -327,7 +330,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                 Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
                     Column(Modifier.fillMaxSize().widthIn(max = 720.dp)) {
                         if (tab != 2) ModeTabs(vm.mode, { vm.mode = it }, { showNotes = true }, { showImport = true },
-                            importEnabled = !vm.loading, nightMode = dark, onToggleNight = vm::toggleNightMode)
+                            importEnabled = !vm.loading, nightMode = dark, onToggleNight = vm::toggleNightMode,
+                            onSearch = { tab = 1; showShelfSearch = true; searchRequest++ })
                         if (vm.loading) {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Olive) }
                         } else {
@@ -337,7 +341,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                 0 -> ReadingHome(books, state.readingSeconds, vm::open, { tab = 1 }, { showImport = true },
                                     onCloud = ::cloudBook, cloudBusy = vm.cloudBusy, cloudBookId = vm.cloudBookId,
                                     cloudTaskLabel = vm.cloudTaskLabel, cloudFraction = vm.cloudFraction,
-                                    onCancelCloud = vm::cancelCloudUpload, cloudCanCancel = vm.cloudUploadCancellable,
+                                    onCancelCloud = vm::cancelCloudTransfer, cloudCanCancel = vm.cloudTransferCancellable,
                                     cloudTransfers = vm.cloudTransfers, cloudDirtyBookIds = vm.cloudDirtyBookIds,
                                     showRecentReading = state.showRecentReading)
                                 1 -> key(vm.mode) {
@@ -346,11 +350,9 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                         vm::deleteGroup, vm::moveBookToGroup, pending = pending,
                                         onCloud = ::cloudBook, cloudBusy = vm.cloudBusy, cloudBookId = vm.cloudBookId,
                                         cloudTaskLabel = vm.cloudTaskLabel, cloudFraction = vm.cloudFraction,
-                                        onCancelCloud = vm::cancelCloudUpload, onDeleteCloud = vm::deleteCloudBook,
-                                        cloudCanCancel = vm.cloudUploadCancellable, onClearAiSpeechCache = vm::clearAiSpeechCache, onCloudBatch = { books ->
-                                            if (!vm.cloudConfigured) { tab = 2; vm.message = "请先配置 WebDAV 网盘" }
-                                            else startNotifiedTask { vm.transferCloudBooks(books) }
-                                        }, onRestoreCloudBookInfo = {
+                                        onCancelCloud = vm::cancelCloudTransfer, onDeleteCloud = vm::deleteCloudBook,
+                                        cloudCanCancel = vm.cloudTransferCancellable, onClearAiSpeechCache = vm::clearAiSpeechCache,
+                                        onCloudBatch = ::cloudBooks, onRestoreCloudBookInfo = {
                                             if (!vm.cloudConfigured) { tab = 2; vm.message = "请先配置 WebDAV 网盘" }
                                             else vm.restoreCloudBookInfo()
                                         }, onGenerateSpeech = { id -> generateSpeech(id) },
@@ -363,7 +365,9 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                         onRemoveBatch = vm::removeBooks, restoreProgress = vm.cloudRestoreProgress,
                                         onRemovalCloudBytes = vm::removalCloudBytes, onRemoveOriginal = vm::removeBooksWithOriginal,
                                         onRenameBook = vm::renameBook, libraryMode = vm.mode, onCreateSubgroup = vm::createSubgroup,
-                                        onMoveBooks = vm::moveBooksToGroup, onEditTags = vm::setBookTags, onEditCover = vm::setBookCover)
+                                        onMoveBooks = vm::moveBooksToGroup, onEditTags = vm::setBookTags, onEditCover = vm::setBookCover,
+                                        onReorderGroup = vm::reorderGroup, searchVisible = showShelfSearch, searchRequest = searchRequest,
+                                        onCloseSearch = ::closeShelfSearch)
                                 }
                                 else -> SettingsScreen(state, { vm.settings(vm.readerSettings.copy(nightMode = it.nightMode)) }, vm::saveChapterRule,
                                     ::importFont, vm::clearHistory, mode = LibraryMode.NOVEL, cloudAccount = vm.cloudAccount,
@@ -495,9 +499,10 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
 }
 
 @Composable internal fun ModeTabs(mode: LibraryMode, onMode: (LibraryMode) -> Unit, onNotes: () -> Unit,
-    onImport: () -> Unit = {}, importEnabled: Boolean = true, nightMode: Boolean = false, onToggleNight: () -> Unit = {}) {
+    onImport: () -> Unit = {}, importEnabled: Boolean = true, nightMode: Boolean = false, onToggleNight: () -> Unit = {},
+    onSearch: (() -> Unit)? = null) {
     if (LocalAppThemeStyle.current == AppThemeStyle.XINGCAI) {
-        XingcaiModeTabs(mode, onMode, onNotes, onImport, importEnabled, nightMode, onToggleNight)
+        XingcaiModeTabs(mode, onMode, onNotes, onImport, importEnabled, nightMode, onToggleNight, onSearch)
         return
     }
     Row(Modifier.padding(start = 24.dp, end = 16.dp, top = 8.dp).fillMaxWidth().height(48.dp).testTag("mode_tabs"),
@@ -516,16 +521,23 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                 }
             }
         }
-        IconButton(onClick = onToggleNight, modifier = Modifier.testTag("top_night_mode")) {
+        IconButton(onClick = onToggleNight, modifier = Modifier.size(40.dp).testTag("top_night_mode")) {
             Icon(if (nightMode) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
                 if (nightMode) "切换到日间模式" else "切换到夜间模式", tint = Ink)
         }
-        IconButton(onClick = onNotes, modifier = Modifier.testTag("notebook_entry")) {
+        IconButton(onClick = onNotes, modifier = Modifier.size(40.dp).testTag("notebook_entry")) {
             Icon(Icons.Outlined.Bookmarks, "书签与笔记", tint = Ink)
         }
-        IconButton(onClick = onImport, enabled = importEnabled, modifier = Modifier.testTag("top_import")) {
+        if (onSearch != null) ShelfSearchIcon(onSearch)
+        IconButton(onClick = onImport, enabled = importEnabled, modifier = Modifier.size(40.dp).testTag("top_import")) {
             Icon(Icons.Outlined.Add, "导入书籍", tint = if (importEnabled) Ink else Muted)
         }
+    }
+}
+
+@Composable internal fun ShelfSearchIcon(onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.size(40.dp).testTag("top_shelf_search")) {
+        Icon(Icons.Outlined.Search, "搜索书名或作者", Modifier.size(22.dp), tint = Ink)
     }
 }
 

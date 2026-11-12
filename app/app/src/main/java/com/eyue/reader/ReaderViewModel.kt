@@ -16,6 +16,7 @@ import androidx.work.WorkInfo
 import com.eyue.reader.data.*
 import com.eyue.reader.data.Annotation
 import com.eyue.reader.data.cloud.CloudBackupService
+import com.eyue.reader.data.cloud.CloudDownloadCancellation
 import com.eyue.reader.data.cloud.WebDavImports
 import com.eyue.reader.data.cloud.WebDavProfiles
 import com.eyue.reader.data.cloud.resolveCloudConnectionDraft
@@ -66,6 +67,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private var cloudJob: Job? = null
     private val cloudUploadJobs = mutableMapOf<String, Job>()
     private val cloudBookJobs = mutableMapOf<String, Job>()
+    private val cloudDownloads = mutableMapOf<String, CloudDownloadCancellation>()
     private var observedCloudUploads by mutableStateOf<Map<String, CloudTransferProgress>>(emptyMap())
     private var pendingCloudUploads by mutableStateOf<Map<String, CloudTransferProgress>>(emptyMap())
     private var cloudBookOperations by mutableStateOf<Map<String, CloudTransferProgress>>(emptyMap())
@@ -180,7 +182,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     val cloudBusy: Boolean get() = cloudOperationBusy || cleaningLibrary
     val cloudTransfers: Map<String, CloudTransferProgress> get() = observedCloudUploads + pendingCloudUploads + cloudBookOperations +
         cancellingCloudUploads.associateWith { CloudTransferProgress("正在取消上传") }
-    val cloudUploadCancellable: Boolean get() = cloudTransfers.values.any { it.cancellable }
+    val cloudTransferCancellable: Boolean get() = cloudTransfers.values.any { it.cancellable }
     var cloudBookId by mutableStateOf<String?>(null)
         private set
     var cloudTaskLabel by mutableStateOf("")
@@ -1008,10 +1010,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun deleteGroup(id: String) {
-        val group = state.groups.find { it.id == id && it.mode == mode } ?: return
+        if (state.groups.none { it.id == id && it.mode == mode }) return
         val removed = state.groups.filter { it.id == id || it.parentId == id }.mapTo(mutableSetOf()) { it.id }
         changed(state.copy(groups = state.groups.filterNot { it.id in removed },
-            books = state.books.map { if (it.groupId in removed) it.copy(groupId = group.parentId) else it }))
+            books = state.books.map { if (it.groupId in removed) it.copy(groupId = null) else it }))
+    }
+
+    fun reorderGroup(id: String, targetId: String) {
+        val groups = state.groups.reorderShelfGroup(mode, id, targetId)
+        if (groups !== state.groups) changed(state.copy(groups = groups))
     }
 
     fun moveBookToGroup(bookId: String, groupId: String?) = moveBooksToGroup(listOf(bookId), groupId)
@@ -1261,6 +1268,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private fun cloudOperation(bookId: String? = null, label: String,
         allowImport: Boolean = false,
         downloadTitle: String? = null,
+        downloadCancellation: CloudDownloadCancellation? = null,
         beforeLock: suspend (CloudBackupService) -> Unit = {}, action: suspend (CloudBackupService) -> Unit) {
         if (cloudBusy) return
         if (bookId != null && cloudBookJobs.containsKey(bookId)) return
@@ -1279,20 +1287,25 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             cloudBookId = null
             cloudTaskLabel = label
             cloudFraction = null
-        } else cloudBookOperations = cloudBookOperations + (bookId to CloudTransferProgress(label))
+        } else {
+            if (downloadCancellation != null) cloudDownloads[bookId] = downloadCancellation
+            cloudBookOperations = cloudBookOperations + (bookId to CloudTransferProgress(label, cancellable = downloadCancellation != null))
+        }
         val notification = downloadTitle?.let { BookTransferNotification(getApplication(), "download-$bookId", downloading = true) }
+        lateinit var job: Job
         val service = CloudBackupService(getApplication(), onProgress = { progress ->
-            if (downloadTitle != null) notification?.update(downloadTitle, progress.stage, progress.fraction)
+            if (downloadTitle != null && downloadCancellation?.cancelled != true) notification?.update(downloadTitle, progress.stage, progress.fraction)
             viewModelScope.launch {
-                if (bookId != null && cloudBookJobs.containsKey(bookId)) {
-                    cloudBookOperations = cloudBookOperations + (bookId to CloudTransferProgress(progress.stage, progress.fraction))
-                } else if (cloudOperationBusy && cloudGeneration == generation) {
+                if (bookId != null && cloudBookJobs[bookId] === job && downloadCancellation?.cancelled != true) {
+                    cloudBookOperations = cloudBookOperations + (bookId to CloudTransferProgress(progress.stage, progress.fraction,
+                        downloadCancellation?.canCancel() == true))
+                } else if (bookId == null && cloudOperationBusy && cloudGeneration == generation) {
                     cloudTaskLabel = progress.stage
                     cloudFraction = progress.fraction
                 }
             }
         })
-        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+        job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
                 beforeLock(service)
                 if (bookId == null) cloudOperationMutex.withLock { action(service) }
@@ -1301,8 +1314,14 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     action(service)
                 }
             }
-            catch (error: CancellationException) { throw error }
-            catch (error: Exception) { message = error.message ?: "云端操作未完成，请稍后重试" }
+            catch (error: CancellationException) {
+                if (downloadCancellation?.cancelled != true) throw error
+                message = "已取消《$downloadTitle》的下载"
+            }
+            catch (error: Exception) {
+                message = if (downloadCancellation?.cancelled == true) "已取消《$downloadTitle》的下载"
+                    else error.message ?: "云端操作未完成，请稍后重试"
+            }
             finally {
                 notification?.close()
                 if (bookId == null) {
@@ -1312,6 +1331,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     cloudFraction = null
                     cloudJob = null
                 } else {
+                    cloudDownloads.remove(bookId)
                     cloudBookJobs.remove(bookId)
                     cloudBookOperations = cloudBookOperations - bookId
                 }
@@ -1823,6 +1843,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun cancelCloudTransfer(book: Book) {
+        val download = cloudDownloads[book.id]
+        if (download == null) {
+            cancelCloudUpload(book)
+        } else if (download.cancel()) {
+            cloudBookOperations = cloudBookOperations + (book.id to CloudTransferProgress("正在取消下载"))
+        }
+    }
+
     private suspend fun stopCloudUploadSubmission(bookId: String) {
         CloudBackupAutomation.cancelSubmissionAndUpload(getApplication(), bookId, cloudUploadJobs[bookId], cloudUploadQueueMutex)
     }
@@ -2046,34 +2075,38 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun downloadCloudBook(book: Book) = cloudOperation(book.id, "准备下载《${book.title}》", downloadTitle = book.title) { service ->
-        if (state.books.none { it.id == book.id && it.cloudOnly }) return@cloudOperation
-        val restored = service.download(book.id)
-        if (state.books.none { it.id == book.id }) {
-            withContext(Dispatchers.IO) { repository.removeBookFiles(restored.book) }
-            return@cloudOperation
-        }
-        val shelfBook = state.books.first { it.id == book.id }
-        val localTitle = shelfBook.title
-        val localBook = if (localTitle != restored.book.title) withContext(Dispatchers.IO) {
-            BookSourceRename(getApplication(), restored.book).apply(localTitle)
-        } else restored.book
-        val downloaded = mergeCloudDownloadedBook(state, restored.copy(book = localBook.copy(title = localTitle)))
-        val backedUpBook = downloaded.books.first { it.id == book.id }
-        changed(downloaded.copy(books = downloaded.books.map {
-            if (it.id == book.id) it.copy(tags = shelfBook.tags,
-                groupId = shelfBook.groupId?.takeIf { group -> downloaded.groups.any { it.id == group && it.mode == shelfBook.mode } }) else it
-        }, settings = downloaded.settings.ensureActiveAppearanceProfile(),
-            comicSettings = downloaded.comicSettings.ensureActiveAppearanceProfile()))
-        persistNow()
-        val account = withContext(Dispatchers.IO) { service.identity() }
-        val snapshot = state
-        val downloadedBook = snapshot.books.first { it.id == book.id }
-        withContext(Dispatchers.IO) { runCatching { LocalSourceChanges(getApplication()).accepted(downloadedBook) } }
-        if (account != null) withContext(Dispatchers.IO) {
-            // Shelf changes made on the placeholder are still pending after the original file is downloaded.
-            cloudHistory.record(account, book.id, cloudBackupFingerprint(repository, snapshot,
-                backedUpBook.copy(title = restored.book.title)), restored.backupAt)
+    fun downloadCloudBook(book: Book) {
+        val cancellation = CloudDownloadCancellation()
+        cloudOperation(book.id, "准备下载《${book.title}》", downloadTitle = book.title,
+            downloadCancellation = cancellation) { service ->
+            if (state.books.none { it.id == book.id && it.cloudOnly }) return@cloudOperation
+            val restored = service.download(book.id, cancellation)
+            if (state.books.none { it.id == book.id }) {
+                withContext(Dispatchers.IO) { repository.removeBookFiles(restored.book) }
+                return@cloudOperation
+            }
+            val shelfBook = state.books.first { it.id == book.id }
+            val localTitle = shelfBook.title
+            val localBook = if (localTitle != restored.book.title) withContext(Dispatchers.IO) {
+                BookSourceRename(getApplication(), restored.book).apply(localTitle)
+            } else restored.book
+            val downloaded = mergeCloudDownloadedBook(state, restored.copy(book = localBook.copy(title = localTitle)))
+            val backedUpBook = downloaded.books.first { it.id == book.id }
+            changed(downloaded.copy(books = downloaded.books.map {
+                if (it.id == book.id) it.copy(tags = shelfBook.tags,
+                    groupId = shelfBook.groupId?.takeIf { group -> downloaded.groups.any { it.id == group && it.mode == shelfBook.mode } }) else it
+            }, settings = downloaded.settings.ensureActiveAppearanceProfile(),
+                comicSettings = downloaded.comicSettings.ensureActiveAppearanceProfile()))
+            persistNow()
+            val account = withContext(Dispatchers.IO) { service.identity() }
+            val snapshot = state
+            val downloadedBook = snapshot.books.first { it.id == book.id }
+            withContext(Dispatchers.IO) { runCatching { LocalSourceChanges(getApplication()).accepted(downloadedBook) } }
+            if (account != null) withContext(Dispatchers.IO) {
+                // Shelf changes made on the placeholder are still pending after the original file is downloaded.
+                cloudHistory.record(account, book.id, cloudBackupFingerprint(repository, snapshot,
+                    backedUpBook.copy(title = restored.book.title)), restored.backupAt)
+            }
         }
     }
 

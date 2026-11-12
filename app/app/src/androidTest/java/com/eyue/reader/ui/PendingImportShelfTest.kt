@@ -116,7 +116,7 @@ class PendingImportShelfTest {
         books = initialBooks
         compose.setContent {
             MaterialTheme {
-                Bookshelf(books, query, { query = it }, { openCalls++ }, {}, {}, groups = groups, pending = pending)
+                Bookshelf(books, query, { query = it }, { openCalls++ }, {}, {}, groups = groups, pending = pending, searchVisible = true)
             }
         }
         compose.onNodeWithTag("bookshelf").assertIsDisplayed()

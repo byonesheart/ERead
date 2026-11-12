@@ -49,7 +49,8 @@ import com.eyue.reader.data.LibraryMode
 }
 
 @Composable internal fun XingcaiModeTabs(mode: LibraryMode, onMode: (LibraryMode) -> Unit, onNotes: () -> Unit,
-    onImport: () -> Unit = {}, importEnabled: Boolean = true, nightMode: Boolean = false, onToggleNight: () -> Unit = {}) {
+    onImport: () -> Unit = {}, importEnabled: Boolean = true, nightMode: Boolean = false, onToggleNight: () -> Unit = {},
+    onSearch: (() -> Unit)? = null) {
     Row(Modifier.padding(start = 20.dp, end = 12.dp, top = 6.dp).fillMaxWidth().height(52.dp).testTag("mode_tabs"),
         verticalAlignment = Alignment.CenterVertically) {
         XingcaiLibraryModeSwitch(mode, onMode, Modifier.weight(1f))
@@ -61,6 +62,7 @@ import com.eyue.reader.data.LibraryMode
         IconButton(onClick = onNotes, modifier = Modifier.size(40.dp).testTag("notebook_entry")) {
             XingcaiNotesGlyph(modifier = Modifier.semantics { contentDescription = "书签与笔记" })
         }
+        if (onSearch != null) ShelfSearchIcon(onSearch)
         IconButton(onClick = onImport, enabled = importEnabled, modifier = Modifier.size(40.dp).testTag("top_import")) {
             XingcaiImportGlyph(enabled = importEnabled, modifier = Modifier.semantics { contentDescription = "导入书籍" })
         }

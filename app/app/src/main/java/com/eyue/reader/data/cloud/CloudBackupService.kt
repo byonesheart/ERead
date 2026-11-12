@@ -44,6 +44,37 @@ import java.util.UUID
 
 private val cloudMetadataReads = Semaphore(3)
 
+internal class CloudDownloadCancellation {
+    private var transport: CloudTransport? = null
+    private var committing = false
+    @Volatile var cancelled = false
+        private set
+
+    @Synchronized fun attach(connection: CloudTransport) {
+        check()
+        transport = connection
+    }
+
+    @Synchronized fun cancel(): Boolean {
+        if (committing || cancelled) return false
+        cancelled = true
+        transport?.cancel()
+        return true
+    }
+
+    fun check() {
+        if (cancelled) throw CancellationException("书籍下载已取消")
+    }
+
+    @Synchronized fun beginCommit() {
+        check()
+        committing = true
+        transport = null
+    }
+
+    @Synchronized fun canCancel(): Boolean = !committing && !cancelled
+}
+
 class CloudBackupService(
     private val context: Context,
     private val credentialStore: CloudCredentialStore = EncryptedCloudCredentialStore(context),
@@ -511,11 +542,14 @@ class CloudBackupService(
 
     suspend fun download(info: CloudBookInfo): CloudRestoredBook = download(info.book.id)
 
-    suspend fun download(bookId: String): CloudRestoredBook = cloudOperationMutex.withBook(bookId) { withContext(Dispatchers.IO) {
+    suspend fun download(bookId: String): CloudRestoredBook = download(bookId, null)
+
+    @JvmName("downloadCancellable")
+    internal suspend fun download(bookId: String, cancellation: CloudDownloadCancellation?): CloudRestoredBook = cloudOperationMutex.withBook(bookId) { withContext(Dispatchers.IO) {
         CloudArchive.safeId(bookId)
         val job = currentCoroutineContext()
-        val check = { job.ensureActive() }
-        val transport = transport(check)
+        val check = { job.ensureActive(); cancellation?.check(); Unit }
+        val transport = transport(check).also { cancellation?.attach(it) }
         val directory = "books/$bookId/"
         val manifest = readManifest(requireNotNull(transport.metadata(directory + "manifest.json")) { "云端图书信息不存在" }, bookId)
         val info = manifest.info
@@ -584,6 +618,8 @@ class CloudBackupService(
                 }
             }
             val settings = remapSettings(info.settings, ::font)
+            cancellation?.beginCommit()
+            if (cancellation != null) onProgress(CloudOperationProgress("保存《${info.book.title}》"))
             CloudRestoredBook(CloudDownloadLocation(context).publish(book, check), annotations, settings, info.group, info.backupAt,
                 info.readingSeconds, info.parentGroup)
         } catch (error: Throwable) {

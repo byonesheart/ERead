@@ -10,6 +10,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import com.eyue.reader.data.Book
 import com.eyue.reader.data.BookFormat
 import com.eyue.reader.data.Chapter
+import com.eyue.reader.data.CloudTransferProgress
 import com.eyue.reader.data.LibraryMode
 import com.eyue.reader.data.cloud.CloudOperationProgress
 import kotlinx.coroutines.runBlocking
@@ -70,8 +71,37 @@ class BookshelfBatchBackupRobolectricTest {
         compose.onNodeWithTag("backup_select_remote").assertIsOn()
         capture("bookshelf-batch-actions")
         compose.onNodeWithTag("shelf_batch_transfer").performClick()
-        compose.runOnIdle { assertEquals(listOf("local", "remote"), uploaded) }
+        compose.onNodeWithTag("shelf_batch_cloud_choices").assertIsDisplayed()
+        compose.onNodeWithTag("shelf_batch_cloud_download").performClick()
+        compose.runOnIdle { assertEquals(listOf("remote"), uploaded) }
         compose.onNodeWithTag("shelf_backup_actions").assertDoesNotExist()
+    }
+
+    @Test fun mixedTransfersOfferAllThreeActionsAndRunningOnlyStopsEachSelectedBook() {
+        val local = book("local")
+        val remote = book("remote").copy(cloudOnly = true)
+        val uploading = book("uploading")
+        val downloading = book("downloading").copy(cloudOnly = true)
+        val stopped = mutableListOf<String>()
+        val started = mutableListOf<String>()
+        compose.setContent { MaterialTheme {
+            Bookshelf(listOf(local, remote, uploading, downloading), "", {}, {}, {}, {},
+                onCloudBatch = { started += it.map(Book::id) }, onCancelCloud = { stopped += it.id },
+                cloudTransfers = mapOf(uploading.id to CloudTransferProgress("上传", .3f, true),
+                    downloading.id to CloudTransferProgress("下载", .6f, true)))
+        } }
+        openBatchSelection()
+        compose.onNodeWithTag("shelf_backup_select_all").performClick()
+        compose.onNodeWithTag("shelf_batch_transfer").performClick()
+        compose.onNodeWithTag("shelf_batch_cloud_upload").assertIsDisplayed()
+        compose.onNodeWithTag("shelf_batch_cloud_download").assertIsDisplayed()
+        compose.onNodeWithTag("shelf_batch_cloud_cancel").performClick()
+        compose.runOnIdle { assertEquals(listOf(uploading.id, downloading.id), stopped); assertTrue(started.isEmpty()) }
+        openBatchSelection()
+        compose.onNodeWithTag("backup_select_uploading").performClick()
+        compose.onNodeWithTag("shelf_batch_transfer").performClick()
+        compose.onNodeWithTag("shelf_batch_cloud_choices").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(listOf(uploading.id, downloading.id, uploading.id), stopped) }
     }
 
     @Test fun cancellingBatchClearsSelectionBeforeReopening() {
@@ -79,7 +109,7 @@ class BookshelfBatchBackupRobolectricTest {
         openBatchSelection()
         compose.onNodeWithTag("backup_select_local").performClick()
         compose.onNodeWithText("已选 1 本").assertIsDisplayed()
-        compose.onNodeWithText("取消").performClick()
+        compose.onNodeWithTag("shelf_batch_manage").performClick()
         compose.onNodeWithTag("shelf_backup_actions").assertDoesNotExist()
         openBatchSelection()
         compose.onNodeWithTag("backup_select_local").assertIsOff()

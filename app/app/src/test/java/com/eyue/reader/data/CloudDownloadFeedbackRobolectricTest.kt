@@ -11,6 +11,7 @@ import androidx.work.WorkManager
 import com.eyue.reader.ReaderViewModel
 import com.eyue.reader.data.cloud.CloudBackupService
 import com.eyue.reader.data.cloud.CloudBookInfo
+import com.eyue.reader.data.cloud.CloudDownloadCancellation
 import com.eyue.reader.data.cloud.CloudRestoredBook
 import kotlinx.coroutines.Job
 import org.junit.After
@@ -325,7 +326,9 @@ class CloudDownloadFeedbackRobolectricTest {
             continuation: Continuation<List<CloudBookInfo>>): Any = list(account, false, continuation)
 
         @Suppress("UNUSED_PARAMETER")
-        @Implementation fun download(bookId: String, continuation: Continuation<CloudRestoredBook>): Any {
+        @JvmName("downloadCancellable")
+        @Implementation internal fun downloadCancellable(bookId: String, cancellation: CloudDownloadCancellation?,
+            continuation: Continuation<CloudRestoredBook>): Any {
             downloadCalls++
             failure?.let { throw it }
             return requireNotNull(restored).also { check(it.book.id == bookId) }
