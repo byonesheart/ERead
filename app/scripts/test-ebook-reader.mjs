@@ -183,7 +183,7 @@ try {
     };
     await open({}, { source });
     assert.equal(await page.locator('[data-eread-dialogue]').count(), 0);
-    await open({ dialogueColor: '#4a79b3' }, { source });
+    await command({ type: 'configure', config: { ...baseConfig, dialogueColor: '#4a79b3' } });
     const evidence = await page.locator('p').evaluate(node => ({
       body: node.textContent,
       parts: Array.from(node.querySelectorAll('[data-eread-dialogue]'), part =>
@@ -194,6 +194,10 @@ try {
     assert.equal(evidence.parts.map(part => part[0]).join(''), '“今天见。”');
     assert.ok(evidence.parts.every(part => part[1] === 'rgb(74, 121, 179)' && part[2] === 'contents'));
     assert.notEqual(evidence.narration, evidence.parts[0][1]);
+    await command({ type: 'configure', config: { ...baseConfig, dialogueColor: null } });
+    assert.equal(await page.locator('[data-eread-dialogue]').first().evaluate(node => getComputedStyle(node).color), evidence.narration);
+    await command({ type: 'configure', config: { ...baseConfig, dialogueColor: '#4a79b3' } });
+    assert.equal(await page.locator('[data-eread-dialogue]').count(), evidence.parts.length);
     return evidence;
   });
   for (const mode of ['SCROLL', 'PAGED', 'VERTICAL_PAGED']) await test(`publication-background-and-protected-ink-${mode}`, async () => {

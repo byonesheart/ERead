@@ -24,14 +24,18 @@ class SettingsPreferencesRobolectricTest {
 
     @Test fun globalDialogueColorStartsOffAndSavesTheChosenColor() {
         var state by mutableStateOf(LibraryState())
-        compose.setContent { MaterialTheme { SettingsScreen(state, {}, {}, {}, {}, onDialogueColor = { enabled, color ->
-            state = state.copy(dialogueColorEnabled = enabled, dialogueColor = color)
-        }) } }
-        compose.onNodeWithTag("settings_dialogue_color").assertTextContains("已关闭").performClick()
+        var settings by mutableStateOf(ReaderSettings())
+        compose.setContent { MaterialTheme {
+            CompositionLocalProvider(LocalReaderDialogueSettings provides ReaderDialogueSettings(state.dialogueColorEnabled, state.dialogueColor, { enabled, color ->
+                state = state.copy(dialogueColorEnabled = enabled, dialogueColor = color)
+            })) { ReaderCompactSettings(settings, false, { settings = it }, {}, {}) }
+        } }
+        compose.onNodeWithText("文字与排版").performScrollTo().performClick()
+        compose.onNodeWithTag("reader_dialogue_color").assertTextContains("对话颜色 · 已关闭").performScrollTo().performClick()
         compose.onNodeWithTag("dialogue_color_enabled").assertIsOff().performClick()
         compose.onNodeWithContentDescription("紫色").performClick()
         compose.onNodeWithText("保存").performClick()
-        compose.onNodeWithTag("settings_dialogue_color").assertTextContains("已开启")
+        compose.onNodeWithTag("reader_dialogue_color").assertTextContains("对话颜色 · 已开启")
         compose.runOnIdle { assertEquals(0xFF8A5DA8L, state.dialogueColor) }
     }
 
@@ -140,7 +144,7 @@ class SettingsPreferencesRobolectricTest {
     @Test fun webDavTestsTheUnsavedDraftInsideConfigurationWithoutSavingIt() {
         var tested = ""; var saves = 0
         compose.setContent { MaterialTheme { SettingsScreen(LibraryState(), {}, {}, {}, {},
-            onSaveCloudAccount = { _, _, _ -> saves++ }, onTestCloudDraftConnection = { account, password, server ->
+            onSaveCloudAccount = { _, _, _, _ -> saves++ }, onTestCloudDraftConnection = { account, password, server ->
                 tested = "$account|$password|$server"; "WebDAV 连接成功"
             }) } }
         compose.onNodeWithTag("settings_cloud").performScrollTo().performClick()

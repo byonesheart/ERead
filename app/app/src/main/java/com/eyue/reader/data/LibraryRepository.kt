@@ -8,6 +8,8 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.util.AtomicFile
+import android.util.JsonReader
+import android.util.JsonToken
 import com.eyue.reader.data.LegacyLocatorFiles
 import com.eyue.reader.data.LegacyEpubIndex
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +17,8 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.Reader
+import java.io.Writer
 import java.util.UUID
 
 class LibraryRepository(private val context: Context) {
@@ -30,13 +34,33 @@ class LibraryRepository(private val context: Context) {
     fun load(): LibraryState = synchronized(stateLock) {
         if (!stateFile.baseFile.exists() && !File(stateFile.baseFile.path + ".bak").exists()) return LibraryState()
         try {
-            val json = JSONObject(stateFile.readFully().toString(Charsets.UTF_8))
+            val json = JSONObject()
+            val books = mutableListOf<Book>()
+            val annotations = mutableListOf<Annotation>()
+            JsonReader(stateFile.openRead().bufferedReader(Charsets.UTF_8)).use { reader ->
+                reader.beginObject()
+                while (reader.hasNext()) {
+                    when (val name = reader.nextName()) {
+                        "books" -> if (reader.beginLibraryArray()) {
+                            while (reader.hasNext()) books += readLibraryBook(reader)
+                            reader.endArray()
+                        }
+                        "annotations" -> if (reader.beginLibraryArray()) {
+                            while (reader.hasNext()) annotations += readAnnotation(reader.readLibraryObject())
+                            reader.endArray()
+                        }
+                        else -> json.put(name, reader.readLibraryValue())
+                    }
+                }
+                reader.endObject()
+                require(reader.peek() == JsonToken.END_DOCUMENT)
+            }
             val settings = readSettings(json.optJSONObject("settings") ?: JSONObject())
             val comic = json.optJSONObject("comicSettings")?.let { readSettings(it, ReaderSettings().withDefaultComicMargins()) }
                 ?: settings.withDefaultComicMargins()
             val state = LibraryState(
-                books = json.array("books").objects().map(::readBook),
-                annotations = json.array("annotations").objects().map(::readAnnotation),
+                books = books,
+                annotations = annotations,
                 settings = settings,
                 readingSeconds = json.optLong("readingSeconds", 0),
                 comicSettings = comic.copy(nightMode = settings.nightMode),
@@ -58,8 +82,8 @@ class LibraryRepository(private val context: Context) {
                 scanLocalChanges = json.optBoolean("scanLocalChanges", true),
                 scannedBookIds = if (json.has("scannedBookIds")) json.array("scannedBookIds").let { rows ->
                     (0 until rows.length()).map { rows.getString(it) }.toSet()
-                } else if (json.optBoolean("scanLocalChanges", false)) json.array("books").objects()
-                    .filterNot { it.optBoolean("cloudOnly") || it.optBoolean("isDemo") }.map { it.getString("id") }.toSet() else emptySet(),
+                } else if (json.optBoolean("scanLocalChanges", false)) books
+                    .filterNot { it.cloudOnly || it.isDemo }.map { it.id }.toSet() else emptySet(),
                 autoReloadSources = json.optBoolean("scanLocalChanges", true) &&
                     json.optBoolean("sourceScanAutomatic", true) && json.optBoolean("autoReloadSources", false),
                 commonVoiceRoles = if (json.has("commonVoiceRoles")) json.array("commonVoiceRoles").objects().map(BookVoiceRole::fromJson)
@@ -76,8 +100,6 @@ class LibraryRepository(private val context: Context) {
         val revision = UUID.randomUUID().toString()
         val json = JSONObject().put("version", 13)
             .put("positionRevision", revision)
-            .put("books", JSONArray(state.books.map(::writeBook)))
-            .put("annotations", JSONArray(state.annotations.map(::writeAnnotation)))
             .put("settings", writeSettings(state.settings))
             .put("comicSettings", writeSettings(state.comicSettings.copy(nightMode = state.settings.nightMode)))
             .put("groups", JSONArray(state.groups.map {
@@ -96,12 +118,26 @@ class LibraryRepository(private val context: Context) {
             .put("commonVoiceRoles", JSONArray(state.commonVoiceRoles.map { it.toJson() }))
         val output = stateFile.startWrite()
         try {
-            output.write(json.toString().toByteArray(Charsets.UTF_8))
+            val writer = output.bufferedWriter(Charsets.UTF_8)
+            writer.write(json.toString().dropLast(1))
+            writer.write(",\"books\":")
+            writeLibraryArray(writer, state.books) { book ->
+                writer.write(writeBookFields(book).toString().dropLast(1))
+                writer.write(",\"chapters\":")
+                writeLibraryArray(writer, book.chapters) { chapter ->
+                    writer.write(writeChapter(if (book.cloudOnly) chapter.cloudShelfChapter() else chapter).toString())
+                }
+                writer.write("}")
+            }
+            writer.write(",\"annotations\":")
+            writeLibraryArray(writer, state.annotations) { writer.write(writeAnnotation(it).toString()) }
+            writer.write("}")
+            writer.flush()
             stateFile.finishWrite(output)
             positionRevision = revision
             // A new revision makes a surviving old sidecar harmless even after an interrupted save.
             positionsFile.delete()
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
             stateFile.failWrite(output)
             throw error
         }
@@ -162,12 +198,89 @@ class LibraryRepository(private val context: Context) {
         listOf(createDemoNovel(), createDemoComic())
     }
 
-    internal fun readBook(json: JSONObject): Book = Book(
+    private fun readLibraryBook(reader: JsonReader): Book {
+        val fields = JSONObject()
+        val chapters = mutableListOf<Chapter>()
+        reader.beginObject()
+        while (reader.hasNext()) {
+            val name = reader.nextName()
+            if (name == "chapters") {
+                if (reader.beginLibraryArray()) {
+                    while (reader.hasNext()) chapters += readChapter(reader.readLibraryObject())
+                    reader.endArray()
+                }
+            } else fields.put(name, reader.readLibraryValue())
+        }
+        reader.endObject()
+        return readBook(fields, if (fields.optBoolean("cloudOnly")) chapters.map(Chapter::cloudShelfChapter) else chapters)
+    }
+
+    private fun JsonReader.beginLibraryArray(): Boolean {
+        if (peek() != JsonToken.BEGIN_ARRAY) { skipValue(); return false }
+        beginArray()
+        return true
+    }
+
+    // A shelf restore needs positions and directory rows, not the layout of every chapter.
+    internal fun readCloudShelfManifest(input: Reader): JSONObject = JsonReader(input).use { reader ->
+        val manifest = reader.readLibraryObject { field ->
+            if (field != "book") reader.readLibraryValue() else reader.readLibraryObject { bookField ->
+                if (bookField != "chapters") reader.readLibraryValue() else JSONArray().also { chapters ->
+                    reader.beginArray()
+                    while (reader.hasNext()) chapters.put(reader.readLibraryObject { chapterField ->
+                        when (chapterField) {
+                            "sourceStyles", "sourceCssStyles", "sourceFootnotes" -> { reader.skipValue(); null }
+                            else -> reader.readLibraryValue()
+                        }
+                    })
+                    reader.endArray()
+                }
+            }
+        }
+        require(reader.peek() == JsonToken.END_DOCUMENT)
+        manifest
+    }
+
+    private fun JsonReader.readLibraryObject(readField: ((String) -> Any?)? = null): JSONObject = JSONObject().also { json ->
+        beginObject()
+        while (hasNext()) {
+            val name = nextName()
+            json.put(name, if (readField == null) readLibraryValue() else readField(name))
+        }
+        endObject()
+    }
+
+    private fun JsonReader.readLibraryValue(): Any = when (peek()) {
+        JsonToken.BEGIN_OBJECT -> readLibraryObject()
+        JsonToken.BEGIN_ARRAY -> JSONArray().also { rows ->
+            beginArray()
+            while (hasNext()) rows.put(readLibraryValue())
+            endArray()
+        }
+        JsonToken.STRING -> nextString()
+        JsonToken.NUMBER -> nextString().let { it.toLongOrNull() ?: it.toDouble() }
+        JsonToken.BOOLEAN -> nextBoolean()
+        JsonToken.NULL -> { nextNull(); JSONObject.NULL }
+        else -> error("书架 JSON 值无效")
+    }
+
+    private fun <T> writeLibraryArray(writer: Writer, items: List<T>, writeItem: (T) -> Unit) {
+        writer.write("[")
+        items.forEachIndexed { index, item ->
+            if (index > 0) writer.write(",")
+            writeItem(item)
+        }
+        writer.write("]")
+    }
+
+    internal fun readBook(json: JSONObject): Book = readBook(json, json.array("chapters").objects().map(::readChapter))
+
+    private fun readBook(json: JSONObject, chapters: List<Chapter>): Book = Book(
         id = json.getString("id"), title = json.getString("title"), author = json.optString("author", ""),
         format = enumValue(json.optString("format"), BookFormat.TXT),
         mode = enumValue(json.optString("mode"), LibraryMode.NOVEL),
         coverPath = json.nullableString("coverPath"),
-        chapters = json.array("chapters").objects().map(::readChapter),
+        chapters = chapters,
         chapterIndex = json.optInt("chapterIndex", 0), pageIndex = json.optInt("pageIndex", 0),
         characterOffset = json.optInt("characterOffset", 0), progress = json.optDouble("progress", 0.0).toFloat(),
         lastReadAt = json.optLong("lastReadAt", 0), addedAt = json.optLong("addedAt", 0),
@@ -201,10 +314,12 @@ class LibraryRepository(private val context: Context) {
                         footnote.getString("content"), footnote.nullableString("imagePath"))
                 })
 
-    internal fun writeBook(book: Book): JSONObject = JSONObject()
+    internal fun writeBook(book: Book): JSONObject = writeBookFields(book, JSONArray(book.chapters.map(::writeChapter)))
+
+    private fun writeBookFields(book: Book, chapters: JSONArray? = null): JSONObject = JSONObject()
         .put("id", book.id).put("title", book.title).put("author", book.author)
         .put("format", book.format.name).put("mode", book.mode.name).put("coverPath", book.coverPath)
-        .put("chapters", JSONArray(book.chapters.map(::writeChapter)))
+        .put("chapters", chapters)
         .put("chapterIndex", book.chapterIndex).put("pageIndex", book.pageIndex)
         .put("characterOffset", book.characterOffset).put("progress", book.progress.toDouble())
         .put("lastReadAt", book.lastReadAt).put("addedAt", book.addedAt).put("isDemo", book.isDemo)

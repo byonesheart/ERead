@@ -243,7 +243,8 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                         bookProvider = { book }, onCacheChanged = vm::notifyAiSpeechCacheChanged) else ReaderSpeech(context) }
                 }
                 CompositionLocalProvider(LocalReaderSpeechFactory provides speechFactory,
-                    LocalReaderDialogueColor provides state.dialogueColor.takeIf { state.dialogueColorEnabled }) {
+                    LocalReaderDialogueColor provides state.dialogueColor.takeIf { state.dialogueColorEnabled },
+                    LocalReaderDialogueSettings provides ReaderDialogueSettings(state.dialogueColorEnabled, state.dialogueColor, vm::setDialogueColor)) {
                 ReaderScreen(book, settings, vm.readerAnnotations(book.id),
                     onClose = ::closeReader, ebookSession = ebookSession,
                     onProgress = { chapter, page, offset, progress, imagePath -> vm.progress(chapter, page, offset, progress, book.id, imagePath) },
@@ -366,6 +367,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                     cloudServerUrl = vm.cloudServerUrl,
                                     cloudConfigured = vm.cloudConfigured, cloudBusy = vm.cloudBusy, cloudTaskLabel = vm.cloudTaskLabel,
                                     cloudFraction = vm.cloudFraction, onSaveCloudAccount = vm::saveCloudAccount,
+                                    onSelectCloudProfile = vm::selectCloudProfile,
                                     onTestCloudConnection = vm::testCloudConnection, onCloudAutoBackup = vm::setCloudAutoBackup,
                                     onRestoreCloudBookInfo = vm::restoreCloudBookInfo, onDisconnectCloud = vm::disconnectCloud,
                                     onCloudAutoBackupMetered = vm::setCloudAutoBackupMetered,
@@ -383,7 +385,6 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                     restoreProgress = vm.cloudRestoreProgress,
                                     onAppTheme = vm::setAppTheme, availableUpdate = updateSession.availableUpdate,
                                     onCheckUpdate = updateSession::checkNow, onShowRecentReading = vm::setShowRecentReading,
-                                    onDialogueColor = vm::setDialogueColor,
                                     onScanLocalChanges = vm::setScanLocalChanges, onScanSourcesNow = vm::scanLocalSourcesNow,
                                     localSourceScanIssues = vm.localSourceScanIssues, scanningLocalSources = vm.scanningLocalSources,
                                     sourceAuthorizations = vm.sourceAuthorizations, sourceSyncing = vm.reloadingSourceIds,

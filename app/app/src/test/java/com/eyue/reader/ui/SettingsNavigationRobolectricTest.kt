@@ -109,7 +109,8 @@ class SettingsNavigationRobolectricTest {
         compose.onNodeWithTag("settings_theme").assertIsDisplayed()
     }
 
-    @Test fun cloudRestorationShowsLiveProgressAndTheRealApplicationDownloadDirectory() {
+    @Suppress("DEPRECATION")
+    @Test fun cloudRestorationShowsLiveProgressAndTheSystemDownloadDirectory() {
         var progress by mutableStateOf<CloudOperationProgress?>(null)
         var restores = 0
         compose.setContent { MaterialTheme {
@@ -118,9 +119,9 @@ class SettingsNavigationRobolectricTest {
                 restoreProgress = progress)
         } }
         compose.onNodeWithTag("settings_cloud").performScrollTo().performClick()
-        val expected = File(RuntimeEnvironment.getApplication().filesDir, "books").absolutePath
+        val expected = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "E阅").absolutePath
         compose.onNodeWithTag("cloud_download_directory").performScrollTo().assertTextEquals(expected)
-        compose.onNodeWithText("应用内部存储，按书籍分别保存。").assertExists()
+        compose.onNodeWithText("原文件保存至此处，阅读缓存留在应用内；仅影响后续下载。").assertExists()
         compose.onNodeWithTag("cloud_restore_progress").assertDoesNotExist()
         compose.onNodeWithTag("cloud_restore_info").performScrollTo().performClick()
         compose.onNodeWithTag("cloud_restore_info").assertIsNotEnabled()
@@ -217,7 +218,7 @@ class SettingsNavigationRobolectricTest {
         val requests = mutableListOf<Triple<String, String, String>>()
         var saves = 0
         compose.setContent { MaterialTheme {
-            CloudBackupSettings("", false, false, false, "", null, { _, _, _ -> saves++ }, {}, {}, {}, {},
+            CloudBackupSettings("", false, false, false, "", null, { _, _, _, _ -> saves++ }, {}, {}, {}, {},
                 onTestDraftConnection = { account, password, server -> requests += Triple(account, password, server); "连接成功" })
         } }
         compose.onNodeWithTag("cloud_test_connection").assertDoesNotExist()
@@ -238,7 +239,7 @@ class SettingsNavigationRobolectricTest {
         val result = CompletableDeferred<String>()
         var calls = 0
         compose.setContent { MaterialTheme {
-            CloudBackupSettings("reader@example.com", true, false, false, "", null, { _, _, _ -> }, {}, {}, {}, {},
+            CloudBackupSettings("reader@example.com", true, false, false, "", null, { _, _, _, _ -> }, {}, {}, {}, {},
                 onTestDraftConnection = { _, _, _ -> calls++; withContext(NonCancellable) { result.await() } })
         } }
         compose.onNodeWithTag("cloud_open_account").performClick()
@@ -256,7 +257,7 @@ class SettingsNavigationRobolectricTest {
         var restores = 0
         var metered = false
         compose.setContent { MaterialTheme {
-            CloudBackupSettings("reader@example.com", true, false, false, "", null, { _, _, _ -> }, {}, {}, { restores++ }, {},
+            CloudBackupSettings("reader@example.com", true, false, false, "", null, { _, _, _, _ -> }, {}, {}, { restores++ }, {},
                 onAutoBackupMetered = { metered = it }, onTestDraftConnection = { account, password, server ->
                     requests += Triple(account, password, server); "连接成功"
                 })

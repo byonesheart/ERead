@@ -37,6 +37,8 @@ import androidx.compose.ui.unit.sp
 import com.eyue.reader.data.*
 import com.eyue.reader.data.cloud.DEFAULT_WEBDAV_SERVER
 import com.eyue.reader.data.cloud.CloudOperationProgress
+import com.eyue.reader.data.cloud.WebDavProfile
+import com.eyue.reader.data.cloud.WebDavProfiles
 import com.eyue.reader.data.cloud.normalizeWebDavServer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -58,7 +60,8 @@ private enum class SettingsPage(val title: String) {
     onChapterRule: (String) -> Unit, onImportFont: () -> Unit, onClearHistory: () -> Unit, mode: LibraryMode = LibraryMode.NOVEL,
     cloudAccount: String = "", cloudServerUrl: String = DEFAULT_WEBDAV_SERVER,
     cloudConfigured: Boolean = false, cloudBusy: Boolean = false, cloudTaskLabel: String = "",
-    cloudFraction: Float? = null, onSaveCloudAccount: (String, String, String) -> Unit = { _, _, _ -> },
+    cloudFraction: Float? = null, onSaveCloudAccount: (String, String, String, String) -> Unit = { _, _, _, _ -> },
+    onSelectCloudProfile: (String) -> Unit = {},
     onTestCloudConnection: () -> Unit = {}, onCloudAutoBackup: (Boolean) -> Unit = {},
     onRestoreCloudBookInfo: () -> Unit = {}, onDisconnectCloud: () -> Unit = {},
     onCloudAutoBackupMetered: (Boolean) -> Unit = {}, aiSpeechConfig: AiSpeechConfig? = null,
@@ -81,11 +84,9 @@ private enum class SettingsPage(val title: String) {
     sourceSyncing: Set<String> = emptySet(), sourcePending: Set<String> = emptySet(),
     onScannedBooks: (Set<String>) -> Unit = {}, onAutoReload: (Boolean) -> Unit = {},
     onGrantScanBooks: (Set<String>) -> Unit = {}, onGrantScanFolder: () -> Unit = {},
-    onScanLocalChanges: (Boolean) -> Unit = {}, onScanSourcesNow: () -> Unit = {},
-    onDialogueColor: (Boolean, Long) -> Unit = { _, _ -> }) {
+    onScanLocalChanges: (Boolean) -> Unit = {}, onScanSourcesNow: () -> Unit = {}) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
-    var showDialogueColor by remember { mutableStateOf(false) }
     val page = pages.lastOrNull()
     val pageScroll = remember(page) { ScrollState(0) }
     val context = LocalContext.current
@@ -126,9 +127,6 @@ private enum class SettingsPage(val title: String) {
                             Text("夜间模式", Modifier.weight(1f), fontSize = 14.sp)
                             SettingsNightModeSegment(state.themeMode, onThemeMode)
                         }
-                        SettingsSeparator()
-                        SettingsLink(Icons.Outlined.Palette, "对话颜色", if (state.dialogueColorEnabled) "已开启" else "已关闭",
-                            "settings_dialogue_color", { showDialogueColor = true })
                     }
                     SettingsCard(Modifier.testTag("settings_reading_card")) {
                         SettingsToggle("最近阅读", "在阅读首页显示最近阅读的书籍", state.showRecentReading, onShowRecentReading,
@@ -189,7 +187,7 @@ private enum class SettingsPage(val title: String) {
                 SettingsPage.CLOUD -> CloudBackupSettings(cloudAccount, cloudConfigured, state.cloudAutoBackup, cloudBusy,
                     cloudTaskLabel, cloudFraction, onSaveCloudAccount, onTestCloudConnection, onCloudAutoBackup,
                     onRestoreCloudBookInfo, onDisconnectCloud, cloudServerUrl, state.cloudAutoBackupMetered,
-                    onCloudAutoBackupMetered, onTestCloudDraftConnection, restoreProgress)
+                    onCloudAutoBackupMetered, onTestCloudDraftConnection, restoreProgress, onSelectCloudProfile)
                 SettingsPage.CACHE -> {
                     SettingsCard {
                         LibraryCleanupKind.entries.forEachIndexed { index, kind ->
@@ -233,11 +231,6 @@ private enum class SettingsPage(val title: String) {
             }
         }
     }
-    if (showDialogueColor) DialogueColorDialog(state.dialogueColorEnabled, state.dialogueColor,
-        onDismiss = { showDialogueColor = false }, onSave = { enabled, color ->
-            onDialogueColor(enabled, color)
-            showDialogueColor = false
-        })
     cleanup?.let { kind ->
         CleanupDialog(cleanupTitle(kind) + "？", when (kind) {
             LibraryCleanupKind.HISTORY -> "阅读首页的历史记录将清空。书架、阅读进度和书签笔记继续保留。"
@@ -303,14 +296,17 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
 }
 
 @Composable internal fun CloudBackupSettings(account: String, configured: Boolean, autoBackup: Boolean, busy: Boolean,
-    taskLabel: String, fraction: Float?, onSave: (String, String, String) -> Unit, onTest: () -> Unit,
+    taskLabel: String, fraction: Float?, onSave: (String, String, String, String) -> Unit, onTest: () -> Unit,
     onAutoBackup: (Boolean) -> Unit, onRestore: () -> Unit, onDisconnect: () -> Unit,
     serverUrl: String = DEFAULT_WEBDAV_SERVER, autoBackupMetered: Boolean = false,
     onAutoBackupMetered: (Boolean) -> Unit = {},
     onTestDraftConnection: (suspend (account: String, password: String, server: String) -> String)? = null,
-    restoreProgress: CloudOperationProgress? = null) {
+    restoreProgress: CloudOperationProgress? = null, onSelectProfile: (String) -> Unit = {}) {
     var accountDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current.applicationContext
+    val profiles by produceState(emptyList<WebDavProfile>(), context, account, serverUrl, configured, accountDialog, busy) {
+        if (!busy) value = withContext(Dispatchers.IO) { WebDavProfiles(context).list() }
+    }
     val downloadLocation = remember(context) { CloudDownloadLocation(context) }
     var downloadDirectory by remember(context) { mutableStateOf(downloadLocation.label()) }
     val downloadFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -324,7 +320,8 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
         Column(Modifier.fillMaxWidth().padding(16.dp).testTag("cloud_settings"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             OutlinedButton(onClick = { accountDialog = true }, enabled = !busy,
                 modifier = Modifier.fillMaxWidth().testTag("cloud_open_account")) {
-                Text(if (configured) "网盘配置 · $account" else "网盘配置", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val name = profiles.firstOrNull { it.active }?.name ?: account
+                Text(if (configured) "网盘配置 · $name" else "网盘配置", maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (busy) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(17.dp), color = Olive, strokeWidth = 2.dp)
@@ -356,11 +353,12 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
                 Text("原文件保存至此处，阅读缓存留在应用内；仅影响后续下载。", style = MaterialTheme.typography.bodySmall, color = Muted)
             }
             if (configured) TextButton(onClick = onDisconnect, enabled = !busy, modifier = Modifier.align(Alignment.End).testTag("cloud_disconnect")) {
-                Text("解绑此账号")
+                Text("断开当前备份配置")
             }
         }
     }
-    if (accountDialog) CloudAccountDialog(account, serverUrl, configured, busy, onSave, onTestDraftConnection, onTest) { accountDialog = false }
+    if (accountDialog) CloudAccountDialog(account, serverUrl, configured, busy, profiles, onSave, onSelectProfile,
+        onTestDraftConnection, onTest) { accountDialog = false }
 }
 
 @Composable internal fun CloudRestoreProgressIndicator(progress: CloudOperationProgress, tag: String, modifier: Modifier = Modifier) {
@@ -388,10 +386,12 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
 }
 
 @Composable private fun CloudAccountDialog(account: String, serverUrl: String, configured: Boolean, busy: Boolean,
-    onSave: (String, String, String) -> Unit,
+    profiles: List<WebDavProfile>, onSave: (String, String, String, String) -> Unit, onSelectProfile: (String) -> Unit,
     onTestDraft: (suspend (String, String, String) -> String)?, onTestSaved: () -> Unit, onDismiss: () -> Unit) {
     var accountDraft by remember(account) { mutableStateOf(account) }
     var serverDraft by remember(serverUrl) { mutableStateOf(serverUrl) }
+    val activeName = profiles.firstOrNull { it.active }?.name.orEmpty()
+    var nameDraft by remember(activeName) { mutableStateOf(activeName) }
     var passwordDraft by remember(account, serverUrl, configured) { mutableStateOf("") }
     var testJob by remember { mutableStateOf<Job?>(null) }
     var testing by remember { mutableStateOf(false) }
@@ -402,12 +402,34 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
     val normalized = remember(serverDraft) { runCatching { normalizeWebDavServer(serverDraft) } }
     val error = normalized.exceptionOrNull()?.message
     val sameAccount = configured && accountDraft.trim() == account && normalized.getOrNull() == serverUrl
-    val valid = error == null && accountDraft.isNotBlank() && (passwordDraft.isNotBlank() || sameAccount)
+    val savedAccount = sameAccount || profiles.any { it.account == accountDraft.trim() && it.server == normalized.getOrNull() }
+    val valid = error == null && accountDraft.isNotBlank() && (passwordDraft.isNotBlank() || savedAccount)
     fun invalidateTest() { generation++; testJob?.cancel(); testJob = null; testing = false; testResult = null }
     fun close() { invalidateTest(); onDismiss() }
     DisposableEffect(Unit) { onDispose { testJob?.cancel() } }
     AlertDialog(onDismissRequest = ::close, modifier = Modifier.testTag("cloud_account_dialog"), title = { Text("网盘配置") }, text = {
         Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (profiles.isNotEmpty()) {
+                Text("已保存的网盘", style = MaterialTheme.typography.titleSmall)
+                profiles.forEach { profile ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(profile.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(profile.server, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Muted,
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (profile.active) Text("当前备份", color = Olive, style = MaterialTheme.typography.bodySmall)
+                        else TextButton(enabled = !busy, onClick = { onSelectProfile(profile.id); close() },
+                            modifier = Modifier.testTag("cloud_use_profile_${profile.id}")) { Text("切换") }
+                    }
+                }
+                TextButton(enabled = !busy, onClick = {
+                    invalidateTest(); nameDraft = ""; accountDraft = ""; serverDraft = DEFAULT_WEBDAV_SERVER; passwordDraft = ""
+                }) { Text("新增配置") }
+                HorizontalDivider(color = Line)
+            }
+            OutlinedTextField(nameDraft, { nameDraft = it.take(60) }, label = { Text("配置名称（选填）") },
+                modifier = Modifier.fillMaxWidth().testTag("cloud_profile_name"), enabled = !busy, singleLine = true)
             OutlinedTextField(serverDraft, { invalidateTest(); serverDraft = it }, label = { Text("WebDAV 服务器") },
                 modifier = Modifier.fillMaxWidth().testTag("cloud_server"), enabled = !busy, singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), isError = error != null,
@@ -419,7 +441,7 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
             OutlinedTextField(passwordDraft, { invalidateTest(); passwordDraft = it }, label = { Text("密码 / 应用密码") },
                 modifier = Modifier.fillMaxWidth().testTag("cloud_password"), enabled = !busy, singleLine = true,
                 visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                supportingText = { Text(if (sameAccount) "留空可沿用已保存的密码" else "坚果云需使用第三方应用密码；更换账号或服务器时重新填写") })
+                supportingText = { Text(if (savedAccount) "留空可沿用已保存的密码" else "坚果云需使用第三方应用密码") })
             OutlinedButton(enabled = valid && !busy && !testing && (onTestDraft != null || sameAccount),
                 modifier = Modifier.fillMaxWidth().testTag("cloud_test_connection"), onClick = {
                     invalidateTest()
@@ -443,7 +465,7 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
                 style = MaterialTheme.typography.bodySmall) }
         }
     }, confirmButton = { TextButton(onClick = {
-        invalidateTest(); onSave(accountDraft.trim(), passwordDraft, normalized.getOrThrow()); passwordDraft = ""
+        invalidateTest(); onSave(accountDraft.trim(), passwordDraft, normalized.getOrThrow(), nameDraft); passwordDraft = ""
     }, enabled = !busy && !testing && valid, modifier = Modifier.testTag("cloud_save_account")) { Text("保存账号") } },
         dismissButton = { TextButton(onClick = ::close) { Text("关闭") } })
 }

@@ -3,6 +3,7 @@ package com.eyue.reader.data.cloud
 import android.content.Context
 import android.util.AtomicFile
 import com.eyue.reader.data.Book
+import com.eyue.reader.data.BookFormat
 import com.eyue.reader.data.Chapter
 import com.eyue.reader.data.HtmlChapterParser
 import com.eyue.reader.data.LibraryRepository
@@ -16,11 +17,19 @@ import java.security.MessageDigest
 
 /** Cloud materialization can reuse prepared metadata without loading immutable chapter strings. */
 internal suspend fun materializeCloudBookCached(context: Context, book: Book, cache: CloudResourceHashCache,
-    check: () -> Unit = {}, load: suspend (Int) -> PreparedChapter = { loadChapterContent(context, book, it) }): Book {
+    check: () -> Unit = {}, originalSource: String? = null,
+    load: suspend (Int) -> PreparedChapter = { loadChapterContent(context, book, it) }): Book {
+    // Current EPUB imports already persist canonical text, images and footnotes.
+    // The original archive supplies HTML and CSS after restoration.
+    val reuseEpubCache = book.format == BookFormat.EPUB && book.contentVersion >= 10 && !book.hasTextEdits &&
+        !book.sourceLinked && originalSource != null && originalSource == book.sourcePath && File(originalSource).isFile
     val repository = LibraryRepository(context)
     return book.copy(chapters = book.chapters.mapIndexed { index, chapter ->
         val source = chapter.lazySourcePath ?: return@mapIndexed chapter
         check()
+        if (reuseEpubCache && chapter.textPath?.let { File(it).isFile } == true) {
+            return@mapIndexed chapter.copy(lazySourcePath = null)
+        }
         val structure = CloudArchive.hex(MessageDigest.getInstance("SHA-256")
             .digest("cloud-prepared-v1:${book.contentVersion}\n${repository.writeChapter(chapter)}".toByteArray()))
         cache.preparedChapter(chapter.id, structure, repository, check)?.let { return@mapIndexed it }

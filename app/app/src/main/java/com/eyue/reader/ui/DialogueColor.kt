@@ -34,6 +34,8 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 
 internal val LocalReaderDialogueColor = compositionLocalOf<Long?> { null }
+internal data class ReaderDialogueSettings(val enabled: Boolean, val color: Long, val onSave: (Boolean, Long) -> Unit)
+internal val LocalReaderDialogueSettings = compositionLocalOf<ReaderDialogueSettings?> { null }
 private val dialogue = Regex("“[^”\\r\\n]+”|「[^」\\r\\n]+」|『[^』\\r\\n]+』|\"[^\"\\r\\n]+\"")
 private val dialogueColors = listOf("蓝色" to "4A79B3", "紫色" to "8A5DA8", "红色" to "B54C56", "绿色" to "467A56")
 

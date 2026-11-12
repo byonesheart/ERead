@@ -3,6 +3,12 @@ package com.eyue.reader.data
 import com.eyue.reader.data.cloud.CloudRestoredBook
 import java.util.UUID
 
+internal fun Chapter.cloudShelfChapter(): Chapter = copy(
+    textPath = null, lazySourcePath = null, sourceStyles = emptyList(), sourceCssStyles = emptyList(),
+    sourceFootnotes = emptyList(), inlineImages = emptyList(),
+    pages = pages.map { it.copy(path = "", textPath = null) }
+)
+
 private fun cloudGroup(groups: List<ShelfGroup>, incoming: ShelfGroup?, mode: LibraryMode): Pair<List<ShelfGroup>, String?> {
     if (incoming == null || incoming.mode != mode) return groups to null
     val existing = groups.find { it.id == incoming.id && it.mode == mode }
@@ -21,10 +27,7 @@ internal fun mergeCloudBookInformation(state: LibraryState, books: List<Book>, a
         val (updatedGroups, groupId) = cloudGroup(groups, incomingGroups.find { it.id == book.groupId && it.mode == book.mode }, book.mode)
         groups = updatedGroups
         book.copy(cloudOnly = true, cloudEnabled = true, sourcePath = null, sourceUri = null, sourceLinked = false,
-            groupId = groupId, chapters = book.chapters.map { chapter ->
-                chapter.copy(textPath = null, lazySourcePath = null, sourceStyles = emptyList(), inlineImages = emptyList(),
-                    pages = chapter.pages.map { it.copy(path = "", textPath = null) })
-            })
+            groupId = groupId, chapters = book.chapters.map(Chapter::cloudShelfChapter))
     }
     val byId = restored.associateBy { it.id }
     val retainedNotes = state.annotations.filterNot { it.bookId in byId }

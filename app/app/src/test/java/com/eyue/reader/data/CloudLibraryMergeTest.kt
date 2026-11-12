@@ -32,7 +32,11 @@ class CloudLibraryMergeTest {
     }
 
     @Test fun informationRestoreClearsForeignFilePathsAndRetainsPositionsAndPageCounts() {
-        val remote = book("remote").copy(sourceUri = "content://foreign/book", sourceLinked = true)
+        val initial = book("remote")
+        val chapter = initial.chapters.single().copy(sourceStyles = listOf(SourceTextStyle(0, 2, bold = true)),
+            sourceCssStyles = listOf(SourceTextStyle(0, 2, italic = true)),
+            sourceFootnotes = listOf(SourceFootnote(0, 2, "1", "注释")))
+        val remote = initial.copy(sourceUri = "content://foreign/book", sourceLinked = true, chapters = listOf(chapter))
         val restored = mergeCloudBookInformation(LibraryState(), listOf(remote), emptyList(), emptyList(), 0).books.single()
         assertTrue(restored.cloudOnly && restored.cloudEnabled)
         assertFalse(restored.sourceLinked)
@@ -41,6 +45,9 @@ class CloudLibraryMergeTest {
         assertNull(restored.chapters.single().textPath)
         assertEquals("", restored.chapters.single().pages.single().path)
         assertTrue(restored.chapters.single().inlineImages.isEmpty())
+        assertTrue(restored.chapters.single().sourceStyles.isEmpty())
+        assertTrue(restored.chapters.single().sourceCssStyles.isEmpty())
+        assertTrue(restored.chapters.single().sourceFootnotes.isEmpty())
         assertEquals(remote.characterOffset, restored.characterOffset)
         assertEquals(remote.progress, restored.progress)
     }

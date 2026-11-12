@@ -33,8 +33,8 @@ import com.eyue.reader.data.LibraryMode
 import com.eyue.reader.data.cloud.CloudCredentials
 import com.eyue.reader.data.cloud.WebDavCloudTransport
 import com.eyue.reader.data.cloud.WebDavImportEntry
-import com.eyue.reader.data.cloud.WebDavImportProfile
-import com.eyue.reader.data.cloud.WebDavImportProfiles
+import com.eyue.reader.data.cloud.WebDavProfile
+import com.eyue.reader.data.cloud.WebDavProfiles
 import com.eyue.reader.data.cloud.WebDavImports
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -48,12 +48,12 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun WebDavImportDialog(mode: LibraryMode, onDismiss: () -> Unit, onQueued: () -> Unit) {
     val context = LocalContext.current.applicationContext
-    val store = remember(context) { WebDavImportProfiles(context) }
+    val store = remember(context) { WebDavProfiles(context) }
     val scope = rememberCoroutineScope()
     var profileRevision by remember { mutableIntStateOf(0) }
     val profiles by produceState(emptyList(), store, profileRevision) { value = withContext(Dispatchers.IO) { store.list() } }
-    var profile by remember { mutableStateOf<WebDavImportProfile?>(null) }
-    var removing by remember { mutableStateOf<WebDavImportProfile?>(null) }
+    var profile by remember { mutableStateOf<WebDavProfile?>(null) }
+    var removing by remember { mutableStateOf<WebDavProfile?>(null) }
     var folder by remember { mutableStateOf(emptyList<String>()) }
     var entries by remember { mutableStateOf(emptyList<WebDavImportEntry>()) }
     var selected by remember { mutableStateOf(emptySet<String>()) }
@@ -61,6 +61,7 @@ internal fun WebDavImportDialog(mode: LibraryMode, onDismiss: () -> Unit, onQueu
     var server by remember { mutableStateOf("") }
     var account by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -74,7 +75,7 @@ internal fun WebDavImportDialog(mode: LibraryMode, onDismiss: () -> Unit, onQueu
             finally { busy = false }
         }
     }
-    fun browse(target: WebDavImportProfile, path: List<String>) = runTask {
+    fun browse(target: WebDavProfile, path: List<String>) = runTask {
         val contents = withContext(Dispatchers.IO) {
             webDavFolder(requireNotNull(store.read(target.id)) { "请重新填写网盘连接信息" }, path)
         }
@@ -87,7 +88,7 @@ internal fun WebDavImportDialog(mode: LibraryMode, onDismiss: () -> Unit, onQueu
         val credentials = CloudCredentials(account.trim(), password, server)
         val (saved, contents) = withContext(Dispatchers.IO) {
             val contents = webDavFolder(credentials, emptyList())
-            store.save(credentials) to contents
+            store.save(credentials, name.takeIf { it.isNotBlank() }) to contents
         }
         profile = saved
         profileRevision++
@@ -106,6 +107,7 @@ internal fun WebDavImportDialog(mode: LibraryMode, onDismiss: () -> Unit, onQueu
                 error?.let { Text(it, color = androidx.compose.material3.MaterialTheme.colorScheme.error) }
                 if (configuring) {
                     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(name, { name = it.take(60) }, label = { Text("配置名称（选填）") }, singleLine = true)
                         OutlinedTextField(server, { server = it }, label = { Text("WebDAV 服务器地址") }, singleLine = true,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next))
                         OutlinedTextField(account, { account = it }, label = { Text("账户") }, singleLine = true,
@@ -118,9 +120,9 @@ internal fun WebDavImportDialog(mode: LibraryMode, onDismiss: () -> Unit, onQueu
                         items(profiles, key = { it.id }) { saved ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 TextButton(onClick = { browse(saved, emptyList()) }, enabled = !busy, modifier = Modifier.weight(1f)) {
-                                    Text("${saved.account} · ${saved.server}", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text("${saved.name} · ${saved.server}", maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 }
-                                IconButton(onClick = { removing = saved }, enabled = !busy) {
+                                if (!saved.active) IconButton(onClick = { removing = saved }, enabled = !busy) {
                                     Icon(Icons.Outlined.Close, "移除网盘配置")
                                 }
                             }

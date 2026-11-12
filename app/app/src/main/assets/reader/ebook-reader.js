@@ -30,6 +30,7 @@
         autoScrollFrame = requestAnimationFrame(tick);
     }
     let configurationGeneration = 0, resumeGeneration = 0, activeFont = null;
+    let dialogueMarked = false, dialogueMapping = null;
     const loadedFonts = new Map(), sourceMappings = [];
     const imageCrops = new Map();
     // Adapted from 7Mrlan/ebook build.66: a publication canvas belongs to the
@@ -756,7 +757,7 @@
         state.frame = requestAnimationFrame(frame);
     }
     async function configure(next, preserve, force) {
-        if (!force && started && JSON.stringify(next) === JSON.stringify(config)) return;
+        if (!force && started && !dialogueMapping && JSON.stringify(next) === JSON.stringify(config)) return;
         const generation = ++configurationGeneration;
         let font = null;
         if (next.font === 'eread-selected') {
@@ -769,8 +770,19 @@
         }
         finishPageAnimation();
         keepPagedViewport();
-        const anchor = preserve && started && (!continuousHost || continuousHost.isActive(frameChapter)) ? readingAnchor() : null;
+        const anchor = preserve && started && (!continuousHost || continuousHost.isActive(frameChapter))
+            ? (dialogueMapping ? reflowAnchor : readingAnchor()) : null;
         if (anchor && !reflowAnchor) reflowAnchor = {...anchor};
+        if (started && next.dialogueColor && !dialogueMarked && !dialogueMapping) {
+            entries.forEach(entry => { entry.node.data = entry.original; nodeEntries.delete(entry.node); });
+            entries = [];
+            sourceMappings.length = 0;
+            dialogueMapping = buildMap(next.dialogueColor, true).finally(() => { dialogueMapping = null; });
+        }
+        if (dialogueMapping) {
+            await dialogueMapping;
+            if (generation !== configurationGeneration) return;
+        }
         if (next.mode === 'SCROLL' || next.mode !== config.mode || next.vertical !== config.vertical) pagedPosition = null;
         config = next;
         if (continuousHost) setPublicationViewport();
@@ -816,8 +828,8 @@
                 column-gap:${vertical ? config.top + config.bottom : config.left + config.right}px!important; column-fill:auto!important; background:transparent!important;
                 color:${config.color}!important; font-size:${config.fontSize}px; -webkit-text-size-adjust:none!important; overflow:visible!important; }
             body,body * { font-family:${family}!important; }
-            ${dialogueColor ? `body [data-eread-dialogue] { display:contents!important; font:inherit!important;
-                letter-spacing:inherit!important; color:${dialogueColor}!important; -webkit-text-fill-color:${dialogueColor}!important; }` : ''}
+            body [data-eread-dialogue] { display:contents!important; font:inherit!important; letter-spacing:inherit!important; }
+            ${dialogueColor ? `body [data-eread-dialogue] { color:${dialogueColor}!important; -webkit-text-fill-color:${dialogueColor}!important; }` : ''}
             ${vertical ? 'body * { writing-mode:inherit!important; text-orientation:inherit!important; }' : ''}
             ${software}
             ${!config.authorCss ? 'h1,h2,h3 { break-after:avoid; break-inside:avoid; }' : ''}
@@ -989,7 +1001,7 @@
         }
         markGroup();
     }
-    async function buildMap(dialogueColor) {
+    async function buildMap(dialogueColor, rebuilding = false) {
         function textNodes() {
             const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
                 acceptNode: function (node) { return node.parentElement.closest('script,style,noscript,template,#eread-overlays') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; }
@@ -1002,6 +1014,7 @@
         let originals = textNodes();
         if (dialogueColor) {
             markDialogue(originals);
+            dialogueMarked = true;
             originals = textNodes();
         }
         const domChars = [], domLocations = [], wanted = [], wantedLocations = [];
@@ -1045,10 +1058,10 @@
             const location = domLocations[pair[1]];
             sourceMappings.push({source:wantedLocations[pair[0]], entry:location[0], offset:location[1]});
         });
-        convertText();
+        convertText(rebuilding);
     }
     let hasForwardMapping = false;
-    function convertText() {
+    function convertText(rebuilding = false) {
         const converted = bridge.conversionEnabled?.() === false ? null :
             JSON.parse(bridge.convert(entries.map(entry => entry.original).join('')));
         const forward = converted?.forward;
@@ -1056,9 +1069,9 @@
         const display = entries.map(entry => converted ?
             converted.text.substring(displayOffset(entry.base), displayOffset(entry.base + entry.original.length)) : entry.original);
         const changed = entries.some((entry, index) => entry.node.data !== display[index]);
-        if (started && !changed && !forward && !hasForwardMapping) return;
-        if (started && changed) { finishPageAnimation(); keepPagedViewport(); }
-        const anchor = started && changed && (!continuousHost || continuousHost.isActive(frameChapter)) ? readingAnchor() : null;
+        if (started && !rebuilding && !changed && !forward && !hasForwardMapping) return;
+        if (started && !rebuilding && changed) { finishPageAnimation(); keepPagedViewport(); }
+        const anchor = started && !rebuilding && changed && (!continuousHost || continuousHost.isActive(frameChapter)) ? readingAnchor() : null;
         hasForwardMapping = !!forward;
         characters.length = 0; mapped.length = 0;
         entries.forEach((entry, index) => {
@@ -1073,7 +1086,7 @@
             entry.canonical.push(point.source); entry.display.push(start);
         });
         rangeGeometry.clear();
-        if (started) {
+        if (started && !rebuilding) {
             if (changed) {
                 fitPageBoundary(); measureChapter();
                 if (anchor) navigate(anchor, true);

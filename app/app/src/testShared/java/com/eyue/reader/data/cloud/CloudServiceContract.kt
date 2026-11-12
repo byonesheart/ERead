@@ -352,6 +352,7 @@ abstract class CloudServiceContract {
         service.upload(state, book)
         val listed = service.list().single()
         assertTrue(listed.book.cloudOnly)
+        assertTrue(listed.book.chapters.single().sourceStyles.isEmpty())
         assertNotNull(listed.book.coverPath)
         assertTrue(File(listed.book.coverPath!!).exists())
         val restored = service.download(listed)
@@ -377,6 +378,42 @@ abstract class CloudServiceContract {
         assertFalse(manifest.contains(root.absolutePath))
         assertFalse(manifest.contains("unit-test@example.invalid"))
         assertFalse(manifest.contains("not-a-real-password"))
+    }
+
+    @Test fun largeImportedEpubCanUploadAndRestoreWithItsOriginalLayout() = runBlocking {
+        val fixture = System.getenv("EREAD_LARGE_EPUB_SOURCE")?.let(::File)
+        org.junit.Assume.assumeTrue(fixture?.isFile == true)
+        val directory = File(root, "epub-source").apply { mkdirs() }
+        val original = requireNotNull(fixture).copyTo(File(directory, "source.epub"))
+        val importEpub = DocumentImporter::class.java.getDeclaredMethod("importEpub",
+            File::class.java, File::class.java, String::class.java, String::class.java, LibraryMode::class.java, Function0::class.java)
+            .apply { isAccessible = true }
+        val imported = importEpub.invoke(DocumentImporter(context), original, directory, "large-epub", "样本", LibraryMode.NOVEL, {}) as Book
+        fun path(value: String?) = value?.let { sourcePath(File(it)) }
+        val book = imported.copy(sourcePath = path(imported.sourcePath), coverPath = path(imported.coverPath),
+            chapters = imported.chapters.map { chapter -> chapter.copy(textPath = path(chapter.textPath),
+                inlineImages = chapter.inlineImages.map { it.copy(path = requireNotNull(path(it.path))) },
+                sourceFootnotes = chapter.sourceFootnotes.map { it.copy(imagePath = path(it.imagePath)) }) })
+        val started = System.nanoTime()
+        val uploaded = service.upload(LibraryState(books = listOf(book)), book)
+        val uploadMillis = (System.nanoTime() - started) / 1_000_000
+        assertTrue("Backup must reuse import caches without projecting chapter CSS",
+            directory.listFiles().orEmpty().none { it.name.endsWith(".prepared.json") })
+        val listed = service.list(includeCovers = false, expectedIdentity = null).single()
+        val shelf = mergeCloudBookInformation(LibraryState(), listOf(listed.book), emptyList(), emptyList(), 0)
+        val repository = LibraryRepository(context)
+        repository.save(shelf)
+        assertEquals(book.chapters.map { it.id }, repository.load().books.single().chapters.map { it.id })
+        val restored = service.download(listed).book
+        assertEquals(CloudArchive.hash(original), CloudArchive.hash(File(requireNotNull(restored.sourcePath))))
+        val index = book.chapters.indexOfFirst { it.characterCount > 0 }
+        val expected = File(requireNotNull(book.chapters[index].textPath)).readText()
+        assertEquals(expected, File(requireNotNull(restored.chapters[index].textPath)).readText())
+        val readable = restored.copy(sourcePath = path(restored.sourcePath))
+        EbookSourceStore(context, readable).use { store ->
+            assertEquals(expected, store.load(index, expected).canonicalText)
+        }
+        println("Large EPUB cloud round trip: ${book.chapters.size} chapters, ${uploaded.archiveBytes} bytes, ${uploadMillis} ms mock upload")
     }
 
     @Test fun sourceFootnotesAndTheirOwnImagesSurviveBackupAndUserAnnotationCleanup() = runBlocking {

@@ -79,6 +79,8 @@ internal fun ReaderPreferencesPanel(settings: ReaderSettings, onSettings: (Reade
 private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, onSettings: (ReaderSettings) -> Unit,
     onImportBackground: () -> Unit, onFonts: () -> Unit, sourceCssAvailable: Boolean, pdf: Boolean) {
     val colors = MaterialTheme.colorScheme
+    val dialogue = LocalReaderDialogueSettings.current
+    var showDialogueColor by remember { mutableStateOf(false) }
     ReaderCollapsibleSection("翻页方式", readerPagingSummary(settings)) {
         ReaderSettingOptions("模式") {
             listOf(Triple(ReadingMode.SCROLL, "滚动", Icons.Outlined.UnfoldMore),
@@ -141,6 +143,10 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
                     { onSettings(settings.copy(verticalText = vertical)) }, Modifier.weight(1f).testTag("reader_vertical_text_$vertical"))
             }
         }
+        if (dialogue != null) ReaderSettingRow("对话") {
+            ReaderSettingChoice(if (dialogue.enabled) "对话颜色 · 已开启" else "对话颜色 · 已关闭",
+                dialogue.enabled, { showDialogueColor = true }, Modifier.testTag("reader_dialogue_color"), role = Role.Button)
+        }
         ReaderInterfaceSlider("行距", "阅读行间距", settings.lineHeight, 1.2f..2.4f, .05f,
             { onSettings(settings.copy(lineHeight = it)) }, { String.format(Locale.getDefault(), "%.2f", it) })
         ReaderInterfaceSlider("段距", "阅读段间距", settings.paragraphSpacing, 0f..2f, .1f,
@@ -156,6 +162,11 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
             Text("保留原书文字排版，字体与段距使用当前设置。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
         }
     }
+    if (showDialogueColor && dialogue != null) DialogueColorDialog(dialogue.enabled, dialogue.color,
+        onDismiss = { showDialogueColor = false }, onSave = { enabled, color ->
+            dialogue.onSave(enabled, color)
+            showDialogueColor = false
+        })
     ReaderCollapsibleSection("纸张", ReaderBackgroundChoices.firstOrNull { it.first == settings.background }?.second
         ?: if (settings.background == ReaderBackground.IMAGE) "图片" else null) {
         if (raster) Text("保持原页排版，双指可缩放", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)

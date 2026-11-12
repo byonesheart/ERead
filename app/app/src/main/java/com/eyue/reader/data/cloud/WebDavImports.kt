@@ -32,7 +32,7 @@ import java.security.MessageDigest
 import java.util.UUID
 
 internal data class WebDavImportEntry(val name: String, val directory: Boolean, val bytes: Long?)
-internal data class WebDavImportProfile(val id: String, val account: String, val server: String)
+internal data class WebDavProfile(val id: String, val account: String, val server: String, val name: String, val active: Boolean)
 internal data class WebDavReadyImport(val id: UUID, val file: File, val mode: LibraryMode)
 
 internal fun supportedWebDavBook(name: String): Boolean =
@@ -41,31 +41,76 @@ internal fun supportedWebDavBook(name: String): Boolean =
 internal fun validWebDavImportName(name: String): Boolean = name.isNotBlank() && name !in setOf(".", "..") &&
     name.toByteArray().size <= 255 && name.none { it == '/' || it == '\\' || it.isISOControl() }
 
-internal class WebDavImportProfiles(private val context: Context) {
+internal class WebDavProfiles(context: Context,
+    private val activeStore: CloudCredentialStore = EncryptedCloudCredentialStore(context),
+    private val profileStore: (String) -> CloudCredentialStore = { EncryptedCloudCredentialStore(context, it) }) {
+    private companion object { val lock = Any() }
     private val preferences = context.getSharedPreferences("webdav-import-profiles", Context.MODE_PRIVATE)
     private fun ids(): Set<String> = preferences.getStringSet("profiles", emptySet()).orEmpty().toSet()
+    private fun id(identity: String): String = MessageDigest.getInstance("SHA-256").digest(identity.toByteArray())
+        .joinToString("") { "%02x".format(it) }
 
-    fun read(id: String): CloudCredentials? {
+    fun read(id: String): CloudCredentials? = synchronized(lock) {
         require(id.matches(Regex("[0-9a-f]{64}"))) { "网盘配置无效" }
-        return EncryptedCloudCredentialStore(context, id).read()
+        activeCredentials()?.takeIf { id(it.identity) == id } ?: profileStore(id).read()
     }
 
-    fun list(): List<WebDavImportProfile> = ids().mapNotNull { id ->
-        runCatching { read(id) }.getOrNull()?.let { WebDavImportProfile(id, it.account, it.serverUrl) }
-    }.sortedBy { it.server }
+    fun find(account: String, server: String): CloudCredentials? {
+        val key = CloudCredentials(account.trim(), "_", server)
+        return read(id(key.identity))
+    }
 
-    fun save(credentials: CloudCredentials): WebDavImportProfile {
-        val id = MessageDigest.getInstance("SHA-256").digest(credentials.identity.toByteArray())
-            .joinToString("") { "%02x".format(it) }
-        EncryptedCloudCredentialStore(context, id).write(credentials)
+    fun list(): List<WebDavProfile> = synchronized(lock) {
+        val active = activeCredentials()
+        val activeId = active?.let { id(it.identity) }
+        (ids() + listOfNotNull(activeId)).mapNotNull { id ->
+            val credentials = if (id == activeId) active else runCatching { profileStore(id).read() }.getOrNull()
+            credentials?.let { profile(id, it, id == activeId) }
+        }.sortedWith(compareByDescending<WebDavProfile> { it.active }.thenBy { it.name }.thenBy { it.server })
+    }
+
+    fun save(credentials: CloudCredentials, name: String? = null, activate: Boolean = false): WebDavProfile = synchronized(lock) {
+        val active = activeCredentials()
+        if (activate && active != null && active.identity != credentials.identity) rememberActive(active)
+        val id = id(credentials.identity)
+        val selected = activate || active?.identity == credentials.identity
+        profileStore(id).write(credentials)
+        val edit = preferences.edit().putStringSet("profiles", ids() + id)
+        if (name != null) edit.putString("name-$id", name.trim().take(60))
+        check(edit.commit()) { "网盘配置保存失败" }
+        if (selected) activeStore.write(credentials)
+        profile(id, credentials, selected)
+    }
+
+    fun activate(id: String) = synchronized(lock) {
+        val credentials = requireNotNull(read(id)) { "网盘配置不存在" }
+        activeCredentials()?.let(::rememberActive)
+        activeStore.write(credentials)
+    }
+
+    fun disconnect() = synchronized(lock) {
+        activeCredentials()?.let(::rememberActive)
+        activeStore.clear()
+    }
+
+    fun remove(profile: WebDavProfile) = synchronized(lock) {
+        require(activeCredentials()?.let { id(it.identity) } != profile.id) { "请先切换或断开此备份配置" }
+        profileStore(profile.id).clear()
+        check(preferences.edit().putStringSet("profiles", ids() - profile.id).remove("name-${profile.id}").commit()) { "网盘配置移除失败" }
+    }
+
+    private fun activeCredentials(): CloudCredentials? = runCatching { activeStore.read() }.getOrNull()
+
+    private fun rememberActive(credentials: CloudCredentials) {
+        val id = id(credentials.identity)
+        if (id in ids() && runCatching { profileStore(id).read()?.password }.getOrNull() == credentials.password) return
+        profileStore(id).write(credentials)
         check(preferences.edit().putStringSet("profiles", ids() + id).commit()) { "网盘配置保存失败" }
-        return WebDavImportProfile(id, credentials.account, credentials.serverUrl)
     }
 
-    fun remove(profile: WebDavImportProfile) {
-        EncryptedCloudCredentialStore(context, profile.id).clear()
-        check(preferences.edit().putStringSet("profiles", ids() - profile.id).commit()) { "网盘配置移除失败" }
-    }
+    private fun profile(id: String, credentials: CloudCredentials, active: Boolean) =
+        WebDavProfile(id, credentials.account, credentials.serverUrl,
+            preferences.getString("name-$id", null)?.takeIf { it.isNotBlank() } ?: credentials.account, active)
 }
 
 internal object WebDavImports {
@@ -77,7 +122,7 @@ internal object WebDavImports {
     private fun root(context: Context) = File(context.filesDir, "webdav-imports")
     fun directory(context: Context, id: UUID) = File(root(context), id.toString())
 
-    suspend fun enqueue(context: Context, profile: WebDavImportProfile, folder: List<String>,
+    suspend fun enqueue(context: Context, profile: WebDavProfile, folder: List<String>,
         entries: List<WebDavImportEntry>, mode: LibraryMode) = withContext(Dispatchers.IO) {
         val requests = entries.distinctBy { it.name }.map { entry ->
             require(!entry.directory && supportedWebDavBook(entry.name)) { "请选择图书文件" }
@@ -117,7 +162,7 @@ class WebDavBookDownloadWorker(context: Context, parameters: WorkerParameters) :
         var transport: WebDavCloudTransport? = null
         try {
             val profile = requireNotNull(inputData.getString("profile"))
-            val credentials = requireNotNull(WebDavImportProfiles(applicationContext).read(profile)) { "请重新填写网盘连接信息" }
+            val credentials = requireNotNull(WebDavProfiles(applicationContext).read(profile)) { "请重新填写网盘连接信息" }
             val values = JSONArray(requireNotNull(inputData.getString("path")))
             val path = (0 until values.length()).map(values::getString)
             val name = path.last()

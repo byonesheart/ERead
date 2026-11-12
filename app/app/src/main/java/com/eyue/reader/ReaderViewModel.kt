@@ -17,6 +17,8 @@ import com.eyue.reader.data.*
 import com.eyue.reader.data.Annotation
 import com.eyue.reader.data.cloud.CloudBackupService
 import com.eyue.reader.data.cloud.WebDavImports
+import com.eyue.reader.data.cloud.WebDavProfiles
+import com.eyue.reader.data.cloud.resolveCloudConnectionDraft
 import com.eyue.reader.data.LegacyLocatorFiles
 import com.eyue.reader.ui.prepaginateBook
 import com.eyue.reader.ui.readerLayoutSpec
@@ -1278,25 +1280,30 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         job.start()
     }
 
-    fun saveCloudAccount(account: String, password: String, serverUrl: String = cloudServerUrl) = cloudOperation(label = "保存 WebDAV 配置") { service ->
-        val address = account.trim()
-        require(address.isNotBlank()) { "请输入账户" }
-        val normalizedServer = com.eyue.reader.data.cloud.normalizeWebDavServer(serverUrl)
+    fun saveCloudAccount(account: String, password: String, serverUrl: String, name: String) = cloudOperation(label = "保存 WebDAV 配置") {
         persistNow()
         withContext(Dispatchers.IO) {
-            if (password.isBlank()) require(service.configured() && service.account() == address && service.serverUrl() == normalizedServer) {
-                "更换服务器或账户时请填写密码"
-            }
-            else service.saveCredentials(address, password, normalizedServer)
+            val profiles = WebDavProfiles(getApplication())
+            val credentials = resolveCloudConnectionDraft(account, password, serverUrl,
+                if (password.isBlank()) profiles.find(account, serverUrl) else null)
+            if (cloudIdentity != credentials.identity) CloudBackupAutomation.cancelUploads(getApplication())
+            profiles.save(credentials, name, activate = true)
         }
         refreshCloudConfiguration()
         persistNow()
         message = "WebDAV 配置已保存，可测试连接或点击书籍云图标上传"
     }
 
-    fun disconnectCloud() = cloudOperation(label = "解除 WebDAV 连接") { service ->
+    fun selectCloudProfile(id: String) = cloudOperation(label = "切换 WebDAV 配置") {
+        persistNow()
         CloudBackupAutomation.cancelUploads(getApplication())
-        withContext(Dispatchers.IO) { service.clearCredentials() }
+        withContext(Dispatchers.IO) { WebDavProfiles(getApplication()).activate(id) }
+        refreshCloudConfiguration()
+    }
+
+    fun disconnectCloud() = cloudOperation(label = "解除 WebDAV 连接") {
+        CloudBackupAutomation.cancelUploads(getApplication())
+        withContext(Dispatchers.IO) { WebDavProfiles(getApplication()).disconnect() }
         changed(state.copy(cloudAutoBackup = false))
         refreshCloudConfiguration()
         persistNow()
@@ -1310,8 +1317,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     suspend fun testCloudDraftConnection(account: String, password: String, server: String): String {
         val credentials = withContext(Dispatchers.IO) {
-            com.eyue.reader.data.cloud.resolveCloudConnectionDraft(account, password, server,
-                if (password.isBlank()) com.eyue.reader.data.cloud.EncryptedCloudCredentialStore(getApplication()).read() else null)
+            resolveCloudConnectionDraft(account, password, server,
+                if (password.isBlank()) WebDavProfiles(getApplication()).find(account, server) else null)
         }
         CloudBackupService(getApplication()).testConnection(credentials)
         return "WebDAV 连接成功"

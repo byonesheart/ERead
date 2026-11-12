@@ -168,7 +168,7 @@ class CloudBackupService(
             val source = if (book.format == BookFormat.IMAGES) null else
                 (if (book.sourceLinked) book.sourceUri ?: book.sourcePath else book.sourcePath ?: book.sourceUri)
             val resourceHashes = CloudResourceHashCache(context, book.id)
-            val materialized = materializeCloudBookCached(context, hydrateBookSourceIdentity(context, book), resourceHashes, check)
+            val materialized = materializeCloudBookCached(context, hydrateBookSourceIdentity(context, book), resourceHashes, check, source)
             check()
             val portable = remapBook(materialized, ::path).copy(sourcePath = path(source), sourceUri = null,
                 sourceLinked = false, cloudEnabled = true, cloudOnly = false, cloudBackupAt = backupAt)
@@ -339,7 +339,7 @@ class CloudBackupService(
                             cloudMetadataReads.withPermit {
                                 cache.read(transport, "books/$id/manifest.json", id, verifiedTags[id]) { bytes ->
                                     require(bytes.size <= CLOUD_METADATA_LIMIT) { "云端图书记录过大" }
-                                    val json = JSONObject(bytes.decodeToString())
+                                    val json = repository.readCloudShelfManifest(bytes.inputStream().reader(Charsets.UTF_8))
                                     val row = manifestSummary(json, id)
                                     val info = if (candidate == null || candidate(row)) readManifest(json, id).info else null
                                     row to info
