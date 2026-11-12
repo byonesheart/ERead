@@ -1,13 +1,12 @@
 {
-  "versionCode": 99,
-  "versionName": "1.11.29-beta.4",
+  "versionCode": 100,
+  "versionName": "1.11.29-beta.5",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.29-beta.4",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.29-beta.4/ERead-1.11.29-beta.4-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.29-beta.5",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.29-beta.5/ERead-1.11.29-beta.5-release.apk",
   "mirrors": [],
   "changelog": [
-    "书架支持标签、二级分组、多选移动分组和记住上次筛选。",
-    "支持替换书架封面，原始书籍文件保持原样。",
-    "书籍上传和下载通知显示百分比。修复点击笔记输入框时编辑气泡消失的问题。"
+    "书架分组支持拖动排序、折叠二级分组和按标签隐藏书籍，标签模式使用独立的标签栏。",
+    "批量云端操作支持按状态上传、下载或中断，搜索入口移至顶部工具栏。"
   ]
 }
