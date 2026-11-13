@@ -25,8 +25,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -211,8 +209,7 @@ internal fun ReaderImagePage(
                 bitmap = bitmap!!.asImageBitmap(), contentDescription = description,
                 modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit
             )
-            else -> if (einkMode) Text("正在读取页面", color = foreground)
-                else CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+            else -> BookLoadingAnimation(animate = !einkMode)
         }
         if (bitmap != null && speechOffset != null && speechGeometry != null) {
             val highlights = speechGeometry!!.paragraph(speechOffset)

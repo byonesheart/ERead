@@ -55,8 +55,11 @@ class LibraryRepository(private val context: Context) {
                 reader.endObject()
                 require(reader.peek() == JsonToken.END_DOCUMENT)
             }
-            val settings = readSettings(json.optJSONObject("settings") ?: JSONObject())
-            val comic = json.optJSONObject("comicSettings")?.let { readSettings(it, ReaderSettings().withDefaultComicMargins()) }
+            fun migrateColors(settings: ReaderSettings): ReaderSettings = if (json.has("dialogueColorEnabled") || json.has("dialogueColor"))
+                settings.migrateDialogueColor(json.optBoolean("dialogueColorEnabled"),
+                    requireNotNull(json.readReaderColor("dialogueColor", DEFAULT_DIALOGUE_COLOR))) else settings
+            val settings = migrateColors(readSettings(json.optJSONObject("settings") ?: JSONObject()))
+            val comic = json.optJSONObject("comicSettings")?.let { migrateColors(readSettings(it, ReaderSettings().withDefaultComicMargins())) }
                 ?: settings.withDefaultComicMargins()
             val state = LibraryState(
                 books = books,
@@ -78,8 +81,6 @@ class LibraryRepository(private val context: Context) {
                 tabletDualPage = json.optBoolean("tabletDualPage", false),
                 appTheme = enumValue(json.optString("appTheme"), AppThemeStyle.CLASSIC),
                 showRecentReading = json.optBoolean("showRecentReading", true),
-                dialogueColorEnabled = json.optBoolean("dialogueColorEnabled", false),
-                dialogueColor = (json.optLong("dialogueColor", 0xFF4A79B3) and 0xFFFFFF) or 0xFF000000,
                 scanLocalChanges = json.optBoolean("scanLocalChanges", true),
                 scannedBookIds = if (json.has("scannedBookIds")) json.array("scannedBookIds").let { rows ->
                     (0 until rows.length()).map { rows.getString(it) }.toSet()
@@ -113,7 +114,6 @@ class LibraryRepository(private val context: Context) {
             .put("einkMode", state.einkMode).put("tabletDualPage", state.tabletDualPage)
             .put("appTheme", state.appTheme.name)
             .put("showRecentReading", state.showRecentReading)
-            .put("dialogueColorEnabled", state.dialogueColorEnabled).put("dialogueColor", state.dialogueColor)
             .put("scanLocalChanges", state.scanLocalChanges)
             .put("scannedBookIds", JSONArray(state.scannedBookIds.toList())).put("autoReloadSources", state.autoReloadSources)
             .put("commonVoiceRoles", JSONArray(state.commonVoiceRoles.map { it.toJson() }))
@@ -472,7 +472,9 @@ class LibraryRepository(private val context: Context) {
                 crop.optDouble("left", 0.0).toFloat(), crop.optDouble("right", 0.0).toFloat(),
                 crop.optDouble("top", 0.0).toFloat(), crop.optDouble("bottom", 0.0).toFloat()).normalized() } ?: defaults.pdfCrop,
             marginLeft = margin("marginLeft", defaults.marginLeft), marginRight = margin("marginRight", defaults.marginRight),
-            marginTop = margin("marginTop", defaults.marginTop), marginBottom = margin("marginBottom", defaults.marginBottom)
+            marginTop = margin("marginTop", defaults.marginTop), marginBottom = margin("marginBottom", defaults.marginBottom),
+            fontColor = json.readReaderColor("fontColor"), dialogueColorEnabled = json.optBoolean("dialogueColorEnabled"),
+            dialogueColor = requireNotNull(json.readReaderColor("dialogueColor", DEFAULT_DIALOGUE_COLOR))
         )
     }
 
@@ -505,6 +507,7 @@ class LibraryRepository(private val context: Context) {
         .put("continuousEbookScroll", settings.continuousEbookScroll)
         .put("verticalText", settings.verticalText)
         .put("paragraphIndent", settings.paragraphIndent.toDouble()).put("hideStatusBar", settings.hideStatusBar)
+        .writeReaderColors(settings.fontColor, settings.dialogueColorEnabled, settings.dialogueColor)
         .put("marginLeft", settings.marginLeft.toDouble()).put("marginRight", settings.marginRight.toDouble())
         .put("marginTop", settings.marginTop.toDouble()).put("marginBottom", settings.marginBottom.toDouble())
         .put("chapterRules", JSONArray(presets.map {

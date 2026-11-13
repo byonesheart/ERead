@@ -2,6 +2,7 @@ package com.eyue.reader.ui
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import com.eyue.reader.data.*
@@ -22,21 +23,40 @@ import org.robolectric.annotation.LooperMode
 class SettingsPreferencesRobolectricTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun globalDialogueColorStartsOffAndSavesTheChosenColor() {
-        var state by mutableStateOf(LibraryState())
+    @Test fun customTextColorCanBeReusedForDialogueAndEachProfileKeepsItsColors() {
         var settings by mutableStateOf(ReaderSettings())
         compose.setContent { MaterialTheme {
-            CompositionLocalProvider(LocalReaderDialogueSettings provides ReaderDialogueSettings(state.dialogueColorEnabled, state.dialogueColor, { enabled, color ->
-                state = state.copy(dialogueColorEnabled = enabled, dialogueColor = color)
-            })) { ReaderCompactSettings(settings, false, { settings = it }, {}, {}) }
+            ReaderCompactSettings(settings, false, { settings = it }, {}, {})
         } }
         compose.onNodeWithText("文字与排版").performScrollTo().performClick()
-        compose.onNodeWithTag("reader_dialogue_color").assertTextContains("对话颜色 · 已关闭").performScrollTo().performClick()
-        compose.onNodeWithTag("dialogue_color_enabled").assertIsOff().performClick()
-        compose.onNodeWithContentDescription("紫色").performClick()
-        compose.onNodeWithText("保存").performClick()
-        compose.onNodeWithTag("reader_dialogue_color").assertTextContains("对话颜色 · 已开启")
-        compose.runOnIdle { assertEquals(0xFF8A5DA8L, state.dialogueColor) }
+        compose.onNodeWithTag("reader_dialogue_color_more").assertDoesNotExist()
+        compose.onNodeWithTag("reader_font_color_more").performScrollTo().performClick()
+        compose.onNodeWithTag("reader_add_custom_color").performClick()
+        compose.onNodeWithTag("reader_custom_color_hex").performScrollTo().performTextReplacement("#183A74")
+        compose.onNodeWithTag("reader_save_custom_color").performClick()
+        compose.onNodeWithTag("dialogue_color_enabled").performScrollTo().assertIsOff().performClick()
+        compose.onNodeWithTag("reader_dialogue_color_more").performScrollTo().performClick()
+        compose.onNodeWithTag("reader_custom_color_183A74").performClick()
+        compose.runOnIdle {
+            assertEquals(0xFF183A74L, settings.fontColor)
+            assertEquals(0xFF183A74L, settings.dialogueColor)
+            val saved = settings.appearanceProfiles.single()
+            settings = settings.saveAppearanceProfile().copy(fontColor = null, dialogueColorEnabled = false).autosaveAppearanceProfile()
+            assertEquals(saved, settings.appearanceProfiles.first())
+            settings = settings.applyAppearanceProfile(saved)
+        }
+        compose.onNodeWithTag("dialogue_color_enabled").performScrollTo().assertIsOn()
+        compose.onNodeWithTag("reader_dialogue_color_183A74").assertIsSelected()
+    }
+
+    @Test fun cornerQuotesColorTextEvenWhenThePageStartsInsideTheDialogue() {
+        val text = "旁白「他说『很好』然后离开。」下一段"
+        val start = text.indexOf('他')
+        val end = text.length
+        val result = AnnotatedString.Builder(text.substring(start, end)).apply { colorDialogue(text, start, end, 0xFF123456) }.toAnnotatedString()
+        assertEquals(text.substring(start, end), result.text)
+        assertTrue(result.spanStyles.any { it.start == 0 && it.end == text.indexOf('」') + 1 - start })
+        assertFalse(result.spanStyles.any { it.end > text.indexOf('」') + 1 - start })
     }
 
     @Test fun compactHomeOpensSecondaryPagesAndThemeUsesThreeChoices() {

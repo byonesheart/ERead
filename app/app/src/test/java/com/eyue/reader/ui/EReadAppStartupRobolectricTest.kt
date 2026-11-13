@@ -133,7 +133,12 @@ class EReadAppStartupRobolectricTest {
         compose.runOnIdle { assertEquals(com.eyue.reader.data.AppThemeStyle.PIXEL, vm.state.appTheme) }
         compose.onNodeWithTag("settings_back").performClick()
         capture("app-pixel-settings")
-        compose.onNodeWithText("书架").performClick()
+        compose.onNodeWithText("阅读", substring = false).performClick()
+        compose.onNodeWithTag("shelf_search").assertDoesNotExist()
+        compose.onNodeWithTag("top_shelf_search").performClick()
+        compose.onNodeWithTag("shelf_search").assertIsDisplayed()
+        compose.onNodeWithTag("top_shelf_search").performClick()
+        compose.onNodeWithTag("shelf_search").assertDoesNotExist()
         compose.onNodeWithTag("bookshelf").assertIsDisplayed()
         awaitState(10_000) {
             compose.onAllNodesWithContentDescription("《${book.title}》封面").fetchSemanticsNodes().isNotEmpty()

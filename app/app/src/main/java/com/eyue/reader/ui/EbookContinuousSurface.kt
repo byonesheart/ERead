@@ -73,6 +73,7 @@ internal fun EbookContinuousSurface(
     val urls = remember(store, key) { mutableMapOf<Int, String>() }
     var browser by remember(key) { mutableStateOf<EbookWebView?>(null) }
     var ready by remember(store, key) { mutableStateOf(false) }
+    var chapterLoading by remember(store, key) { mutableStateOf(false) }
     var error by remember(store, key) { mutableStateOf<String?>(null) }
     var selected by remember(store, key) { mutableStateOf<ReaderSelectedPassage?>(null) }
     var loadingVisible by remember(key) { mutableStateOf(false) }
@@ -165,6 +166,7 @@ internal fun EbookContinuousSurface(
             }
             when (event.optString("type")) {
                 "chapterRequest" -> request(view, index, event.getInt("token"))
+                "chapterLoading" -> chapterLoading = event.optBoolean("loading")
                 "chapterDiscard" -> {
                     jobs.remove(index)?.second?.cancel(); documents.remove(index); urls.remove(index)?.let(html::remove)
                 }
@@ -210,9 +212,9 @@ internal fun EbookContinuousSurface(
         jobs.values.forEach { it.second.cancel() }; controller.unbind(bindingOwner); latestSelection(false); localSession?.close()
     } }
     LaunchedEffect(selectionReset, menuEnabled) { selected = null; controller.clearSelection(); latestSelection(false) }
-    LaunchedEffect(key, ready, error) {
+    LaunchedEffect(key, ready, chapterLoading, error) {
         loadingVisible = false
-        if (!ready && error == null) { delay(180); loadingVisible = true }
+        if ((!ready || chapterLoading) && error == null) { delay(180); loadingVisible = true }
     }
     LaunchedEffect(config.toString(), ready) { if (ready) {
         delay(100)
@@ -252,7 +254,8 @@ internal fun EbookContinuousSurface(
                 }
             }, onRelease = { view -> pool.release(view); if (browser === view) browser = null })
         }
-        if (loadingVisible && !ready && error == null) CircularProgressIndicator(Modifier.align(Alignment.Center))
+        if (loadingVisible && (!ready || chapterLoading) && error == null)
+            BookLoadingAnimation(Modifier.align(Alignment.Center), animate = !eink)
     }
     val translationContext = androidx.compose.ui.platform.LocalContext.current
     val clipboard = LocalClipboardManager.current

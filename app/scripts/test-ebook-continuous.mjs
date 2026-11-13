@@ -94,6 +94,13 @@ try{
    await page.waitForTimeout(250);assert.deepEqual(await page.evaluate(()=>Array.from(document.querySelectorAll('section')).slice(0,2).map(s=>s.offsetHeight)),heights);
    assert.deepEqual([...new Set(requests)].sort(),[0,1]);return {colors,heights};
  });
+ await test('chapter-loading-only-follows-the-visible-chapter',async()=>{
+   await jump(4);
+   const events=await page.evaluate(()=>window.events.filter(e=>e.type==='chapterLoading').map(e=>[e.chapter,e.loading]));
+   assert.deepEqual(events,[[4,true],[4,false]]);
+   await jump(0);
+   return {events};
+ });
  await test('programmatic-scroll-and-narration-navigation-never-report-manual-input',async()=>{
    await page.waitForTimeout(250);
    await page.evaluate(()=>{window.events=[];scrollTo(0,150)});

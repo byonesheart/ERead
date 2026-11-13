@@ -945,10 +945,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
           catch (failure: Exception) { localSourceScanIssues = localSourceScanIssues + (id to (failure.message ?: "源文件同步失败")) }
     }
 
-    fun setDialogueColor(enabled: Boolean, color: Long) {
-        changed(state.copy(dialogueColorEnabled = enabled, dialogueColor = (color and 0xFFFFFF) or 0xFF000000))
-    }
-
     fun setShowRecentReading(enabled: Boolean) {
         if (storageReady) changed(state.copy(showRecentReading = enabled))
     }

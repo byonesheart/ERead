@@ -141,7 +141,10 @@ data class ReaderSettings(
     val autoPageSeconds: Float = 10f,
     val pdfCrop: PdfCrop = PdfCrop(),
     val paragraphIndent: Float = 2f,
-    val hideStatusBar: Boolean = false
+    val hideStatusBar: Boolean = false,
+    val fontColor: Long? = null,
+    val dialogueColorEnabled: Boolean = false,
+    val dialogueColor: Long = DEFAULT_DIALOGUE_COLOR
 )
 
 internal const val LEGACY_DEFAULT_CHAPTER_RULE = "^\\s*(第[零〇一二三四五六七八九十百千万两0-9]+[章节卷回部篇].*|[Cc][Hh][Aa][Pp][Tt][Ee][Rr]\\s+\\d+.*|序章.*|序言.*|前言.*|楔子.*|尾声.*|后记.*)\\s*$"
@@ -171,9 +174,7 @@ data class LibraryState(
     val showRecentReading: Boolean = true,
     val scanLocalChanges: Boolean = true,
     val scannedBookIds: Set<String> = emptySet(),
-    val autoReloadSources: Boolean = false,
-    val dialogueColorEnabled: Boolean = false,
-    val dialogueColor: Long = 0xFF4A79B3
+    val autoReloadSources: Boolean = false
 ) {
     val sourceScanMode: SourceScanMode get() = if (!scanLocalChanges) SourceScanMode.OFF
         else if (autoReloadSources) SourceScanMode.AUTO else SourceScanMode.MANUAL

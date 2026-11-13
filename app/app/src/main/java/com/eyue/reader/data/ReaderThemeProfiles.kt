@@ -4,6 +4,19 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
+const val DEFAULT_DIALOGUE_COLOR = 0xFF4A79B3L
+
+internal fun opaqueReaderColor(value: Long): Long = (value and 0xFFFFFF) or 0xFF000000
+
+internal fun JSONObject.readReaderColor(key: String, fallback: Long? = null): Long? =
+    opt(key)?.toString()?.toLongOrNull()?.let(::opaqueReaderColor) ?: fallback
+
+internal fun JSONObject.writeReaderColors(fontColor: Long?, dialogueEnabled: Boolean, dialogueColor: Long): JSONObject = apply {
+    fontColor?.let { put("fontColor", opaqueReaderColor(it)) }
+    if (dialogueEnabled) put("dialogueColorEnabled", true)
+    if (dialogueColor != DEFAULT_DIALOGUE_COLOR) put("dialogueColor", opaqueReaderColor(dialogueColor))
+}
+
 /** Interface profiles include pagination, but never speech, chapter rules or the global day/night mode. */
 data class ReaderAppearance(
     val fontSize: Float = 19f,
@@ -28,7 +41,10 @@ data class ReaderAppearance(
     val pageTurnStyle: PageTurnStyle = PageTurnStyle.SLIDE,
     val tapPaging: TapPagingMode = TapPagingMode.OFF,
     val continuousEbookScroll: Boolean = true,
-    val paragraphIndent: Float = 2f
+    val paragraphIndent: Float = 2f,
+    val fontColor: Long? = null,
+    val dialogueColorEnabled: Boolean = false,
+    val dialogueColor: Long = DEFAULT_DIALOGUE_COLOR
 ) {
     fun mapPaths(path: (String?) -> String?): ReaderAppearance = copy(fontPath = path(fontPath),
         backgroundImagePath = path(backgroundImagePath))
@@ -45,6 +61,7 @@ data class ReaderAppearance(
         .put("verticalText", verticalText)
         .put("readingMode", readingMode.name).put("pageTurnStyle", pageTurnStyle.name).put("tapPaging", tapPaging.name)
         .put("continuousEbookScroll", continuousEbookScroll).put("paragraphIndent", paragraphIndent.toDouble())
+        .writeReaderColors(fontColor, dialogueColorEnabled, dialogueColor)
 
     companion object {
         internal fun fromJson(json: JSONObject, defaults: ReaderAppearance = ReaderAppearance()): ReaderAppearance {
@@ -73,7 +90,10 @@ data class ReaderAppearance(
                 pageTurnStyle = enumValues<PageTurnStyle>().firstOrNull { it.name == json.optString("pageTurnStyle") } ?: defaults.pageTurnStyle,
                 tapPaging = enumValues<TapPagingMode>().firstOrNull { it.name == json.optString("tapPaging") } ?: defaults.tapPaging,
                 continuousEbookScroll = json.optBoolean("continuousEbookScroll", defaults.continuousEbookScroll),
-                paragraphIndent = number("paragraphIndent", defaults.paragraphIndent, 0f..4f))
+                paragraphIndent = number("paragraphIndent", defaults.paragraphIndent, 0f..4f),
+                fontColor = json.readReaderColor("fontColor"),
+                dialogueColorEnabled = json.optBoolean("dialogueColorEnabled"),
+                dialogueColor = requireNotNull(json.readReaderColor("dialogueColor", DEFAULT_DIALOGUE_COLOR)))
         }
     }
 }
@@ -95,7 +115,7 @@ internal fun readReaderThemeProfiles(array: JSONArray?, defaults: ReaderAppearan
 fun ReaderSettings.appearanceSnapshot(): ReaderAppearance = ReaderAppearance(fontSize, lineHeight, paragraphSpacing,
     letterSpacing, fontName, fontPath, bold, background, backgroundImagePath, brightness, showTime, showBattery, showChapter,
     marginLeft, marginRight, marginTop, marginBottom, verticalText, readingMode, pageTurnStyle, tapPaging,
-    continuousEbookScroll, paragraphIndent)
+    continuousEbookScroll, paragraphIndent, fontColor, dialogueColorEnabled, dialogueColor)
 
 fun ReaderSettings.applyAppearanceProfile(profile: ReaderThemeProfile): ReaderSettings = with(profile.appearance) {
     this@applyAppearanceProfile.copy(fontSize = fontSize, lineHeight = lineHeight, paragraphSpacing = paragraphSpacing,
@@ -104,8 +124,14 @@ fun ReaderSettings.applyAppearanceProfile(profile: ReaderThemeProfile): ReaderSe
         showBattery = showBattery, showChapter = showChapter, activeAppearanceProfileId = profile.id,
         marginLeft = marginLeft, marginRight = marginRight, marginTop = marginTop, marginBottom = marginBottom,
         verticalText = verticalText, readingMode = readingMode, pageTurnStyle = pageTurnStyle, tapPaging = tapPaging,
-        continuousEbookScroll = continuousEbookScroll, paragraphIndent = paragraphIndent)
+        continuousEbookScroll = continuousEbookScroll, paragraphIndent = paragraphIndent,
+        fontColor = fontColor, dialogueColorEnabled = dialogueColorEnabled, dialogueColor = dialogueColor)
 }
+
+internal fun ReaderSettings.migrateDialogueColor(enabled: Boolean, color: Long): ReaderSettings = copy(
+    dialogueColorEnabled = enabled, dialogueColor = color, appearanceProfiles = appearanceProfiles.map { profile ->
+        profile.copy(appearance = profile.appearance.copy(dialogueColorEnabled = enabled, dialogueColor = color))
+    })
 
 /** Reset only controls on the Interface panel; leave speech, status, rules and other profiles alone. */
 fun ReaderSettings.resetInterface(raster: Boolean = false): ReaderSettings {

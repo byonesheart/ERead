@@ -75,7 +75,8 @@ import androidx.compose.ui.semantics.stateDescription
 }
 
 @Composable internal fun ReaderSettingChoice(label: String, selected: Boolean, onClick: () -> Unit,
-    modifier: Modifier = Modifier, role: Role = Role.RadioButton, leading: (@Composable () -> Unit)? = null) {
+    modifier: Modifier = Modifier, role: Role = Role.RadioButton, horizontalPadding: androidx.compose.ui.unit.Dp = 8.dp,
+    leading: (@Composable () -> Unit)? = null) {
     val colors = MaterialTheme.colorScheme
     val shape = appShape(6.dp)
     val action = when (role) {
@@ -87,7 +88,7 @@ import androidx.compose.ui.semantics.stateDescription
         contentColor = if (selected) colors.onPrimaryContainer else colors.onSurfaceVariant,
         shape = shape, border = BorderStroke(if (selected) 1.5.dp else .5.dp, if (selected) colors.primary else colors.outlineVariant),
         modifier = modifier.clip(shape).then(action)) {
-        Row(Modifier.heightIn(min = 34.dp).padding(horizontal = 8.dp, vertical = 4.dp),
+        Row(Modifier.heightIn(min = 34.dp).padding(horizontal = horizontalPadding, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
             leading?.let { it(); Spacer(Modifier.width(5.dp)) }
             Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1,
@@ -105,9 +106,9 @@ import androidx.compose.ui.semantics.stateDescription
 }
 
 @OptIn(ExperimentalLayoutApi::class)
-@Composable internal fun ReaderSettingRow(label: String?, content: @Composable FlowRowScope.() -> Unit) {
+@Composable internal fun ReaderSettingRow(label: String?, labelWidth: androidx.compose.ui.unit.Dp = 40.dp, content: @Composable FlowRowScope.() -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.Top) {
-        if (label != null) Text(label, Modifier.width(40.dp).padding(top = 9.dp),
+        if (label != null) Text(label, Modifier.width(labelWidth).padding(top = 9.dp),
             style = MaterialTheme.typography.bodySmall, maxLines = 1)
         FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp), content = content)

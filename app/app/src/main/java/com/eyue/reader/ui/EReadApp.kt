@@ -246,9 +246,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                         fallbackEnabled = state.aiSpeechFallback, rolesProvider = { book.voiceRoles }, commonRolesProvider = { state.commonVoiceRoles },
                         bookProvider = { book }, onCacheChanged = vm::notifyAiSpeechCacheChanged) else ReaderSpeech(context) }
                 }
-                CompositionLocalProvider(LocalReaderSpeechFactory provides speechFactory,
-                    LocalReaderDialogueColor provides state.dialogueColor.takeIf { state.dialogueColorEnabled },
-                    LocalReaderDialogueSettings provides ReaderDialogueSettings(state.dialogueColorEnabled, state.dialogueColor, vm::setDialogueColor)) {
+                CompositionLocalProvider(LocalReaderSpeechFactory provides speechFactory) {
                 ReaderScreen(book, settings, vm.readerAnnotations(book.id),
                     onClose = ::closeReader, ebookSession = ebookSession,
                     onProgress = { chapter, page, offset, progress, imagePath -> vm.progress(chapter, page, offset, progress, book.id, imagePath) },
@@ -294,7 +292,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                 verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(opening.title, style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(20.dp))
-                CircularProgressIndicator()
+                BookLoadingAnimation(animate = !state.einkMode)
                 Spacer(Modifier.height(16.dp))
                 Text(opening.progress?.stage ?: if (opening.queued) "等待打开书籍" else "正在打开书籍")
                 opening.progress?.fraction?.let { fraction ->
@@ -331,9 +329,12 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                     Column(Modifier.fillMaxSize().widthIn(max = 720.dp)) {
                         if (tab != 2) ModeTabs(vm.mode, { vm.mode = it }, { showNotes = true }, { showImport = true },
                             importEnabled = !vm.loading, nightMode = dark, onToggleNight = vm::toggleNightMode,
-                            onSearch = { tab = 1; showShelfSearch = true; searchRequest++ })
+                            onSearch = {
+                                if (tab == 1 && showShelfSearch) closeShelfSearch()
+                                else { tab = 1; showShelfSearch = true; searchRequest++ }
+                            })
                         if (vm.loading) {
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Olive) }
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { BookLoadingAnimation(animate = !state.einkMode) }
                         } else {
                             val pending = vm.pendingImport?.takeIf { it.mode == vm.mode }
                             val books = state.books.filter { it.mode == vm.mode }

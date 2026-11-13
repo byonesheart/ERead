@@ -66,9 +66,14 @@
         const authoredCanvas = !!publisherBackground && config.authorCss && !config.eink;
         if (publisherCanvas) publisherCanvas.style.display = authoredCanvas ? 'block' : 'none';
         const override = authoredCanvas || config.overrideInk || config.night || config.eink;
+        const dialogueInk = /^#[a-f\d]{6}$/i.test(config.dialogueColor || '') ? config.dialogueColor : null;
+        if (dialogueInk) document.documentElement.style.setProperty('--eread-dialogue-ink', dialogueInk);
+        else document.documentElement.style.removeProperty('--eread-dialogue-ink');
         publisherColors.forEach(({node, surface, ink, original}) => {
             ['color','-webkit-text-fill-color'].forEach((name, index) => {
-                if (override) node.style.setProperty(name, !config.eink && (authoredCanvas || surface) ? ink[index] : config.color, 'important');
+                if (config.customInk) node.style.setProperty(name,
+                    node.namespaceURI === 'http://www.w3.org/1999/xhtml' ? config.color : ink[index], 'important');
+                else if (override) node.style.setProperty(name, !config.eink && (authoredCanvas || surface) ? ink[index] : config.color, 'important');
                 else if (original[index][0]) node.style.setProperty(name, original[index][0], original[index][1]);
                 else node.style.removeProperty(name);
             });
@@ -759,6 +764,14 @@
     async function configure(next, preserve, force) {
         if (!force && started && !dialogueMapping && JSON.stringify(next) === JSON.stringify(config)) return;
         const generation = ++configurationGeneration;
+        if (!force && started && !dialogueMapping && (!next.dialogueColor || dialogueMarked)) {
+            const paintKeys = ['color', 'customInk', 'dialogueColor'];
+            if (Object.keys({...config, ...next}).every(key => paintKeys.includes(key) || JSON.stringify(config[key]) === JSON.stringify(next[key]))) {
+                config = next;
+                applyPublicationAppearance();
+                return;
+            }
+        }
         let font = null;
         if (next.font === 'eread-selected') {
             if (!loadedFonts.has(next.fontUrl)) {
@@ -777,7 +790,7 @@
             entries.forEach(entry => { entry.node.data = entry.original; nodeEntries.delete(entry.node); });
             entries = [];
             sourceMappings.length = 0;
-            dialogueMapping = buildMap(next.dialogueColor, true).finally(() => { dialogueMapping = null; });
+            dialogueMapping = buildMap(next.dialogueColor, true).then(observeMappedText).finally(() => { dialogueMapping = null; });
         }
         if (dialogueMapping) {
             await dialogueMapping;
@@ -803,7 +816,6 @@
         const width = Math.max(32, column - config.left - config.right);
         const height = Math.max(32, viewBounds().height - config.top - config.bottom);
         const family = config.font === 'eread-selected' ? 'eread-selected' : config.font;
-        const dialogueColor = /^#[a-f\d]{6}$/i.test(config.dialogueColor || '') ? config.dialogueColor : null;
         const software = !config.authorCss ? `
             ${Array.from(sourceFontRatios).map(ratio => `[data-eread-scale="${ratio}"] { font-size:${config.fontSize * Number(ratio)}px!important; }`).join('\n')}
             [data-eread-body] { font-size:${config.fontSize}px!important; line-height:${config.lineHeight}px!important;
@@ -828,8 +840,8 @@
                 column-gap:${vertical ? config.top + config.bottom : config.left + config.right}px!important; column-fill:auto!important; background:transparent!important;
                 color:${config.color}!important; font-size:${config.fontSize}px; -webkit-text-size-adjust:none!important; overflow:visible!important; }
             body,body * { font-family:${family}!important; }
-            body [data-eread-dialogue] { display:contents!important; font:inherit!important; letter-spacing:inherit!important; }
-            ${dialogueColor ? `body [data-eread-dialogue] { color:${dialogueColor}!important; -webkit-text-fill-color:${dialogueColor}!important; }` : ''}
+            body [data-eread-dialogue] { display:contents!important; font:inherit!important; letter-spacing:inherit!important;
+                color:var(--eread-dialogue-ink,inherit)!important; -webkit-text-fill-color:var(--eread-dialogue-ink,inherit)!important; }
             ${vertical ? 'body * { writing-mode:inherit!important; text-orientation:inherit!important; }' : ''}
             ${software}
             ${!config.authorCss ? 'h1,h2,h3 { break-after:avoid; break-inside:avoid; }' : ''}
@@ -964,18 +976,34 @@
     }
     function markDialogue(nodes) {
         const blockSelector = 'p,div,li,dt,dd,blockquote,section,article,h1,h2,h3,h4,h5,h6,td,th';
+        const closing = new Map([['“','”'],['「','」'],['『','』'],['﹁','﹂'],['﹃','﹄'],['"','"']]);
         let group = [], block;
         function markGroup() {
+            if (!group.length) return;
             const text = group.map(node => node.data).join('');
-            const quotes = Array.from(text.matchAll(/“[^”\r\n]+”|「[^」\r\n]+」|『[^』\r\n]+』|"[^"\r\n]+"/g));
+            const stack = [], ranges = [];
+            for (let i = 0; i < text.length; i++) {
+                const char = text[i], opening = stack[stack.length - 1];
+                if (opening?.end === char) {
+                    stack.pop();
+                    if (i > opening.start + 1) ranges.push([opening.start, i + 1]);
+                } else if (closing.has(char)) stack.push({start:i, end:closing.get(char)});
+            }
+            ranges.sort((a, b) => a[0] - b[0]);
+            const quotes = [];
+            for (const range of ranges) {
+                const last = quotes[quotes.length - 1];
+                if (last && range[0] < last[1]) last[1] = Math.max(last[1], range[1]);
+                else quotes.push(range);
+            }
             let offset = 0, index = 0;
             for (const node of group) {
                 const limit = offset + node.length;
-                while (index < quotes.length && quotes[index].index + quotes[index][0].length <= offset) index++;
+                while (index < quotes.length && quotes[index][1] <= offset) index++;
                 const parts = [];
-                for (let i = index; i < quotes.length && quotes[i].index < limit; i++) {
-                    const quote = quotes[i];
-                    parts.push([Math.max(0, quote.index - offset), Math.min(node.length, quote.index + quote[0].length - offset)]);
+                for (let i = index; i < quotes.length && quotes[i][0] < limit; i++) {
+                    const [start, end] = quotes[i];
+                    parts.push([Math.max(0, start - offset), Math.min(node.length, end - offset)]);
                 }
                 for (const [start, end] of parts.reverse()) {
                     if (end <= start) continue;
@@ -1000,6 +1028,22 @@
             if (!parent.closest('pre,code,ruby,svg,math')) group.push(node);
         }
         markGroup();
+    }
+    function observeMappedText() {
+        // Dialogue spans can split existing text nodes after the first render.
+        if (paragraphObserver) paragraphObserver.disconnect();
+        visibleTextParents.clear(); textByParent.clear();
+        entries.filter(entry => entry.canonical.length).forEach(entry => {
+            const parent = entry.node.parentElement.closest('[data-eread-dialogue]')?.parentElement || entry.node.parentElement;
+            if (!textByParent.has(parent)) textByParent.set(parent, []);
+            textByParent.get(parent).push(entry.node);
+        });
+        paragraphObserver = new IntersectionObserver(records => {
+            records.forEach(record => record.isIntersecting && record.intersectionRect.width > 0 && record.intersectionRect.height > 0 ?
+                visibleTextParents.add(record.target) : visibleTextParents.delete(record.target));
+            if (started && !pageAnimation && !pageTransition && !touch?.dragging) schedule();
+        });
+        textByParent.forEach((nodes, parent) => paragraphObserver.observe(parent));
     }
     async function buildMap(dialogueColor, rebuilding = false) {
         function textNodes() {
@@ -1121,17 +1165,7 @@
             await buildMap(options.config.dialogueColor);
             // Let the browser track sparse paragraphs between sampling rows.
             // Only visible parents contribute text candidates on each report.
-            entries.filter(entry => entry.canonical.length).forEach(entry => {
-                const parent = entry.node.parentElement;
-                if (!textByParent.has(parent)) textByParent.set(parent, []);
-                textByParent.get(parent).push(entry.node);
-            });
-            paragraphObserver = new IntersectionObserver(records => {
-                records.forEach(record => record.isIntersecting && record.intersectionRect.width > 0 && record.intersectionRect.height > 0 ?
-                    visibleTextParents.add(record.target) : visibleTextParents.delete(record.target));
-                if (started && !pageAnimation && !pageTransition && !touch?.dragging) schedule();
-            });
-            textByParent.forEach((nodes, parent) => paragraphObserver.observe(parent));
+            observeMappedText();
             const nodes = Array.from(document.querySelectorAll('img,svg image'));
             images = nodes.map((node, index) => Object.assign({node:node}, options.images[index] || {offset:0, path:''}));
             for (const node of document.querySelectorAll('img,svg')) {

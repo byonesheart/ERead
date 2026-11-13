@@ -14,6 +14,31 @@ import java.util.UUID
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
 class ReaderThemeProfilesRobolectricTest {
+    @Test fun legacyGlobalDialogueColorMigratesOnceAndProfilesKeepIndependentColors() {
+        val base = RuntimeEnvironment.getApplication()
+        val root = File(base.cacheDir, "reader-color-migration-${UUID.randomUUID()}").apply { mkdirs() }
+        val repository = LibraryRepository(object : ContextWrapper(base) { override fun getFilesDir() = root })
+        try {
+            val original = ReaderSettings().saveAppearanceProfile().saveAppearanceProfile()
+            val file = File(root, "library.json")
+            file.writeText(JSONObject().put("settings", repository.writeSettings(original))
+                .put("dialogueColorEnabled", true).put("dialogueColor", 0xFFA14970L).toString())
+            val state = repository.load()
+            assertTrue(state.settings.appearanceProfiles.all { it.appearance.dialogueColorEnabled && it.appearance.dialogueColor == 0xFFA14970L })
+            val untouched = state.settings.appearanceProfiles.first()
+            val edited = state.settings.copy(fontColor = 0xFF123456L, dialogueColorEnabled = false).autosaveAppearanceProfile()
+            repository.save(state.copy(settings = edited))
+            val reloaded = repository.load().settings
+            assertFalse(JSONObject(file.readText()).has("dialogueColorEnabled"))
+            assertEquals(edited, reloaded)
+            assertEquals(untouched, reloaded.appearanceProfiles.first())
+            assertNull(reloaded.applyAppearanceProfile(untouched).fontColor)
+            assertTrue(reloaded.applyAppearanceProfile(untouched).dialogueColorEnabled)
+            assertNull(reloaded.resetInterface().fontColor)
+            assertFalse(reloaded.resetInterface().dialogueColorEnabled)
+        } finally { root.deleteRecursively() }
+    }
+
     @Test fun renameKeepsTheSelectedProfileAndItsAppearanceAndSurvivesSaving() {
         val repository = LibraryRepository(RuntimeEnvironment.getApplication())
         val first = ReaderSettings(fontSize = 26f).saveAppearanceProfile().saveAppearanceProfile()

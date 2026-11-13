@@ -175,11 +175,11 @@ async function test(name, callback) {
 
 try {
   await test('dialogue-color-spans-inline-elements-without-changing-book-text', async () => {
-    const canonicalText = '她说：“今天见。”他点头。';
+    const canonicalText = '她说：「今天见。『好。』」他点头。';
     const source = {
       baseUrl: 'https://eread.local/book/archive/chapter.html', canonicalText, images: [], noteTargets: {},
       html: '<!doctype html><html><head><style>span{display:block}</style></head><body>' +
-        '<p>她说：“<em>今天</em>见。”他点头。</p></body></html>'
+        '<p>她说：<em>「今天</em>见。『好。』」<b style="color:purple!important">他点头。</b></p></body></html>'
     };
     await open({}, { source });
     assert.equal(await page.locator('[data-eread-dialogue]').count(), 0);
@@ -191,13 +191,17 @@ try {
       narration: getComputedStyle(node).color
     }));
     assert.equal(evidence.body, canonicalText);
-    assert.equal(evidence.parts.map(part => part[0]).join(''), '“今天见。”');
+    assert.equal(evidence.parts.map(part => part[0]).join(''), '「今天见。『好。』」');
     assert.ok(evidence.parts.every(part => part[1] === 'rgb(74, 121, 179)' && part[2] === 'contents'));
     assert.notEqual(evidence.narration, evidence.parts[0][1]);
     await command({ type: 'configure', config: { ...baseConfig, dialogueColor: null } });
     assert.equal(await page.locator('[data-eread-dialogue]').first().evaluate(node => getComputedStyle(node).color), evidence.narration);
-    await command({ type: 'configure', config: { ...baseConfig, dialogueColor: '#4a79b3' } });
+    await command({ type: 'configure', config: { ...baseConfig, color: '#234567', customInk: true, dialogueColor: '#4a79b3' } });
     assert.equal(await page.locator('[data-eread-dialogue]').count(), evidence.parts.length);
+    assert.equal(await page.locator('p b').evaluate(node => getComputedStyle(node).color), 'rgb(35, 69, 103)');
+    assert.equal(await page.locator('[data-eread-dialogue]').first().evaluate(node => getComputedStyle(node).color), 'rgb(74, 121, 179)');
+    await command({ type: 'configure', config: baseConfig });
+    assert.equal(await page.locator('p b').evaluate(node => getComputedStyle(node).color), 'rgb(128, 0, 128)');
     return evidence;
   });
   for (const mode of ['SCROLL', 'PAGED', 'VERTICAL_PAGED']) await test(`publication-background-and-protected-ink-${mode}`, async () => {

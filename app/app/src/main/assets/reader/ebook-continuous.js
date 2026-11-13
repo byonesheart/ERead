@@ -2,7 +2,7 @@
     'use strict';
     const bridge = window.__ERead;
     let options, active = -1, serial = 0, ready = false, frame = 0, manual = false, endTimer;
-    let pending = null, automatic = 0, last = null, imageViewerChapter = null;
+    let pending = null, automatic = 0, last = null, imageViewerChapter = null, loadingChapter = -1;
     let autoScrollFrame = 0, autoScrollSpeed = 0, autoScrollTime = 0, autoScrollRemainder = 0;
     function setAutoScroll(speed) {
         cancelAnimationFrame(autoScrollFrame); autoScrollFrame = 0; autoScrollTime = 0;
@@ -49,6 +49,12 @@
     let lastReport = -Infinity, reportTimer = 0;
     const rows = [], loaded = new Map();
     function send(type, data) { bridge.event(JSON.stringify(Object.assign({type:type}, data || {}))); }
+    function reportChapterLoading() {
+        const next = active >= 0 && !loaded.get(active)?.ready ? active : -1;
+        if (loadingChapter === next) return;
+        loadingChapter = next;
+        send('chapterLoading', {chapter:active, loading:next >= 0});
+    }
     function commandChild(index, command) { loaded.get(index)?.frame?.contentWindow?.ERead?.command(command); }
     function request(index) {
         if (index < 0 || index >= rows.length || loaded.has(index)) return;
@@ -62,6 +68,7 @@
             value.frame?.remove(); loaded.delete(index); send('chapterDiscard', {chapter:index, token:value.token});
         }
         request(center);
+        reportChapterLoading();
         // Only adjacent chapters are prefetched; the rest remain height/index placeholders.
         if (loaded.get(center)?.ready) { request(center + 1); request(center - 1); }
     }
@@ -122,6 +129,7 @@
         if (!item || sourceFrame && item.frame !== sourceFrame) return;
         if (value.type === 'ready') {
             item.ready = true; item.frame.style.opacity = '1';
+            if (index === active) reportChapterLoading();
             const navigation = pending?.chapter === index ? pending : null;
             commandChild(index, {type:'configure', config:Object.assign({}, options.config, {continuous:true})});
             if (navigation) commandChild(index, navigation);

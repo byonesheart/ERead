@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -435,7 +434,7 @@ internal fun EbookReaderSurface(
         }
         if (loadingVisible && !ready && loadingError == null) Column(Modifier.align(Alignment.Center),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            CircularProgressIndicator()
+            BookLoadingAnimation(animate = !einkMode)
             Text(if (documentPrepared) "正在加载当前章节" else "正在准备原书结构", style = MaterialTheme.typography.bodySmall)
         }
     }
@@ -468,8 +467,7 @@ internal fun rememberEbookConfig(settings: ReaderSettings, foreground: Color, du
     val palette = readerPalette(settings.background, settings.nightMode, MaterialTheme.colorScheme, einkMode)
     val paper = palette.background
     val fontUrl = remember(settings.fontName, settings.fontPath) { ebookReaderFontUrl(settings) }
-    val dialogueColor = LocalReaderDialogueColor.current
-    val config = remember(settings, foreground, dualPage, einkMode, fontScale, calibration, fontUrl, paper, dialogueColor) {
+    val config = remember(settings, foreground, dualPage, einkMode, fontScale, calibration, fontUrl, paper) {
         JSONObject().put("mode", settings.readingMode.name).put("turn", settings.pageTurnStyle.name)
             .put("authorCss", settings.useSourceCss).put("dual", dualPage).put("eink", einkMode)
             .put("vertical", settings.verticalText)
@@ -481,8 +479,9 @@ internal fun rememberEbookConfig(settings: ReaderSettings, foreground: Color, du
             .put("paragraphGap", settings.fontSize * settings.paragraphSpacing * fontScale)
             .put("indent", settings.paragraphIndent)
             .put("bold", settings.bold).put("night", settings.nightMode)
-            .put("color", "#%06x".format(foreground.toArgb() and 0xffffff))
-            .put("dialogueColor", dialogueColor?.let { "#%06x".format(it and 0xffffff) })
+            .put("color", "#%06x".format((settings.fontColor ?: foreground.toArgb().toLong()) and 0xffffff))
+            .put("customInk", settings.fontColor != null)
+            .put("dialogueColor", settings.dialogueColor.takeIf { settings.dialogueColorEnabled }?.let { "#%06x".format(it and 0xffffff) })
             .put("overrideInk", palette.overridePublisherColors).put("paper", "#%06x".format(paper.toArgb() and 0xffffff))
             .put("paperImage", settings.backgroundImagePath?.takeIf { settings.background == ReaderBackground.IMAGE && !einkMode }
                 ?.let { "https://eread.local/reader-background?v=${it.hashCode()}" })

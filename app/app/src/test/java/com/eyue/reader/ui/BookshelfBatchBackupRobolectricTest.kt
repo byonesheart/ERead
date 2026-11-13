@@ -104,6 +104,33 @@ class BookshelfBatchBackupRobolectricTest {
         compose.runOnIdle { assertEquals(listOf(uploading.id, downloading.id, uploading.id), stopped) }
     }
 
+    @Test fun individualCloudActionsRemainUsableAlongsideCompactSelectionInBothLayouts() {
+        val local = book("local").copy(cloudEnabled = true)
+        val remote = book("remote").copy(cloudOnly = true)
+        val running = book("running")
+        val sent = mutableListOf<String>()
+        val stopped = mutableListOf<String>()
+        compose.setContent { MaterialTheme {
+            Bookshelf(listOf(local, remote, running), "", {}, {}, {}, {}, onCloud = { sent += it.id },
+                onCancelCloud = { stopped += it.id }, onCloudBatch = {}, cloudDirtyBookIds = setOf(local.id),
+                cloudTransfers = mapOf(running.id to CloudTransferProgress("上传", .4f, true)))
+        } }
+        openBatchSelection()
+        compose.onNodeWithTag("backup_select_local").performClick().assertIsOn()
+        val checkbox = compose.onNodeWithTag("backup_select_local").fetchSemanticsNode().boundsInRoot
+        assertTrue(checkbox.width <= 29f)
+        compose.onNodeWithTag("cloud_book_local").assertIsEnabled().performClick()
+        compose.onNodeWithTag("cloud_book_remote").assertIsEnabled().performClick()
+        compose.onNodeWithTag("cloud_book_cancel_running").assertIsEnabled().performClick()
+        compose.onNodeWithContentDescription("切换书架布局").performClick()
+        compose.onNodeWithTag("backup_select_local").assertIsOn()
+        compose.onNodeWithTag("cloud_book_local").assertIsEnabled().performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(local.id, remote.id, local.id), sent)
+            assertEquals(listOf(running.id), stopped)
+        }
+    }
+
     @Test fun cancellingBatchClearsSelectionBeforeReopening() {
         showShelf(listOf(book("local"))) {}
         openBatchSelection()

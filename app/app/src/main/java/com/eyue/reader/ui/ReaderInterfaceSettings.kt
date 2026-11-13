@@ -79,8 +79,6 @@ internal fun ReaderPreferencesPanel(settings: ReaderSettings, onSettings: (Reade
 private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, onSettings: (ReaderSettings) -> Unit,
     onImportBackground: () -> Unit, onFonts: () -> Unit, sourceCssAvailable: Boolean, pdf: Boolean) {
     val colors = MaterialTheme.colorScheme
-    val dialogue = LocalReaderDialogueSettings.current
-    var showDialogueColor by remember { mutableStateOf(false) }
     ReaderCollapsibleSection("翻页方式", readerPagingSummary(settings)) {
         ReaderSettingOptions("模式") {
             listOf(Triple(ReadingMode.SCROLL, "滚动", Icons.Outlined.UnfoldMore),
@@ -118,6 +116,7 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
         val defaults = ReaderSettings()
         onSettings(settings.copy(fontSize = defaults.fontSize, fontName = defaults.fontName, fontPath = defaults.fontPath,
             bold = defaults.bold, chineseConversion = defaults.chineseConversion, verticalText = defaults.verticalText,
+            fontColor = defaults.fontColor, dialogueColor = defaults.dialogueColor, dialogueColorEnabled = defaults.dialogueColorEnabled,
             lineHeight = defaults.lineHeight, paragraphSpacing = defaults.paragraphSpacing,
             letterSpacing = defaults.letterSpacing, paragraphIndent = defaults.paragraphIndent, useSourceCss = defaults.useSourceCss))
     }) {
@@ -126,26 +125,31 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
         ReaderSettingRow("字体") {
             listOf("跟随系统" to "系统", "系统宋体" to "宋体", "系统黑体" to "黑体").forEach { (name, label) ->
                 ReaderSettingChoice(label, settings.fontPath == null && settings.fontName == name,
-                    { onSettings(settings.copy(fontName = name, fontPath = null)) })
+                    { onSettings(settings.copy(fontName = name, fontPath = null)) }, horizontalPadding = 6.dp)
             }
-            ReaderSettingChoice("加粗", settings.bold, { onSettings(settings.copy(bold = !settings.bold)) }, role = Role.Checkbox)
-            ReaderSettingChoice("更多", false, onFonts, Modifier.testTag("reader_more_fonts"), role = Role.Button)
+            ReaderSettingChoice("加粗", settings.bold, { onSettings(settings.copy(bold = !settings.bold)) }, role = Role.Checkbox, horizontalPadding = 6.dp)
+            ReaderSettingChoice("更多", false, onFonts, Modifier.testTag("reader_more_fonts"), role = Role.Button, horizontalPadding = 6.dp)
         }
-        ReaderSettingOptions("简繁") {
+        ReaderSettingRow("简繁") {
             listOf(ChineseConversion.ORIGINAL to "原文", ChineseConversion.SIMPLIFIED to "简体", ChineseConversion.TRADITIONAL to "繁体").forEach { (value, label) ->
                 ReaderSettingChoice(label, settings.chineseConversion == value,
-                    { onSettings(settings.copy(chineseConversion = value)) }, Modifier.weight(1f).testTag("reader_conversion_${value.name.lowercase()}"))
+                    { onSettings(settings.copy(chineseConversion = value)) }, Modifier.testTag("reader_conversion_${value.name.lowercase()}"), horizontalPadding = 6.dp)
             }
         }
-        ReaderSettingOptions("排版") {
+        ReaderSettingRow("排版") {
             listOf(false to "横排", true to "竖排").forEach { (vertical, label) ->
                 ReaderSettingChoice(label, settings.verticalText == vertical,
-                    { onSettings(settings.copy(verticalText = vertical)) }, Modifier.weight(1f).testTag("reader_vertical_text_$vertical"))
+                    { onSettings(settings.copy(verticalText = vertical)) }, Modifier.testTag("reader_vertical_text_$vertical"), horizontalPadding = 6.dp)
             }
         }
-        if (dialogue != null) ReaderSettingRow("对话") {
-            ReaderSettingChoice(if (dialogue.enabled) "对话颜色 · 已开启" else "对话颜色 · 已关闭",
-                dialogue.enabled, { showDialogueColor = true }, Modifier.testTag("reader_dialogue_color"), role = Role.Button)
+        ReaderTextColorRow("字体颜色", settings.fontColor) { onSettings(settings.copy(fontColor = it)) }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("对话颜色", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+            Switch(settings.dialogueColorEnabled, { onSettings(settings.copy(dialogueColorEnabled = it)) },
+                Modifier.testTag("dialogue_color_enabled"))
+        }
+        if (settings.dialogueColorEnabled) ReaderTextColorRow("对话颜色", settings.dialogueColor, showLabel = false) { color ->
+            color?.let { onSettings(settings.copy(dialogueColor = it)) }
         }
         ReaderInterfaceSlider("行距", "阅读行间距", settings.lineHeight, 1.2f..2.4f, .05f,
             { onSettings(settings.copy(lineHeight = it)) }, { String.format(Locale.getDefault(), "%.2f", it) })
@@ -162,11 +166,6 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
             Text("保留原书文字排版，字体与段距使用当前设置。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
         }
     }
-    if (showDialogueColor && dialogue != null) DialogueColorDialog(dialogue.enabled, dialogue.color,
-        onDismiss = { showDialogueColor = false }, onSave = { enabled, color ->
-            dialogue.onSave(enabled, color)
-            showDialogueColor = false
-        })
     ReaderCollapsibleSection("纸张", ReaderBackgroundChoices.firstOrNull { it.first == settings.background }?.second
         ?: if (settings.background == ReaderBackground.IMAGE) "图片" else null) {
         if (raster) Text("保持原页排版，双指可缩放", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)

@@ -323,8 +323,10 @@ internal fun ReaderScreen(
         } }
     }
     val foreground = palette.foreground
+    val textColor = settings.fontColor?.let(::Color) ?: foreground
+    val dialogueColor = settings.dialogueColor.takeIf { settings.dialogueColorEnabled }
     val muted = palette.secondary
-    val textStyle = layoutSpec.textStyle.copy(color = foreground)
+    val textStyle = layoutSpec.textStyle.copy(color = textColor)
     val textWidth = layoutSpec.textWidth
     val textHeight = layoutSpec.textHeight
     fun layoutKey(mode: ReadingMode, spec: ReaderLayoutSpec): List<Any?> = listOf(importedBook.id,
@@ -1454,10 +1456,7 @@ internal fun ReaderScreen(
                     !sourceEbook && (!directScroll && chapterIndex !in paginatedChapters || textPages.isEmpty()) || layoutState.preparing)) -> {
                     Column(Modifier.align(Alignment.Center).padding(24.dp).testTag("reader_loading"),
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        if (layoutState.error == null && documentReadError == null && !einkMode) {
-                            if (renderDocument == null) CircularProgressIndicator(color = colors.primary)
-                            else CircularProgressIndicator(progress = { layoutState.progress }, color = colors.primary)
-                        }
+                        if (layoutState.error == null && documentReadError == null) BookLoadingAnimation(animate = !einkMode)
                         Text(layoutState.error ?: documentReadError ?: if (renderDocument == null) "正在读取正文" else "正在排版 ${(layoutState.progress * 100).toInt()}%",
                             color = muted, style = MaterialTheme.typography.bodyMedium)
                         if (layoutState.error != null || documentReadError != null) TextButton(onClick = {
@@ -1477,7 +1476,7 @@ internal fun ReaderScreen(
                         initialOffset = modeSwitchAnchor?.takeIf { it.first == sourceChapter }?.second ?: characterOffset,
                         initialImagePath = if (modeSwitchAnchor?.first == sourceChapter) modeSwitchAnchor?.third else positionImagePath,
                         continuousChapters = importedBook.chapters, readContinuousText = chapterStore::readText,
-                        dualPage = dualPage, einkMode = einkMode, foreground = foreground, selectionReset = selectionReset,
+                        dualPage = dualPage, einkMode = einkMode, foreground = textColor, selectionReset = selectionReset,
                         selectionMenuEnabled = !holdPagingActive && selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() &&
                             tappedSourceFootnote == null && panel == null,
                         searchQuery = highlightQuery, spokenRange = spokenRange(sourceChapter), chineseConverter = chineseConverter,
@@ -1556,7 +1555,10 @@ internal fun ReaderScreen(
                                 }.onFailure { error -> if (error is CancellationException) throw error }
                             }
                             Box(Modifier.fillMaxWidth().height(with(density) { viewport.height.toDp() }), contentAlignment = Alignment.Center) {
-                                Text("正在读取 ${sourceChapterData.title}", color = muted, fontSize = 13.sp)
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    BookLoadingAnimation(animate = !einkMode)
+                                    Text("正在读取 ${sourceChapterData.title}", color = muted, fontSize = 13.sp)
+                                }
                             }
                         } else itemsIndexed(renderPages.getOrNull(sourceChapter).orEmpty(), key = { index, _ -> "$sourceChapter:$index" }) { index, page ->
                             if (page.imageIndex >= 0) {
@@ -1569,7 +1571,7 @@ internal fun ReaderScreen(
                                     onImagePreview = ::previewImage)
                             } else ReaderSelectableText(rememberReaderAnnotatedPage(renderDocument.text.getOrNull(sourceChapter).orEmpty(), page, book.id, sourceChapter, annotations, highlightQuery,
                                 colors.primaryContainer, settings.nightMode, renderDocument.sourceStyles.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
-                                renderChapters.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty()), textStyle, sourceChapter, index, page.start, selectionReset,
+                                renderChapters.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty(), dialogueColor), textStyle, sourceChapter, index, page.start, selectionReset,
                                 onAction = { selection, kind -> openSelection(selection, kind) }, modifier = Modifier.fillMaxWidth().padding(bottom =
                                     if (readerParagraphGapAfter(renderDocument.text.getOrNull(sourceChapter).orEmpty(), page.end))
                                         with(density) { (textStyle.fontSize.value * (renderDocument.sourceStyles.getOrNull(sourceChapter)
@@ -1624,7 +1626,7 @@ internal fun ReaderScreen(
                                     onImagePreview = if (interactive) ::previewImage else null)
                             } else ReaderSelectableText(rememberReaderAnnotatedPage(sourceText, page, book.id, sourceChapter, annotations, highlightQuery,
                                 colors.primaryContainer, settings.nightMode, renderDocument.sourceStyles.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
-                                renderChapters.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty()), textStyle, sourceChapter, sourcePage, page.start, selectionReset,
+                                renderChapters.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty(), dialogueColor), textStyle, sourceChapter, sourcePage, page.start, selectionReset,
                                 onAction = { selection, kind -> if (interactive) openSelection(selection, kind) }, modifier = Modifier.fillMaxSize().padding(readerContentPadding(settings)),
                                 onTextLayout = { rememberLayout(sourceChapter, sourcePage, it, renderDocument, renderPages, renderGeneration, renderStore) },
                                 onTextTap = { offset, anchor -> if (interactive) tapText(sourceChapter, offset, anchor) },
@@ -1640,7 +1642,7 @@ internal fun ReaderScreen(
             }
             if (chromeVisible && sourceEbook && ebookStore != null && seekLocation != null) {
                 EbookSeekPreview(ebookStore, importedBook.chapters, seekLocation, chapterStore::readText,
-                    settings, foreground, dualPage, einkMode, chineseConverter, Modifier.fillMaxSize()) { seekPreviewPage = it }
+                    settings, textColor, dualPage, einkMode, chineseConverter, Modifier.fillMaxSize()) { seekPreviewPage = it }
             }
         }
         if (!chromeVisible && !showTextSave) ReaderStatus(settings, chapterTitle, muted, currentBookmarks.isNotEmpty())
@@ -1968,8 +1970,7 @@ internal fun readerPageText(text: String, page: ReaderTextPage): String = text.s
 @Composable
 private fun rememberReaderAnnotatedPage(text: String, page: ReaderTextPage, bookId: String, chapter: Int,
     annotations: List<Annotation>, query: String, searchColor: Color, night: Boolean, sourceStyles: ReaderSourceStyles?,
-    baseStyle: TextStyle, spoken: IntRange?, sourceFootnotes: List<SourceFootnote>): AnnotatedString {
-    val dialogueColor = LocalReaderDialogueColor.current
+    baseStyle: TextStyle, spoken: IntRange?, sourceFootnotes: List<SourceFootnote>, dialogueColor: Long?): AnnotatedString {
     return remember(text, page, bookId, chapter, annotations, query, searchColor, night, sourceStyles, baseStyle, spoken, sourceFootnotes, dialogueColor) {
         readerAnnotatedPage(text, page, bookId, chapter, annotations, query, searchColor, night, sourceStyles, baseStyle,
             spoken, sourceFootnotes, dialogueColor)

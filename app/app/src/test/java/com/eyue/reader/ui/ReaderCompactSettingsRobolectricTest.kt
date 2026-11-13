@@ -269,7 +269,8 @@ class ReaderCompactSettingsRobolectricTest {
         expand("文字与排版")
         compose.onNodeWithText("字体", substring = false).performScrollTo()
         val choices = listOf("系统", "宋体", "黑体", "加粗", "更多").map { label ->
-            compose.onNodeWithText(label, substring = false).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            val choice = if (label == "更多") compose.onNodeWithTag("reader_more_fonts") else compose.onNodeWithText(label, substring = false)
+            choice.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         }
         choices.zipWithNext().forEach { (left, right) ->
             assertEquals("The five font choices must stay aligned on a single row", left.top, right.top, 1f)
@@ -293,7 +294,8 @@ class ReaderCompactSettingsRobolectricTest {
         compose.runOnIdle { assertTrue(moreFonts); assertEquals(0, imports) }
         compose.runOnIdle { fontScale = 2f }
         compose.onNodeWithTag("reader_more_fonts").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("更多", useUnmergedTree = true).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { action ->
+        compose.onNode(hasText("更多") and hasAnyAncestor(hasTestTag("reader_more_fonts")), useUnmergedTree = true)
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { action ->
             val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
             assertTrue(action(layouts))
             assertEquals(1, layouts.single().lineCount)

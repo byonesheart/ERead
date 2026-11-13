@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
@@ -43,6 +44,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.PlatformTextStyle
@@ -169,7 +173,8 @@ private enum class ShelfCloudAction {
 @Composable fun HistoryRow(book: Book, onOpen: () -> Unit, onCloud: (() -> Unit)? = null, cloudBusy: Boolean = false,
     cloudInProgress: Boolean = false, cloudTaskLabel: String = "", cloudFraction: Float? = null,
     onCancelCloud: (() -> Unit)? = null, cloudCanCancel: Boolean = false, cloudDirty: Boolean = false,
-    onRename: (() -> Unit)? = null, shelfLayout: Boolean = false, onMore: (() -> Unit)? = null) {
+    onRename: (() -> Unit)? = null, shelfLayout: Boolean = false, onMore: (() -> Unit)? = null,
+    selection: Pair<Boolean, () -> Unit>? = null) {
     val xingcai = shelfLayout || LocalAppThemeStyle.current == AppThemeStyle.XINGCAI
     val longPress: (() -> Unit)? = if (shelfLayout) ({ onMore?.invoke() }) else onRename
     Row(Modifier.fillMaxWidth().testTag(if (shelfLayout) "shelf_list_row_${book.id}" else "history_row_${book.id}")
@@ -195,7 +200,8 @@ private enum class ShelfCloudAction {
                 color = Olive, fontSize = 10.sp, modifier = Modifier.padding(top = 8.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (shelfLayout) {
-            if (onMore != null) ShelfMoreButton(book, onClick = onMore)
+            if (selection != null) ShelfBookCheckbox(book, selection.first, selection.second)
+            else if (onMore != null) ShelfMoreButton(book, onClick = onMore)
         } else Icon(Icons.Outlined.ChevronRight, "打开书籍", tint = Muted, modifier = Modifier.size(20.dp))
     }
 }
@@ -501,18 +507,18 @@ private enum class ShelfCloudAction {
                                 .combinedClickable(
                                     onClick = { if (selectingBackup) selectBackup(book) else onOpen(book) },
                                     onLongClick = { if (!selectingBackup) actionBookId = book.id }),
-                                onCloud?.takeUnless { selectingBackup }?.let { { it(book) } }, cloudBusy || transfer(book) != null, transfer(book) != null,
+                                onCloud?.let { { it(book) } }, cloudBusy || transfer(book) != null, transfer(book) != null,
                                 transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
-                                onCancelCloud?.takeUnless { selectingBackup }?.let { { it(book) } },
+                                onCancelCloud?.let { { it(book) } },
                                 transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds)
-                            if (selectingBackup || book.id !in LocalSourceChangeIds.current && book.id !in LocalSourceReloadIds.current) {
+                            if (book.id !in LocalSourceChangeIds.current && book.id !in LocalSourceReloadIds.current) {
                                 Surface(Modifier.align(Alignment.TopStart).padding(8.dp), shape = appShape(5.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .9f)) {
-                                    if (selectingBackup) Checkbox(book.id in backupSelection, { selectBackup(book) },
-                                        modifier = Modifier.testTag("backup_select_${book.id}"))
-                                    else Text(if (book.isDemo) "示例" else book.format.name, fontSize = 9.sp, color = Olive, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
+                                    Text(if (book.isDemo) "示例" else book.format.name, fontSize = 9.sp, color = Olive, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
                                 }
                             }
-                            if (!selectingBackup) ShelfMoreButton(book, Modifier.align(Alignment.TopEnd).padding(8.dp)
+                            if (selectingBackup) ShelfBookCheckbox(book, book.id in backupSelection, { selectBackup(book) },
+                                Modifier.align(Alignment.TopEnd).padding(4.dp))
+                            else ShelfMoreButton(book, Modifier.align(Alignment.TopEnd).padding(8.dp)
                                 .background(MaterialTheme.colorScheme.surface.copy(alpha = .9f), CircleShape),
                                 onClick = { actionBookId = book.id })
                         }
@@ -541,20 +547,13 @@ private enum class ShelfCloudAction {
                 verticalArrangement = Arrangement.spacedBy(22.dp)) {
                 items(pendingImports, key = { "import-${it.id}" }) { PendingShelfBook(it, grid = false) }
                 items(displayed, key = { it.id }) { book ->
-                    Column {
-                        if (selectingBackup) Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(book.id in backupSelection, { selectBackup(book) },
-                                modifier = Modifier.testTag("backup_select_${book.id}"))
-                            Text(book.title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        HistoryRow(book, { if (selectingBackup) selectBackup(book) else onOpen(book) },
-                            onCloud?.takeUnless { selectingBackup }?.let { { it(book) } }, cloudBusy || transfer(book) != null,
-                            transfer(book) != null, transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
-                            onCancelCloud?.takeUnless { selectingBackup }?.let { { it(book) } },
-                            transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds,
-                            shelfLayout = true, onMore = if (!selectingBackup) { { actionBookId = book.id } } else null,
-                            onRename = if (!selectingBackup && onRenameBook != null) { { rename(book) } } else null)
-                    }
+                    HistoryRow(book, { if (selectingBackup) selectBackup(book) else onOpen(book) },
+                        onCloud?.let { { it(book) } }, cloudBusy || transfer(book) != null,
+                        transfer(book) != null, transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
+                        onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds,
+                        shelfLayout = true, onMore = if (!selectingBackup) { { actionBookId = book.id } } else null,
+                        onRename = if (!selectingBackup && onRenameBook != null) { { rename(book) } } else null,
+                        selection = if (selectingBackup) (book.id in backupSelection) to { selectBackup(book) } else null)
                 }
             }
         }
@@ -770,6 +769,15 @@ private enum class ShelfCloudAction {
                 if (onClearSpeechWithCloud != null) onClearSpeechWithCloud(book, cloud) else onClearAiSpeechCache?.invoke(book)
                 clearingAiSpeech = null
             }, onDismiss = { clearingAiSpeech = null }, tag = "shelf_clear_ai_speech", sizeError = bytes?.isFailure == true)
+    }
+}
+
+@Composable private fun ShelfBookCheckbox(book: Book, checked: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+    Box(modifier.size(28.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surface.copy(alpha = .94f))
+        .toggleable(checked, role = Role.Checkbox, onValueChange = { onToggle() }).testTag("backup_select_${book.id}")
+        .semantics { contentDescription = "选择《${book.title}》" }, contentAlignment = Alignment.Center) {
+        Icon(if (checked) Icons.Outlined.CheckBox else Icons.Outlined.CheckBoxOutlineBlank, null, Modifier.size(16.dp),
+            tint = if (checked) Olive else Muted)
     }
 }
 
