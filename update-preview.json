@@ -1,13 +1,12 @@
 {
-  "versionCode": 101,
-  "versionName": "1.11.29-beta.6",
+  "versionCode": 102,
+  "versionName": "1.11.29-beta.7",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.29-beta.6",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.29-beta.6/ERead-1.11.29-beta.6-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.29-beta.7",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.29-beta.7/ERead-1.11.29-beta.7-release.apk",
   "mirrors": [],
   "changelog": [
-    "阅读配置可独立保存字体颜色与对话着色，两者共用自定义色库，支持滑动选色和输入颜色编码。",
-    "改进引号对话识别，启动和阅读加载改用翻书动画。",
-    "书架多选时缩小勾选图标并保留单本书的云端操作，再点搜索图标可收起搜索框。"
+    "「关于」新增自动检测更新开关，默认开启。发现新版本后，设置图标上的上箭头会保留到更新安装完成。",
+    "「使用原书 CSS」移至「文字与排版」顶部。"
   ]
 }
