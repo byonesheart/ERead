@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -133,7 +134,8 @@ internal fun openAuthorLink(context: Context, url: String) {
 }
 
 @Composable internal fun AboutIntro(onCheckUpdate: (suspend () -> AppUpdateResult)? = null, onOpenChangelog: () -> Unit = {},
-    availableUpdate: AppUpdateResult? = null) {
+    availableUpdate: AppUpdateResult? = null, automaticUpdateChecks: Boolean = true,
+    onAutomaticUpdateChecks: (Boolean) -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val client = remember { AppUpdateClient() }
@@ -158,8 +160,12 @@ internal fun openAuthorLink(context: Context, url: String) {
                 Text(if (checking) "检查中…" else "检查更新", Modifier.padding(start = 4.dp))
             }
         }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("自动检测更新", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            Switch(automaticUpdateChecks, onAutomaticUpdateChecks, Modifier.testTag("settings_auto_update"))
+        }
         error?.let { Text("检查失败：$it", color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("settings_update_error")) }
-        (result ?: availableUpdate)?.let { update ->
+        (availableUpdate ?: result)?.let { update ->
             Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.fillMaxWidth().testTag("settings_update_result")) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -189,10 +195,22 @@ internal fun openAuthorLink(context: Context, url: String) {
     }
 }
 
+@Composable internal fun SettingsUpdateArrow(modifier: Modifier = Modifier) {
+    Icon(Icons.Outlined.ArrowUpward, "有可用更新", modifier.size(12.dp).testTag("settings_update_arrow"),
+        tint = MaterialTheme.colorScheme.error)
+}
+
 @Composable internal fun CurrentChangelogContent(onHistory: () -> Unit) {
+    val context = LocalContext.current
+    val notes = remember(context) {
+        context.assets.open("legal/changelog.md").bufferedReader().useLines { lines ->
+            lines.dropWhile { it.trim() != "## ${BuildConfig.VERSION_NAME}" }.drop(1)
+                .takeWhile { !it.startsWith("## ") }.filter { it.startsWith("- ") }.map { it.removePrefix("- ") }.toList()
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("settings_current_changelog")) {
         Text("E阅 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
-        Text("• 修复 EPUB／MOBI 反向翻页从插图回跳章首、跨章时落在上一章首页的问题，并减少切章时的重复转换和排版。", style = MaterialTheme.typography.bodyMedium)
+        notes.forEach { Text("• $it", style = MaterialTheme.typography.bodyMedium) }
         Text("更多功能请自行体验。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton(onClick = onHistory, modifier = Modifier.testTag("settings_history_changelog")) { Text("历史更新日志") }
     }

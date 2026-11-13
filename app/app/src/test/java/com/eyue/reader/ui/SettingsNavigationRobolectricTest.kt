@@ -43,13 +43,16 @@ class SettingsNavigationRobolectricTest {
     @get:Rule val compose = createComposeRule()
 
     @Test fun updateNotesOpenASecondaryPageAndNewVersionsOfferCloudDownloads() {
-        compose.setContent { MaterialTheme { SettingsScreen(LibraryState(), {}, {}, {}, {}, onCheckUpdate = {
+        val automatic = androidx.compose.runtime.mutableStateOf(true)
+        compose.setContent { MaterialTheme { SettingsScreen(LibraryState(), {}, {}, {}, {}, automaticUpdateChecks = automatic.value,
+            onAutomaticUpdateChecks = { automatic.value = it }, onCheckUpdate = {
             AppUpdateResult(true, "next", 99, "本次核心更新",
                 "https://github.com/byonesheart/ERead/releases/download/vNext/ERead.apk", "https://github.com/byonesheart/ERead/releases",
                 mirrors = listOf(AppUpdateMirror("百度网盘", "https://pan.baidu.com/s/example", "READ"),
                     AppUpdateMirror("夸克网盘", "https://pan.quark.cn/s/example", "Jhr4")))
         }) } }
         compose.onNodeWithTag("settings_about").performScrollTo().performClick()
+        compose.onNodeWithTag("settings_auto_update").assertIsOn().performClick().assertIsOff()
         compose.onNodeWithTag("settings_current_changelog").assertDoesNotExist()
         compose.onNodeWithTag("settings_open_changelog").performScrollTo().performClick()
         compose.onNodeWithTag("settings_current_changelog").assertExists()

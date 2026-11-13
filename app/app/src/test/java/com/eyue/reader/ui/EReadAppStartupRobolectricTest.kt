@@ -87,7 +87,7 @@ class EReadAppStartupRobolectricTest {
         compose.setContent { EReadApp(vm, emptyFlow(), updates) }
         awaitState(30_000) { !vm.loading && preview == 1 }
         compose.runOnIdle { assertEquals(0, normal); assertTrue(updates.developerMode) }
-        compose.onNodeWithTag("settings_update_badge", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("settings_update_arrow", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithText("开发者模式已开启").assertDoesNotExist()
     }
 
@@ -119,11 +119,11 @@ class EReadAppStartupRobolectricTest {
             }
         } }
         capture("app-startup-update")
-        compose.onNodeWithTag("settings_update_badge", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("settings_update_arrow", useUnmergedTree = true).assertIsDisplayed()
         compose.runOnIdle { vm.setAppTheme(com.eyue.reader.data.AppThemeStyle.XINGCAI) }
-        compose.onNodeWithTag("settings_update_badge", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("settings_update_arrow", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithText("设置").performClick()
-        compose.onNodeWithTag("settings_update_badge", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithTag("settings_update_arrow", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithTag("settings_about").performScrollTo().performClick()
         compose.onNodeWithTag("update_github_download").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("settings_back").performClick()

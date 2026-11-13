@@ -65,7 +65,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
         val context = LocalContext.current
         val developerPreferences = remember(context) { DeveloperModePreferences(context) }
         LaunchedEffect(updateSession, developerPreferences) {
-            updateSession.configureDeveloperMode(developerPreferences.enabled)
+            updateSession.configurePreferences(developerPreferences)
             updateSession.checkOnStartup()
         }
         val direction = LocalLayoutDirection.current
@@ -196,7 +196,6 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             }
         }
         val book = vm.activeReaderBook
-        SideEffect { updateSession.setSettingsVisible(book == null && tab == 2) }
         val view = LocalView.current
         val activity = remember(view) {
             var context = view.context
@@ -302,20 +301,14 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             }
         } else {
             Scaffold(containerColor = Paper, snackbarHost = { SnackbarHost(snack) }, bottomBar = {
-                if (state.appTheme == AppThemeStyle.XINGCAI) XingcaiNavigationBar(tab, updateSession.hasUnreadUpdate) { i ->
-                    tab = i
-                    if (i == 2) updateSession.setSettingsVisible(true)
-                } else NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
+                if (state.appTheme == AppThemeStyle.XINGCAI) XingcaiNavigationBar(tab, updateSession.hasPendingUpdate) { tab = it }
+                else NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                     listOf("阅读" to Icons.AutoMirrored.Outlined.MenuBook, "书架" to Icons.Outlined.LibraryBooks,
                         "设置" to Icons.Outlined.Tune).forEachIndexed { i, entry ->
-                        NavigationBarItem(selected = tab == i, onClick = {
-                            tab = i
-                            if (i == 2) updateSession.setSettingsVisible(true)
-                        },
+                        NavigationBarItem(selected = tab == i, onClick = { tab = i },
                             icon = {
                                 BadgedBox(badge = {
-                                    if (i == 2 && updateSession.hasUnreadUpdate) Badge(
-                                        Modifier.testTag("settings_update_badge"), containerColor = Color(0xFFD64045))
+                                    if (i == 2 && updateSession.hasPendingUpdate) SettingsUpdateArrow()
                                 }) { Icon(entry.second, entry.first, Modifier.size(23.dp)) }
                             },
                             label = { Text(entry.first, fontSize = 11.sp) },
@@ -392,6 +385,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                     onEinkMode = vm::setEinkMode, onTabletDualPage = vm::setTabletDualPage,
                                     restoreProgress = vm.cloudRestoreProgress,
                                     onAppTheme = vm::setAppTheme, availableUpdate = updateSession.availableUpdate,
+                                    automaticUpdateChecks = updateSession.automaticChecks, onAutomaticUpdateChecks = updateSession::changeAutomaticChecks,
                                     onCheckUpdate = updateSession::checkNow, onShowRecentReading = vm::setShowRecentReading,
                                     onScanLocalChanges = vm::setScanLocalChanges, onScanSourcesNow = vm::scanLocalSourcesNow,
                                     localSourceScanIssues = vm.localSourceScanIssues, scanningLocalSources = vm.scanningLocalSources,

@@ -10,8 +10,8 @@ android {
         applicationId = "com.eyue.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 101
-        versionName = "1.11.29-beta.6"
+        versionCode = 102
+        versionName = "1.11.29-beta.7"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {

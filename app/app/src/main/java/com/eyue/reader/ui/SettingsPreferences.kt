@@ -84,7 +84,8 @@ private enum class SettingsPage(val title: String) {
     sourceSyncing: Set<String> = emptySet(), sourcePending: Set<String> = emptySet(),
     onScannedBooks: (Set<String>) -> Unit = {}, onAutoReload: (Boolean) -> Unit = {},
     onGrantScanBooks: (Set<String>) -> Unit = {}, onGrantScanFolder: () -> Unit = {},
-    onScanLocalChanges: (Boolean) -> Unit = {}, onScanSourcesNow: () -> Unit = {}) {
+    onScanLocalChanges: (Boolean) -> Unit = {}, onScanSourcesNow: () -> Unit = {},
+    automaticUpdateChecks: Boolean = true, onAutomaticUpdateChecks: (Boolean) -> Unit = {}) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
     val page = pages.lastOrNull()
@@ -207,7 +208,8 @@ private enum class SettingsPage(val title: String) {
                 }
                 SettingsPage.ABOUT -> {
                     SettingsCard {
-                        AboutIntro(onCheckUpdate, onOpenChangelog = { open(SettingsPage.CHANGELOG) }, availableUpdate = availableUpdate)
+                        AboutIntro(onCheckUpdate, onOpenChangelog = { open(SettingsPage.CHANGELOG) }, availableUpdate = availableUpdate,
+                            automaticUpdateChecks = automaticUpdateChecks, onAutomaticUpdateChecks = onAutomaticUpdateChecks)
                     }
                     SettingsCard {
                         listOf(SettingsPage.AUTHOR, SettingsPage.CONTRIBUTORS, SettingsPage.PRIVACY, SettingsPage.TERMS, SettingsPage.OPEN_SOURCE).forEachIndexed { index, destination ->

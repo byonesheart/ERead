@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.eyue.reader.BuildConfig
 import com.eyue.reader.data.AppUpdateClient
 import com.eyue.reader.data.AppUpdateResult
+import com.eyue.reader.data.DeveloperModePreferences
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Deferred
@@ -15,7 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
-/** Keeps one startup check and its read state across recompositions and activity recreation. */
+/** Shares update requests and retains an available version until the app is upgraded. */
 class AppUpdateSession(
     private val checker: suspend () -> AppUpdateResult = { AppUpdateClient().check(BuildConfig.VERSION_CODE) },
     private val dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
@@ -23,15 +24,22 @@ class AppUpdateSession(
 ) : ViewModel() {
     var availableUpdate by mutableStateOf<AppUpdateResult?>(null)
         private set
-    var hasUnreadUpdate by mutableStateOf(false)
+    var automaticChecks by mutableStateOf(true)
         private set
+    val hasPendingUpdate get() = availableUpdate != null
     var developerMode by mutableStateOf(false)
         private set
     private var startupChecked = false
-    private var settingsVisible = false
-    private var acknowledgedVersion: Int? = null
+    private var preferences: DeveloperModePreferences? = null
     private var request: Deferred<AppUpdateResult>? = null
     private var requestGeneration = 0
+
+    fun configurePreferences(store: DeveloperModePreferences) {
+        preferences = store
+        automaticChecks = store.automaticChecks
+        configureDeveloperMode(store.enabled)
+        restorePendingUpdate()
+    }
 
     fun configureDeveloperMode(enabled: Boolean) {
         if (developerMode == enabled) return
@@ -39,19 +47,18 @@ class AppUpdateSession(
         requestGeneration++
         request?.cancel(); request = null
         startupChecked = false
-        availableUpdate = null; hasUnreadUpdate = false
+        availableUpdate = null
+        restorePendingUpdate()
     }
 
-    fun setSettingsVisible(visible: Boolean) {
-        settingsVisible = visible
-        if (visible) {
-            availableUpdate?.let { acknowledgedVersion = it.versionCode }
-            hasUnreadUpdate = false
-        }
+    fun changeAutomaticChecks(enabled: Boolean) {
+        automaticChecks = enabled
+        preferences?.automaticChecks = enabled
+        if (enabled) checkOnStartup()
     }
 
     fun checkOnStartup() {
-        if (startupChecked) return
+        if (!automaticChecks || startupChecked) return
         startupChecked = true
         viewModelScope.launch(dispatcher) {
             try { checkNow() }
@@ -71,8 +78,17 @@ class AppUpdateSession(
     }
 
     private fun acceptResult(result: AppUpdateResult) {
-        availableUpdate = result.takeIf { it.published && it.available }
-        if (settingsVisible) availableUpdate?.let { acknowledgedVersion = it.versionCode }
-        hasUnreadUpdate = availableUpdate?.let { !settingsVisible && it.versionCode != acknowledgedVersion } == true
+        if (result.published && result.available && (!result.prerelease || developerMode)) {
+            preferences?.rememberUpdate(result)
+            if (result.versionCode >= (availableUpdate?.versionCode ?: 0)) availableUpdate = result
+        }
+    }
+
+    private fun restorePendingUpdate() {
+        val store = preferences ?: return
+        val stable = store.pendingUpdate(preview = false)
+        val preview = if (developerMode) store.pendingUpdate(preview = true) else null
+        listOfNotNull(availableUpdate, stable, preview).maxWithOrNull(compareBy<AppUpdateResult> { it.versionCode }
+            .thenBy { !it.prerelease })?.let { availableUpdate = it }
     }
 }

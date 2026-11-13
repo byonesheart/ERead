@@ -99,7 +99,7 @@ class XingcaiUiRobolectricTest {
         await { vm.activeBookId == null }
         compose.onNodeWithTag("app_nav_2").performClick()
         compose.onNodeWithTag("settings_app_theme").assertIsDisplayed()
-        compose.onNodeWithTag("settings_update_badge").assertDoesNotExist()
+        compose.onNodeWithTag("settings_update_arrow", useUnmergedTree = true).assertIsDisplayed()
         capture("xingcai-settings-dark")
         compose.onNodeWithTag("settings_cloud").performScrollTo().performClick()
         capture("xingcai-cloud-dark")

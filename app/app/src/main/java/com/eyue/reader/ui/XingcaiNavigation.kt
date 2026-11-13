@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Badge
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -57,9 +56,7 @@ private val NavSoft = Color(0xFF7FA9F0)
                             verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                             Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) {
                                 AppNavIcon(index, active, colors.primary, Modifier.size(24.dp))
-                                if (index == 2 && hasUpdate) Badge(
-                                    Modifier.align(Alignment.TopEnd).size(8.dp).testTag("settings_update_badge"),
-                                    containerColor = Color(0xFFD64045))
+                                if (index == 2 && hasUpdate) SettingsUpdateArrow(Modifier.align(Alignment.TopEnd).offset(x = 7.dp, y = (-4).dp))
                             }
                             Spacer(Modifier.height(4.dp))
                             Text(label, fontSize = 11.sp,

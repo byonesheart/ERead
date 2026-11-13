@@ -120,6 +120,12 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
             lineHeight = defaults.lineHeight, paragraphSpacing = defaults.paragraphSpacing,
             letterSpacing = defaults.letterSpacing, paragraphIndent = defaults.paragraphIndent, useSourceCss = defaults.useSourceCss))
     }) {
+        if (sourceCssAvailable) {
+            ReaderToggle("使用原书 CSS", settings.useSourceCss, Modifier.testTag("reader_use_source_css")) {
+                onSettings(settings.copy(useSourceCss = it))
+            }
+            Text("保留原书文字排版，字体与段距使用当前设置。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+        }
         ReaderInterfaceSlider("字号", "阅读字号", settings.fontSize, 12f..36f, 1f,
             { onSettings(settings.copy(fontSize = it)) }, { it.roundToInt().toString() })
         ReaderSettingRow("字体") {
@@ -159,12 +165,6 @@ private fun ReaderInterfaceSettings(settings: ReaderSettings, raster: Boolean, o
             { onSettings(settings.copy(letterSpacing = it)) }, { String.format(Locale.getDefault(), "%.1f", it) })
         ReaderInterfaceSlider("缩进", "首行缩进", settings.paragraphIndent, 0f..4f, .5f,
             { onSettings(settings.copy(paragraphIndent = it)) }, { "${it}字" })
-        if (sourceCssAvailable) {
-            ReaderToggle("使用原书 CSS", settings.useSourceCss, Modifier.testTag("reader_use_source_css")) {
-                onSettings(settings.copy(useSourceCss = it))
-            }
-            Text("保留原书文字排版，字体与段距使用当前设置。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-        }
     }
     ReaderCollapsibleSection("纸张", ReaderBackgroundChoices.firstOrNull { it.first == settings.background }?.second
         ?: if (settings.background == ReaderBackground.IMAGE) "图片" else null) {

@@ -186,6 +186,9 @@ class ReaderCompactSettingsRobolectricTest {
         compose.onNodeWithTag("reader_scroll_options").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("reader_continuous_scroll").assertExists()
         expand("文字与排版")
+        val css = compose.onNodeWithTag("reader_use_source_css").fetchSemanticsNode().positionInRoot.y
+        val font = compose.onNodeWithText("字号", substring = false).fetchSemanticsNode().positionInRoot.y
+        assertTrue(css < font)
         compose.onNodeWithTag("reader_use_source_css").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("reader_vertical_text_true").performScrollTo().performClick().assertIsSelected()
         compose.runOnIdle { assertTrue(settings.verticalText) }
