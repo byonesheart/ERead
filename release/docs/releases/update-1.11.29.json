@@ -1,0 +1,25 @@
+{
+  "versionCode": 103,
+  "versionName": "1.11.29",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.29",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.29/ERead-1.11.29-release.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1OgBTSOU-kh-dZTIXw-kr_w?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/47ec436a8b99",
+      "extractionCode": "9URp"
+    }
+  ],
+  "changelog": [
+    "书架支持标签和二级分组、拖动排序、批量云端操作及自定义封面。",
+    "阅读配置独立保存字体颜色和对话颜色，支持自定义色库和引号对话着色。",
+    "支持从 WebDAV 网盘选书并后台导入，优化备份、同步和还原书架，传输通知显示百分比。",
+    "新增自动检测更新开关，默认开启。发现更新后，设置图标上的箭头保留到安装新版。",
+    "更多功能请自行体验。"
+  ]
+}
