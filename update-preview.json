@@ -1,12 +1,13 @@
 {
-  "versionCode": 100,
-  "versionName": "1.11.29-beta.5",
+  "versionCode": 101,
+  "versionName": "1.11.29-beta.6",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.29-beta.5",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.29-beta.5/ERead-1.11.29-beta.5-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.29-beta.6",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.29-beta.6/ERead-1.11.29-beta.6-release.apk",
   "mirrors": [],
   "changelog": [
-    "书架分组支持拖动排序、折叠二级分组和按标签隐藏书籍，标签模式使用独立的标签栏。",
-    "批量云端操作支持按状态上传、下载或中断，搜索入口移至顶部工具栏。"
+    "阅读配置可独立保存字体颜色与对话着色，两者共用自定义色库，支持滑动选色和输入颜色编码。",
+    "改进引号对话识别，启动和阅读加载改用翻书动画。",
+    "书架多选时缩小勾选图标并保留单本书的云端操作，再点搜索图标可收起搜索框。"
   ]
 }
