@@ -5,6 +5,7 @@ import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.Charset
 import java.util.Locale
+import java.util.regex.Pattern
 import kotlin.math.abs
 
 data class ParsedTextChapter(val title: String, val text: String, val inlineImages: List<InlineImage> = emptyList(),
@@ -60,9 +61,14 @@ object TextParser {
     }
 
     fun validateRule(rule: String) {
+        chapterPattern(rule)
+    }
+
+    private fun chapterPattern(rule: String): Pattern {
         require(rule.isNotBlank()) { "目录规则不能为空" }
-        val regex = Regex(rule, RegexOption.MULTILINE)
-        require(!regex.containsMatchIn("")) { "目录规则不能匹配空内容" }
+        val pattern = Regex(rule, RegexOption.MULTILINE).toPattern()
+        require(!pattern.matcher("").find()) { "目录规则不能匹配空内容" }
+        return pattern
     }
 
     fun decode(bytes: ByteArray): String {
@@ -98,17 +104,20 @@ object TextParser {
     }
 
     fun split(text: String, rule: String): List<ParsedTextChapter> {
-        validateRule(rule)
-        val headings = Regex(rule, RegexOption.MULTILINE).findAll(text).toList()
-        require(headings.none { it.value.isBlank() }) { "目录规则匹配到了空白内容，请收紧规则" }
-        if (headings.isEmpty()) return listOf(ParsedTextChapter("正文", text.trim()))
+        // Android's regex matcher holds a native copy of its input. Reuse it across the entire book.
+        val headings = chapterPattern(rule).matcher(text)
+        if (!headings.find()) return listOf(ParsedTextChapter("正文", text.trim()))
         val result = mutableListOf<ParsedTextChapter>()
-        val prefix = text.substring(0, headings.first().range.first).trim()
+        val prefix = text.substring(0, headings.start()).trim()
         if (prefix.isNotEmpty()) result += ParsedTextChapter("前言", prefix)
-        headings.forEachIndexed { index, match ->
-            val end = headings.getOrNull(index + 1)?.range?.first ?: text.length
-            result += ParsedTextChapter(match.value.trim(), text.substring(match.range.first, end).trim())
-        }
+        do {
+            val start = headings.start()
+            val title = headings.group().trim()
+            require(title.isNotEmpty()) { "目录规则匹配到了空白内容，请收紧规则" }
+            val hasNext = headings.find()
+            val end = if (hasNext) headings.start() else text.length
+            result += ParsedTextChapter(title, text.substring(start, end).trim())
+        } while (hasNext)
         return result
     }
 

@@ -75,6 +75,20 @@ class TextParserTest {
         assertEquals(listOf("Part 1", "Part 2"), chapters.map { it.title })
     }
 
+    @Test fun scansManyChaptersWithoutLosingMultilineHeadingsOrBody() {
+        val chapters = (1..1800).map { number ->
+            val title = "第${number}章\n卷内标题"
+            ParsedTextChapter(title, "$title\n\n　　本章正文。\n　　继续阅读。")
+        }
+        val source = "前置说明\n\n" + chapters.joinToString("\n\n") { it.text }
+        assertEquals(listOf(ParsedTextChapter("前言", "前置说明")) + chapters,
+            TextParser.split(source, "^第[0-9]+章\\n卷内标题$"))
+    }
+
+    @Test(expected = IllegalArgumentException::class) fun rejectsAZeroWidthMatchInTheText() {
+        TextParser.split("正文\n第一章\n内容", "(?=第一章)")
+    }
+
     @Test fun noChapterMatchRetainsSingleBody() {
         assertEquals(listOf(ParsedTextChapter("正文", "一个没有章节名的故事")),
             TextParser.split("一个没有章节名的故事", DEFAULT_CHAPTER_RULE))
