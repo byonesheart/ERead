@@ -1,12 +1,11 @@
 {
-  "versionCode": 102,
-  "versionName": "1.11.29-beta.7",
+  "versionCode": 104,
+  "versionName": "1.11.30-beta.1",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.29-beta.7",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.29-beta.7/ERead-1.11.29-beta.7-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.30-beta.1",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.30-beta.1/ERead-1.11.30-beta.1-release.apk",
   "mirrors": [],
   "changelog": [
-    "「关于」新增自动检测更新开关，默认开启。发现新版本后，设置图标上的上箭头会保留到更新安装完成。",
-    "「使用原书 CSS」移至「文字与排版」顶部。"
+    "修复长篇 TXT 识别章节时内存占用过高，导致导入或从文件管理器打开失败的问题。"
   ]
 }
