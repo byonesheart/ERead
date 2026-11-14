@@ -128,7 +128,7 @@ class EReadAppStartupRobolectricTest {
         compose.onNodeWithTag("update_github_download").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("settings_back").performClick()
         compose.onNodeWithText("待更新").assertExists()
-        compose.onNodeWithTag("settings_app_theme").performScrollTo().performClick()
+        compose.onNodeWithTag("settings_personalization").performScrollTo().performClick()
         compose.onNodeWithTag("app_theme_pixel").performClick().assertIsSelected()
         compose.runOnIdle { assertEquals(com.eyue.reader.data.AppThemeStyle.PIXEL, vm.state.appTheme) }
         compose.onNodeWithTag("settings_back").performClick()

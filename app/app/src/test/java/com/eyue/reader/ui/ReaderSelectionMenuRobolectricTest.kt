@@ -55,7 +55,7 @@ class ReaderSelectionMenuRobolectricTest {
         text.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
         val word = layouts.single().getBoundingBox(4).center
         text.performTouchInput { longClick(word) }
-        compose.onNodeWithTag("reader_action_translate").assertDoesNotExist()
+        compose.onNodeWithTag("reader_action_translate").assertIsDisplayed()
         compose.onNodeWithTag("reader_action_note").assertIsDisplayed().performClick()
         compose.runOnIdle {
             assertEquals(AnnotationKind.NOTE, selectedKind)
@@ -158,6 +158,22 @@ class ReaderSelectionMenuRobolectricTest {
         assertEquals(3, readerVisibleMenuCount(listOf(40, 40, 40), 120, 32))
         assertEquals(2, readerVisibleMenuCount(listOf(40, 40, 40, 40), 112, 32))
         assertEquals(0, readerVisibleMenuCount(listOf(160, 40), 100, 32))
+    }
+
+    @Test fun copyingFollowsUnderlineAndRoleAlwaysLivesInMore() {
+        compose.setContent { MaterialTheme {
+            ReaderSelectableText(AnnotatedString("A selected passage with more words."), TextStyle(fontSize = 18.sp),
+                0, 0, 0, 0, onAction = { _, _ -> }, onRole = {}, modifier = Modifier.width(300.dp))
+        } }
+        compose.onNodeWithContentDescription("阅读正文").performSemanticsAction(SemanticsActions.SetSelection) {
+            assertTrue(it(2, 10, false))
+        }
+        val underline = compose.onNodeWithTag("reader_action_underline").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val copy = compose.onNodeWithTag("reader_action_copy").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue(underline.right <= copy.left)
+        compose.onNodeWithTag("reader_action_role").assertDoesNotExist()
+        compose.onNodeWithTag("reader_selection_more").performClick()
+        compose.onNodeWithTag("reader_action_role").assertIsDisplayed()
     }
 
     /** Selection gestures remain real; Android 28's magnifier alone requires a device Surface. */

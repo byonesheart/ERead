@@ -68,9 +68,9 @@ class SettingsNavigationRobolectricTest {
         compose.onNodeWithTag("update_mirror_1").performScrollTo().assertTextContains("提取码 Jhr4", substring = true)
     }
 
-    @Test fun mainSettingsUseCompactEntriesWithInlineDisplayChoicesWithoutServiceForms() {
+    @Test fun mainSettingsUseThreeGroupsWithDedicatedSubpages() {
         compose.setContent { MaterialTheme { SettingsScreen(LibraryState(), {}, {}, {}, {}) } }
-        listOf("theme", "speech", "cloud", "cache", "feedback", "support", "about").forEach {
+        listOf("personalization", "speech", "cloud", "scan_local_changes", "translation", "cache", "feedback", "support", "about").forEach {
             compose.onNodeWithTag("settings_$it").assertExists()
         }
         compose.onNodeWithTag("speech_engine_toggle").assertDoesNotExist()
@@ -79,6 +79,7 @@ class SettingsNavigationRobolectricTest {
         compose.onNodeWithText("使用说明").assertDoesNotExist()
         compose.onNodeWithText("E阅  1.7.7").assertDoesNotExist()
         compose.onNodeWithTag("settings_subpage_header").assertDoesNotExist()
+        compose.onNodeWithTag("settings_personalization").performScrollTo().performClick()
         compose.onNodeWithTag("settings_eink_mode").assertExists()
         compose.onNodeWithTag("settings_tablet_dual_page").assertExists()
     }
@@ -89,6 +90,7 @@ class SettingsNavigationRobolectricTest {
             var state by remember { mutableStateOf(LibraryState()) }
             MaterialTheme { SettingsScreen(state, {}, {}, {}, {}, onThemeMode = { chosen += it; state = state.copy(themeMode = it) }) }
         }
+        compose.onNodeWithTag("settings_personalization").performScrollTo().performClick()
         listOf("light", "dark", "system").forEach { compose.onNodeWithTag("settings_theme_$it").assertIsDisplayed() }
         compose.runOnIdle { assertTrue(chosen.isEmpty()) }
         compose.onNodeWithTag("settings_theme_dark").performClick()
@@ -109,7 +111,7 @@ class SettingsNavigationRobolectricTest {
         compose.onNodeWithTag("cloud_open_account").assertIsDisplayed()
         compose.onNodeWithTag("cloud_test_connection").assertDoesNotExist()
         compose.onNodeWithTag("settings_back").performClick()
-        compose.onNodeWithTag("settings_theme").assertIsDisplayed()
+        compose.onNodeWithTag("settings_personalization").assertIsDisplayed()
     }
 
     @Suppress("DEPRECATION")
@@ -139,15 +141,17 @@ class SettingsNavigationRobolectricTest {
         compose.onNodeWithTag("cloud_restore_info").performScrollTo().assertIsEnabled()
     }
 
-    @Test fun cloudIconPreferenceIsAvailableWithoutAConfiguredAccount() {
+    @Test fun coverIconPreferenceIsInPersonalizationOnly() {
         var state by mutableStateOf(LibraryState())
         compose.setContent { MaterialTheme {
             SettingsScreen(state, {}, {}, {}, {},
-                onHideCloudSyncIcons = { state = state.copy(hideCloudSyncIcons = it) })
+                onHideCoverIcons = { state = state.copy(hideCoverIcons = it) })
         } }
+        compose.onNodeWithTag("settings_personalization").performScrollTo().performClick()
+        compose.onNodeWithTag("settings_hide_cover_icons").performScrollTo().assertIsOff().performClick().assertIsOn()
+        compose.onNodeWithTag("settings_back").performClick()
         compose.onNodeWithTag("settings_cloud").performScrollTo().performClick()
-        compose.onNodeWithTag("cloud_hide_sync_icons").performScrollTo().assertIsOff().performClick().assertIsOn()
-        compose.onNodeWithText("先还原书籍信息，再通过书架多选或书籍更多选项下载正文。").assertExists()
+        compose.onNodeWithTag("cloud_hide_sync_icons").assertDoesNotExist()
     }
 
     @Test fun cacheActionsRequireSeparateConfirmationsAndNeverInvokeEachOther() {
@@ -199,6 +203,7 @@ class SettingsNavigationRobolectricTest {
         var dualPage = false
         compose.setContent { MaterialTheme { SettingsScreen(LibraryState(), {}, {}, {}, {}, onEinkMode = { eink = it }, onTabletDualPage = { dualPage = it }) } }
         compose.runOnIdle { assertFalse(eink); assertFalse(dualPage) }
+        compose.onNodeWithTag("settings_personalization").performScrollTo().performClick()
         compose.onNodeWithTag("settings_eink_mode").performClick()
         compose.runOnIdle { assertTrue(eink); assertFalse(dualPage) }
         compose.onNodeWithTag("settings_tablet_dual_page").performClick()

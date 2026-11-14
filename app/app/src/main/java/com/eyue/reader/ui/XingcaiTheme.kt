@@ -78,8 +78,3 @@ internal val AppThemeStyle.displayName: String get() = when (this) {
     AppThemeStyle.PIXEL -> "像素"
     AppThemeStyle.XINGCAI -> "星彩"
 }
-internal val AppThemeStyle.description: String get() = when (this) {
-    AppThemeStyle.CLASSIC -> "柔和配色 · 圆角界面"
-    AppThemeStyle.PIXEL -> "复古配色 · 像素边角"
-    AppThemeStyle.XINGCAI -> "清爽蓝色 · 星月图标 · 彩色导航"
-}

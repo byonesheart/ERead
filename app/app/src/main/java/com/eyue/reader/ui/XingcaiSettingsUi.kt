@@ -4,6 +4,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.LightMode
+import androidx.compose.material.icons.outlined.SettingsBrightness
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,17 +43,37 @@ import com.eyue.reader.data.AppThemeStyle
 }
 
 @Composable internal fun SettingsNightModeSegment(value: ThemeMode, onChange: (ThemeMode) -> Unit) {
+    SettingsIconSegment(ThemeMode.entries, value, onChange, { it.settingsLabel },
+        { "settings_theme_${it.name.lowercase()}" }) {
+        when (it) {
+            ThemeMode.LIGHT -> Icons.Outlined.LightMode
+            ThemeMode.DARK -> Icons.Outlined.DarkMode
+            ThemeMode.SYSTEM -> Icons.Outlined.SettingsBrightness
+        }
+    }
+}
+
+internal val ThemeMode.settingsLabel: String get() = when (this) {
+    ThemeMode.LIGHT -> "浅色"
+    ThemeMode.DARK -> "深色"
+    ThemeMode.SYSTEM -> "系统"
+}
+
+@Composable internal fun <T> SettingsIconSegment(options: List<T>, value: T, onChange: (T) -> Unit,
+    label: (T) -> String, tag: (T) -> String, icon: (T) -> ImageVector) {
     val colors = MaterialTheme.colorScheme
-    Row(Modifier.width(168.dp).heightIn(min = 32.dp).clip(appShape(10.dp))
+    Row(Modifier.fillMaxWidth().clip(appShape(10.dp))
         .background(colors.primaryContainer).padding(3.dp).selectableGroup()) {
-        listOf(ThemeMode.LIGHT to "浅色", ThemeMode.DARK to "深色", ThemeMode.SYSTEM to "系统").forEach { (mode, label) ->
-            val selected = value == mode
-            Box(Modifier.weight(1f).heightIn(min = 26.dp).clip(appShape(8.dp))
+        options.forEach { option ->
+            val selected = value == option
+            val tint = if (selected) colors.primary else colors.onPrimaryContainer
+            Row(Modifier.weight(1f).heightIn(min = 40.dp).clip(appShape(8.dp))
                 .background(if (selected) colors.surface else Color.Transparent)
-                .selectable(selected, role = Role.RadioButton, onClick = { onChange(mode) })
-                .testTag("settings_theme_${mode.name.lowercase()}"), contentAlignment = Alignment.Center) {
-                Text(label, fontSize = 12.sp, maxLines = 1,
-                    color = if (selected) colors.primary else colors.onSurfaceVariant,
+                .selectable(selected, role = Role.RadioButton, onClick = { onChange(option) })
+                .testTag(tag(option)), horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically) {
+                AppIcon(icon(option), null, Modifier.size(16.dp), tint = tint)
+                Text(label(option), fontSize = 12.sp, maxLines = 1, color = tint,
                     fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal)
             }
         }

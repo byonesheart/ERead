@@ -62,10 +62,12 @@ class SettingsPreferencesRobolectricTest {
     @Test fun compactHomeOpensSecondaryPagesAndThemeUsesThreeChoices() {
         var selected: ThemeMode? = null
         compose.setContent { MaterialTheme { SettingsScreen(LibraryState(), {}, {}, {}, {}, onThemeMode = { selected = it }) } }
+        compose.onNodeWithTag("settings_personalization").performScrollTo().performClick()
         compose.onNodeWithTag("settings_theme_light").assertIsDisplayed()
         compose.onNodeWithTag("settings_theme_dark").assertIsDisplayed()
         compose.onNodeWithTag("settings_theme_system").performClick()
         compose.runOnIdle { assertEquals(ThemeMode.SYSTEM, selected) }
+        compose.onNodeWithTag("settings_back").performClick()
         compose.onNodeWithTag("settings_speech").performScrollTo().performClick()
         compose.onNodeWithText("当前使用：").assertIsDisplayed()
         compose.onNodeWithTag("settings_back").performClick()
@@ -104,9 +106,11 @@ class SettingsPreferencesRobolectricTest {
         compose.runOnIdle { assertTrue(auto) }
     }
 
-    @Test fun unavailableTranslationIsHiddenAndMeteredBackupDefaultsFollowTheSetting() {
+    @Test fun onlineDictionaryIsOfferedEvenWithoutAnInstalledTranslator() {
         compose.setContent { MaterialTheme { SettingsScreen(LibraryState(), {}, {}, {}, {}) } }
-        compose.onNodeWithTag("settings_translation").assertDoesNotExist()
+        compose.onNodeWithTag("settings_translation").performScrollTo().performClick()
+        compose.onNodeWithTag("settings_translation_dictionary").assertTextContains("当前使用")
+        compose.onNodeWithTag("settings_translation_apps").assertIsDisplayed()
     }
     @Test fun scanSwitchDefaultsToManualAndGatesAutomaticReload() {
         var state by mutableStateOf(LibraryState())

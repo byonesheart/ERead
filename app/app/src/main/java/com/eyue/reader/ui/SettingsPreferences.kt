@@ -48,7 +48,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 private enum class SettingsPage(val title: String) {
-    APP_THEME("主题"), SOURCE_SCAN("扫描本地修改"),
+    PERSONALIZATION("个性化"), SOURCE_SCAN("扫描本地修改"), TRANSLATION("翻译"),
     SPEECH("朗读引擎"), CLOUD("WebDAV 备份与还原"), CACHE("清理缓存"),
     FEEDBACK("问题反馈"), SUPPORT("支持作者"), ABOUT("关于"), AUTHOR("作者"),
     PRIVACY("隐私政策"), TERMS("用户协议"), OPEN_SOURCE("开源相关"), CHANGELOG("更新日志"),
@@ -86,7 +86,7 @@ private enum class SettingsPage(val title: String) {
     onGrantScanBooks: (Set<String>) -> Unit = {}, onGrantScanFolder: () -> Unit = {},
     onScanLocalChanges: (Boolean) -> Unit = {}, onScanSourcesNow: () -> Unit = {},
     automaticUpdateChecks: Boolean = true, onAutomaticUpdateChecks: (Boolean) -> Unit = {},
-    onHideCloudSyncIcons: (Boolean) -> Unit = {}) {
+    onHideCoverIcons: (Boolean) -> Unit = {}) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
     val page = pages.lastOrNull()
@@ -121,42 +121,25 @@ private enum class SettingsPage(val title: String) {
             when (page) {
                 null -> {
                     SettingsCard(Modifier.testTag("settings_display_card")) {
-                        SettingsLink(Icons.Outlined.Palette, "主题", state.appTheme.displayName,
-                            "settings_app_theme", { open(SettingsPage.APP_THEME) })
-                        SettingsSeparator()
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp).testTag("settings_theme"),
-                            verticalAlignment = Alignment.CenterVertically) {
-                            Text("夜间模式", Modifier.weight(1f), fontSize = 14.sp)
-                            SettingsNightModeSegment(state.themeMode, onThemeMode)
-                        }
+                        val display = listOfNotNull(state.appTheme.displayName, state.themeMode.settingsLabel,
+                            "墨水屏".takeIf { state.einkMode }, "平板双页".takeIf { state.tabletDualPage }).joinToString(" · ")
+                        SettingsLink(Icons.Outlined.Palette, "个性化", display, "settings_personalization",
+                            { open(SettingsPage.PERSONALIZATION) })
                     }
                     SettingsCard(Modifier.testTag("settings_reading_card")) {
-                        SettingsToggle("最近阅读", "在阅读首页显示最近阅读的书籍", state.showRecentReading, onShowRecentReading,
-                            "settings_recent_reading", Icons.Outlined.History)
-                        SettingsSeparator()
-                        SettingsToggle("墨水屏模式", "高对比度显示，关闭翻页动画", state.einkMode, onEinkMode, "settings_eink_mode", Icons.Outlined.Contrast)
-                        SettingsSeparator()
-                        SettingsToggle("平板横屏双页", "宽屏横向翻页时并排显示两页", state.tabletDualPage, onTabletDualPage, "settings_tablet_dual_page", Icons.AutoMirrored.Outlined.MenuBook)
-                        SettingsSeparator()
                         SettingsLink(Icons.Outlined.Headphones, "朗读引擎", if (state.speechEngine == SpeechEngine.AI) "AI 语音" else "系统语音",
                             "settings_speech", { open(SettingsPage.SPEECH) })
                         SettingsSeparator()
-                        SettingsLink(Icons.Outlined.Sync, "扫描本地修改", state.sourceScanMode.displayName,
-                            "settings_scan_local_changes", { open(SettingsPage.SOURCE_SCAN) })
-                    }
-                    SettingsCard(Modifier.testTag("settings_services_card")) {
                         SettingsLink(Icons.Outlined.Cloud, "WebDAV 备份与还原", if (cloudConfigured) "已连接" else "未配置", "settings_cloud", { open(SettingsPage.CLOUD) })
                         SettingsSeparator()
-                        if (readerTranslationTargets(context, "").isNotEmpty()) {
-                        SettingsLink(Icons.Outlined.Translate, "系统翻译应用", translatorLabel, "settings_translation", { readerTranslationPickerIntent(context)?.let { request ->
-                            try { translationPicker.launch(request) }
-                            catch (_: android.content.ActivityNotFoundException) { showMissingTranslation(context) }
-                            catch (_: SecurityException) { showMissingTranslation(context) }
-                        } })
+                        SettingsLink(Icons.Outlined.Sync, "扫描本地修改", state.sourceScanMode.displayName,
+                            "settings_scan_local_changes", { open(SettingsPage.SOURCE_SCAN) })
                         SettingsSeparator()
-                        }
+                        SettingsLink(Icons.Outlined.Translate, "翻译", translatorLabel, "settings_translation", { open(SettingsPage.TRANSLATION) })
+                        SettingsSeparator()
                         SettingsLink(Icons.Outlined.CleaningServices, "清理缓存", "", "settings_cache", { open(SettingsPage.CACHE) })
-                        SettingsSeparator()
+                    }
+                    SettingsCard(Modifier.testTag("settings_services_card")) {
                         SettingsLink(Icons.Outlined.Feedback, "问题反馈", "", "settings_feedback", { open(SettingsPage.FEEDBACK) })
                         SettingsSeparator()
                         SettingsLink(Icons.Outlined.FavoriteBorder, "支持作者", "", "settings_support", { open(SettingsPage.SUPPORT) })
@@ -167,7 +150,43 @@ private enum class SettingsPage(val title: String) {
                 SettingsPage.SOURCE_SCAN -> SourceScanSettings(state, sourceAuthorizations, localSourceScanIssues,
                     scanningLocalSources, sourceSyncing, sourcePending, onScannedBooks, onAutoReload,
                     onGrantScanBooks, onGrantScanFolder, onScanLocalChanges, onScanSourcesNow)
-                SettingsPage.APP_THEME -> AppThemeSettingsPage(state.appTheme, onAppTheme)
+                SettingsPage.PERSONALIZATION -> SettingsCard {
+                    SettingsDisplayChoices("主题", Icons.Outlined.Palette, "settings_app_theme") {
+                        AppThemeSettingsPage(state.appTheme, onAppTheme)
+                    }
+                    SettingsSeparator()
+                    SettingsDisplayChoices("夜间模式", Icons.Outlined.DarkMode, "settings_theme") {
+                        SettingsNightModeSegment(state.themeMode, onThemeMode)
+                    }
+                    SettingsSeparator()
+                    SettingsToggle("墨水屏模式", "高对比度显示，关闭翻页动画", state.einkMode, onEinkMode,
+                        "settings_eink_mode", Icons.Outlined.Contrast)
+                    SettingsSeparator()
+                    SettingsToggle("平板横屏双页", "宽屏横向翻页时并排显示两页", state.tabletDualPage, onTabletDualPage,
+                        "settings_tablet_dual_page", Icons.AutoMirrored.Outlined.MenuBook)
+                    SettingsSeparator()
+                    SettingsToggle("隐藏封面上的图标", "隐藏文件类型、云同步及更多选项图标，多选时照常显示",
+                        state.hideCoverIcons, onHideCoverIcons, "settings_hide_cover_icons", Icons.Outlined.VisibilityOff)
+                    SettingsSeparator()
+                    SettingsToggle("最近阅读", "在阅读首页显示最近阅读的书籍", state.showRecentReading, onShowRecentReading,
+                        "settings_recent_reading", Icons.Outlined.History)
+                }
+                SettingsPage.TRANSLATION -> SettingsCard {
+                    SettingsLink(Icons.AutoMirrored.Outlined.MenuBook, "海词在线词典",
+                        if (translatorLabel == "海词在线词典") "当前使用" else "", "settings_translation_dictionary",
+                        { useReaderOnlineDictionary(context); translatorRevision++ })
+                    SettingsSeparator()
+                    SettingsLink(Icons.Outlined.Translate, "选择翻译应用",
+                        translatorLabel.takeUnless { it == "海词在线词典" }.orEmpty(), "settings_translation_apps", {
+                        readerTranslationPickerIntent(context)?.let { request ->
+                            try { translationPicker.launch(request) }
+                            catch (_: android.content.ActivityNotFoundException) { showMissingTranslation(context) }
+                            catch (_: SecurityException) { showMissingTranslation(context) }
+                        }
+                    })
+                    Text("使用海词时，选中的文字会在浏览器中提交给海词查询。", Modifier.padding(16.dp),
+                        style = MaterialTheme.typography.bodySmall, color = Muted)
+                }
                 SettingsPage.SPEECH -> {
                     SpeechEngineSettings(state.speechEngine, aiSpeechConfig, onSpeechEngine, onSaveAiSpeech,
                     profiles = aiSpeechProfiles, onSelectProfile = onSelectAiSpeechProfile, onSaveProfile = onSaveAiSpeechProfile,
@@ -189,8 +208,7 @@ private enum class SettingsPage(val title: String) {
                 SettingsPage.CLOUD -> CloudBackupSettings(cloudAccount, cloudConfigured, state.cloudAutoBackup, cloudBusy,
                     cloudTaskLabel, cloudFraction, onSaveCloudAccount, onTestCloudConnection, onCloudAutoBackup,
                     onRestoreCloudBookInfo, onDisconnectCloud, cloudServerUrl, state.cloudAutoBackupMetered,
-                    onCloudAutoBackupMetered, onTestCloudDraftConnection, restoreProgress, onSelectCloudProfile,
-                    state.hideCloudSyncIcons, onHideCloudSyncIcons)
+                    onCloudAutoBackupMetered, onTestCloudDraftConnection, restoreProgress, onSelectCloudProfile)
                 SettingsPage.CACHE -> {
                     SettingsCard {
                         LibraryCleanupKind.entries.forEachIndexed { index, kind ->
@@ -288,13 +306,26 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
 
 @Composable private fun SettingsSeparator() = HorizontalDivider(color = Line, modifier = Modifier.padding(horizontal = 16.dp))
 
+@Composable private fun SettingsDisplayChoices(title: String, icon: ImageVector, tag: String,
+    choices: @Composable () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).testTag(tag),
+        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            SettingsEntryIcon(icon, tag)
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+        }
+        choices()
+    }
+}
+
 @Composable private fun SettingsLink(icon: ImageVector, title: String, value: String, tag: String, onClick: () -> Unit) {
+    val displaySummary = tag == "settings_personalization"
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).testTag(tag).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically) {
         SettingsEntryIcon(icon, tag)
         Text(title, Modifier.weight(1f).padding(start = 12.dp), fontSize = 14.sp)
-        if (value.isNotBlank()) Text(value, Modifier.widthIn(max = 100.dp).padding(start = 8.dp), color = Muted, fontSize = 12.sp,
-            maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (value.isNotBlank()) Text(value, Modifier.widthIn(max = if (displaySummary) 210.dp else 100.dp).padding(start = 8.dp),
+            color = Muted, fontSize = 12.sp, maxLines = if (displaySummary) 2 else 1, overflow = TextOverflow.Ellipsis)
         Icon(Icons.Outlined.ChevronRight, null, Modifier.padding(start = 6.dp).size(18.dp), tint = Muted)
     }
 }
@@ -305,8 +336,7 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
     serverUrl: String = DEFAULT_WEBDAV_SERVER, autoBackupMetered: Boolean = false,
     onAutoBackupMetered: (Boolean) -> Unit = {},
     onTestDraftConnection: (suspend (account: String, password: String, server: String) -> String)? = null,
-    restoreProgress: CloudOperationProgress? = null, onSelectProfile: (String) -> Unit = {},
-    hideCloudSyncIcons: Boolean = false, onHideCloudSyncIcons: (Boolean) -> Unit = {}) {
+    restoreProgress: CloudOperationProgress? = null, onSelectProfile: (String) -> Unit = {}) {
     var accountDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current.applicationContext
     val profiles by produceState(emptyList<WebDavProfile>(), context, account, serverUrl, configured, accountDialog, busy) {
@@ -337,16 +367,13 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
                 "cloud_auto_backup", onAutoBackup)
             CloudPreferenceToggle("允许计费网络备份", "同时用于手动和自动备份；手动确认时默认勾选，可能使用移动数据", autoBackupMetered, configured && !busy,
                 "cloud_auto_backup_metered", onAutoBackupMetered)
-            CloudPreferenceToggle("隐藏云同步图标", "阅读首页和书架的封面隐藏云图标，多选时显示", hideCloudSyncIcons, true,
-                "cloud_hide_sync_icons", onHideCloudSyncIcons)
             HorizontalDivider(color = Line)
             Button(onClick = onRestore, enabled = configured && !busy && restoreProgress == null,
                 modifier = Modifier.fillMaxWidth().testTag("cloud_restore_info")) {
                 Text("手动还原书籍信息")
             }
             restoreProgress?.let { CloudRestoreProgressIndicator(it, "cloud_restore_progress") }
-            Text(if (hideCloudSyncIcons) "先还原书籍信息，再通过书架多选或书籍更多选项下载正文。"
-                else "先还原书架、分组及阅读记录，再点击书籍云图标下载正文。", style = MaterialTheme.typography.bodySmall, color = Muted)
+            Text("先还原书架、分组及阅读记录，再从书架下载正文。", style = MaterialTheme.typography.bodySmall, color = Muted)
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("云端书籍下载位置", fontSize = 14.sp)
                 SelectionContainer {

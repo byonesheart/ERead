@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ComponentName
 import android.content.pm.ApplicationInfo
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
@@ -48,13 +49,12 @@ private fun translatorLabel(context: Context, component: ComponentName): String 
 
 internal fun selectedReaderTranslatorLabel(context: Context): String {
     val remembered = context.getSharedPreferences(TRANSLATION_PREFERENCES, 0).getString(DEFAULT_TRANSLATOR, null)
-    val targets = readerTranslationTargets(context, "")
-    val component = targets.firstOrNull { it.component?.flattenToString() == remembered }?.component
-        ?: context.packageManager.resolveActivity(readerTranslationIntent(""), android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
-            ?.activityInfo?.let { info -> ComponentName(info.packageName, info.name) }?.takeIf { resolved -> targets.any { it.component == resolved } }
-        ?: targets.singleOrNull()?.component
-    return component?.let { translatorLabel(context, it) }
-        ?: "未选择 · 使用系统选择"
+    return readerTranslationTargets(context, "").firstOrNull { it.component?.flattenToString() == remembered }
+        ?.component?.let { translatorLabel(context, it) } ?: "海词在线词典"
+}
+
+internal fun useReaderOnlineDictionary(context: Context) {
+    context.getSharedPreferences(TRANSLATION_PREFERENCES, 0).edit().remove(DEFAULT_TRANSLATOR).apply()
 }
 
 private fun translatorChoices(context: Context): List<Pair<String, Intent>> {
@@ -104,38 +104,25 @@ private fun launchTranslation(context: Context, intent: Intent) {
     context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
 
-private fun chooseReaderTranslation(context: Context, text: String) {
-    val targets = readerTranslationTargets(context, text)
-    if (targets.isEmpty()) throw ActivityNotFoundException()
+internal fun openReaderTranslation(context: Context, text: String) {
+    val query = text.trim()
+    if (query.isEmpty()) return
     val preferences = context.getSharedPreferences(TRANSLATION_PREFERENCES, 0)
     val remembered = preferences.getString(DEFAULT_TRANSLATOR, null)
-    val default = targets.firstOrNull { it.component?.flattenToString() == remembered }
-    if (default != null) {
-        try { launchTranslation(context, default); return }
-        catch (_: ActivityNotFoundException) { preferences.edit().remove(DEFAULT_TRANSLATOR).apply() }
+    if (remembered != null) {
+        val target = readerTranslationTargets(context, query).firstOrNull { it.component?.flattenToString() == remembered }
+        if (target != null) {
+            try { launchTranslation(context, target); return }
+            catch (_: ActivityNotFoundException) {}
+            catch (_: SecurityException) {}
+        }
+        useReaderOnlineDictionary(context)
     }
-    if (targets.size == 1) { launchTranslation(context, targets.single()); return }
-    if (targets.first().action == Intent.ACTION_TRANSLATE) {
-        // Normal resolution preserves the system's "just once/always" choice and app icons.
-        launchTranslation(context, readerTranslationIntent(text))
-    } else {
-        val base = Intent(targets.first()).setComponent(null)
-        val eligible = targets.mapNotNull { it.component }.toSet()
-        val excluded = context.packageManager.queryIntentActivities(base, 0).mapNotNull { it.activityInfo?.let { activity ->
-            ComponentName(activity.packageName, activity.name).takeUnless(eligible::contains)
-        } }.toTypedArray()
-        launchTranslation(context, Intent.createChooser(base, "系统翻译")
-            .putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, excluded))
-    }
+    val url = Uri.Builder().scheme("https").authority("dict.cn").appendPath(query).build()
+    openAuthorLink(context, url.toString())
 }
 
 internal fun showMissingTranslation(context: Context) {
     val toast = Toast.makeText(context, "此设备未提供可调用的系统翻译", Toast.LENGTH_SHORT)
     toast.show(); Handler(Looper.getMainLooper()).postDelayed({ toast.cancel() }, 1000)
-}
-
-internal fun openReaderTranslation(context: Context, text: String) {
-    try { chooseReaderTranslation(context, text) }
-    catch (_: ActivityNotFoundException) { showMissingTranslation(context) }
-    catch (_: SecurityException) { showMissingTranslation(context) }
 }

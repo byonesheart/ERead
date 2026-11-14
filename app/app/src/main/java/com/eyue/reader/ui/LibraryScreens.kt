@@ -77,7 +77,7 @@ private enum class ShelfCloudAction {
     onCloud: ((Book) -> Unit)? = null, cloudBusy: Boolean = false, cloudBookId: String? = null,
     cloudTaskLabel: String = "", cloudFraction: Float? = null, onCancelCloud: ((Book) -> Unit)? = null,
     cloudCanCancel: Boolean = false, cloudTransfers: Map<String, CloudTransferProgress> = emptyMap(),
-    cloudDirtyBookIds: Set<String> = emptySet(), showRecentReading: Boolean = true, hideCloudSyncIcons: Boolean = false) {
+    cloudDirtyBookIds: Set<String> = emptySet(), showRecentReading: Boolean = true, hideCoverIcons: Boolean = false) {
     fun transfer(book: Book) = cloudTransfers[book.id] ?: if (cloudBookId == book.id)
         CloudTransferProgress(cloudTaskLabel, cloudFraction, cloudCanCancel) else null
     val xingcai = LocalAppThemeStyle.current == AppThemeStyle.XINGCAI
@@ -89,7 +89,7 @@ private enum class ShelfCloudAction {
             onCloud?.let { { it(featured) } }, cloudBusy || transfer(featured) != null, transfer(featured) != null,
             transfer(featured)?.stage.orEmpty(), transfer(featured)?.fraction,
             onCancelCloud?.let { { it(featured) } }, transfer(featured)?.cancellable == true, featured.id in cloudDirtyBookIds,
-            hideCloudSyncIcons) else EmptyLibrary(onImport) }
+            hideCoverIcons) else EmptyLibrary(onImport) }
         item {
             val stats = if (xingcai) Modifier.fillMaxWidth().padding(vertical = 12.dp)
                 else Modifier.fillMaxWidth().clip(appShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(vertical = 17.dp)
@@ -122,7 +122,7 @@ private enum class ShelfCloudAction {
             onCloud?.let { { it(book) } }, cloudBusy || transfer(book) != null, transfer(book) != null,
             transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
             onCancelCloud?.let { { it(book) } }, transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds,
-            hideCloudSyncIcon = hideCloudSyncIcons) }
+            hideCloudSyncIcon = hideCoverIcons) }
     }
 }
 
@@ -203,7 +203,7 @@ private enum class ShelfCloudAction {
         }
         if (shelfLayout) {
             if (selection != null) ShelfBookCheckbox(book, selection.first, selection.second)
-            else if (onMore != null) ShelfMoreButton(book, onClick = onMore)
+            else if (onMore != null && !hideCloudSyncIcon) ShelfMoreButton(book, onClick = onMore)
         } else Icon(Icons.Outlined.ChevronRight, "打开书籍", tint = Muted, modifier = Modifier.size(20.dp))
     }
 }
@@ -236,7 +236,7 @@ private enum class ShelfCloudAction {
     onEditCover: ((String, Uri) -> Unit)? = null,
     onReorderGroup: (String, String) -> Unit = { _, _ -> },
     searchVisible: Boolean = false, searchRequest: Int = 0, onCloseSearch: () -> Unit = {},
-    hideCloudSyncIcons: Boolean = false) {
+    hideCoverIcons: Boolean = false) {
     fun transfer(book: Book) = cloudTransfers[book.id] ?: if (cloudBookId == book.id)
         CloudTransferProgress(cloudTaskLabel, cloudFraction, cloudCanCancel) else null
     var selectingBackup by remember { mutableStateOf(false) }
@@ -257,7 +257,7 @@ private enum class ShelfCloudAction {
     val shelfContext = LocalContext.current
     val browsePreferences = remember(shelfContext, libraryMode) { ShelfBrowsePreferences(shelfContext, libraryMode) }
     var grid by remember(browsePreferences) { mutableStateOf(browsePreferences.gridLayout) }
-    val hideCoverCloudIcons = hideCloudSyncIcons && !selectingBackup
+    val hideBookOverlays = hideCoverIcons && !selectingBackup
     var storedBrowse by remember(browsePreferences) { mutableStateOf(browsePreferences.read()) }
     var hiddenRevision by remember { mutableIntStateOf(0) }
     var hiddenScope by remember { mutableStateOf<Pair<String?, String>?>(null) }
@@ -516,15 +516,16 @@ private enum class ShelfCloudAction {
                                 onCloud?.let { { it(book) } }, cloudBusy || transfer(book) != null, transfer(book) != null,
                                 transfer(book)?.stage.orEmpty(), transfer(book)?.fraction,
                                 onCancelCloud?.let { { it(book) } },
-                                transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds, hideCoverCloudIcons)
-                            if (book.id !in LocalSourceChangeIds.current && book.id !in LocalSourceReloadIds.current) {
-                                Surface(Modifier.align(Alignment.TopStart).padding(8.dp), shape = appShape(5.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .9f)) {
+                                transfer(book)?.cancellable == true, book.id in cloudDirtyBookIds, hideBookOverlays)
+                            if (!hideBookOverlays && book.id !in LocalSourceChangeIds.current && book.id !in LocalSourceReloadIds.current) {
+                                Surface(Modifier.align(Alignment.TopStart).padding(8.dp).testTag("shelf_book_format_${book.id}"),
+                                    shape = appShape(5.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .9f)) {
                                     Text(if (book.isDemo) "示例" else book.format.name, fontSize = 9.sp, color = Olive, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
                                 }
                             }
                             if (selectingBackup) ShelfBookCheckbox(book, book.id in backupSelection, { selectBackup(book) },
                                 Modifier.align(Alignment.TopEnd).padding(4.dp))
-                            else ShelfMoreButton(book, Modifier.align(Alignment.TopEnd).padding(8.dp)
+                            else if (!hideBookOverlays) ShelfMoreButton(book, Modifier.align(Alignment.TopEnd).padding(8.dp)
                                 .background(MaterialTheme.colorScheme.surface.copy(alpha = .9f), CircleShape),
                                 onClick = { actionBookId = book.id })
                         }
@@ -560,7 +561,7 @@ private enum class ShelfCloudAction {
                         shelfLayout = true, onMore = if (!selectingBackup) { { actionBookId = book.id } } else null,
                         onRename = if (!selectingBackup && onRenameBook != null) { { rename(book) } } else null,
                         selection = if (selectingBackup) (book.id in backupSelection) to { selectBackup(book) } else null,
-                        hideCloudSyncIcon = hideCoverCloudIcons)
+                        hideCloudSyncIcon = hideBookOverlays)
                 }
             }
         }

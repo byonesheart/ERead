@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 internal data class ReaderCompactAction(val id: String, val label: String,
-    val selected: Boolean? = null, val enabled: Boolean = true, val onClick: () -> Unit)
+    val selected: Boolean? = null, val enabled: Boolean = true, val overflowOnly: Boolean = false, val onClick: () -> Unit)
 
 internal fun readerVisibleMenuCount(widths: List<Int>, availableWidth: Int, overflowWidth: Int,
     spacing: Int = 0): Int {
@@ -47,18 +47,22 @@ internal fun ReaderCompactActionMenu(actions: List<ReaderCompactAction>, modifie
     var expanded by remember { mutableStateOf(false) }
     BoxWithConstraints(modifier) {
         val menuWidth = maxWidth
-        val widths = actions.map { action ->
+        val inlineActions = actions.filterNot { it.overflowOnly }
+        val overflowActions = actions.filter { it.overflowOnly }
+        val widths = inlineActions.map { action ->
             measurer.measure(AnnotatedString(action.label), labelStyle, maxLines = 1, softWrap = false).size.width +
                 with(density) { 16.dp.roundToPx() }
         }.map { it.coerceAtLeast(with(density) { 32.dp.roundToPx() }) }
         val moreWidth = with(density) { 32.dp.roundToPx() }
         val available = constraints.maxWidth
-        val visibleCount = readerVisibleMenuCount(widths, available, moreWidth)
-        val rowWidth = (widths.take(visibleCount).sum() + if (visibleCount < actions.size) moreWidth else 0)
+        val visibleCount = if (overflowActions.isEmpty()) readerVisibleMenuCount(widths, available, moreWidth)
+            else readerVisibleMenuCount(widths + moreWidth, available, moreWidth).coerceAtMost(widths.size)
+        val hiddenActions = inlineActions.drop(visibleCount) + overflowActions
+        val rowWidth = (widths.take(visibleCount).sum() + if (hiddenActions.isNotEmpty()) moreWidth else 0)
             .coerceAtMost(available)
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
             Row(Modifier.width(with(density) { rowWidth.toDp() }), verticalAlignment = Alignment.CenterVertically) {
-                actions.take(visibleCount).forEachIndexed { index, action ->
+                inlineActions.take(visibleCount).forEachIndexed { index, action ->
                     val selection = action.selected?.let { value -> Modifier.semantics { selected = value } } ?: Modifier
                     TextButton(onClick = action.onClick, enabled = action.enabled,
                         modifier = Modifier.width(with(density) { widths[index].toDp() }).heightIn(min = 32.dp)
@@ -69,14 +73,14 @@ internal fun ReaderCompactActionMenu(actions: List<ReaderCompactAction>, modifie
                         Text(action.label, style = labelStyle, maxLines = 1, softWrap = false)
                     }
                 }
-                if (visibleCount < actions.size) Box {
+                if (hiddenActions.isNotEmpty()) Box {
                     IconButton(onClick = { expanded = true }, modifier = Modifier
                         .width(with(density) { moreWidth.coerceAtMost(available).coerceAtLeast(1).toDp() })
                         .heightIn(min = 32.dp).testTag(moreTag)) {
                         Icon(Icons.Outlined.MoreVert, "更多操作", Modifier.size(18.dp))
                     }
                     DropdownMenu(expanded, { expanded = false }, modifier = Modifier.widthIn(max = menuWidth)) {
-                        actions.drop(visibleCount).forEach { action ->
+                        hiddenActions.forEach { action ->
                             val selection = action.selected?.let { value -> Modifier.semantics { selected = value } } ?: Modifier
                             DropdownMenuItem(text = { Text(action.label, style = labelStyle, maxLines = 1,
                                 overflow = TextOverflow.Ellipsis) }, onClick = { expanded = false; action.onClick() },

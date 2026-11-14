@@ -36,7 +36,7 @@ class AppThemePersistenceRobolectricTest {
             assertEquals(AppThemeStyle.CLASSIC, loaded.appTheme)
             assertEquals(ThemeMode.DARK, loaded.themeMode)
             assertTrue(loaded.showRecentReading)
-            assertFalse(loaded.hideCloudSyncIcons)
+            assertFalse(loaded.hideCoverIcons)
         }
     }
 
@@ -77,9 +77,9 @@ class AppThemePersistenceRobolectricTest {
     }
 
     @Test fun cloudIconVisibilityPersistsWithoutChangingAutomaticBackup() {
-        repository.save(LibraryState(hideCloudSyncIcons = true, cloudAutoBackup = true))
+        repository.save(LibraryState(hideCoverIcons = true, cloudAutoBackup = true))
         val loaded = repository.load()
-        assertTrue(loaded.hideCloudSyncIcons)
+        assertTrue(loaded.hideCoverIcons)
         assertTrue(loaded.cloudAutoBackup)
     }
 }

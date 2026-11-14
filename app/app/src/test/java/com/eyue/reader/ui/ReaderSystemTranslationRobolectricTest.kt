@@ -22,6 +22,8 @@ class ReaderSystemTranslationRobolectricTest {
             activityInfo = ActivityInfo().apply { packageName = "test.translate"; name = "Translator"; exported = true }
         }
         shadowOf(context.packageManager).addResolveInfoForIntent(readerTranslationIntent("原文"), resolver)
+        rememberReaderTranslator(context, android.app.Activity.RESULT_OK,
+            Intent().setClassName("test.translate", "Translator"))
         openReaderTranslation(context, "原文")
         val request = shadowOf(context).nextStartedActivity
         assertEquals(Intent.ACTION_TRANSLATE, request.action)
@@ -35,12 +37,12 @@ class ReaderSystemTranslationRobolectricTest {
         assertEquals("text/plain", intent.type)
         assertEquals(text, intent.getCharSequenceExtra(Intent.EXTRA_TEXT).toString())
     }
-    @Test fun unavailableTranslationShowsAnExplanationRatherThanCrashing() {
-        openReaderTranslation(RuntimeEnvironment.getApplication(), "文字")
+    @Test fun unavailableTranslationAppPickerShowsAnExplanation() {
+        assertNull(readerTranslationPickerIntent(RuntimeEnvironment.getApplication()))
         assertEquals("此设备未提供可调用的系统翻译", ShadowToast.getTextOfLatestToast())
     }
 
-    @Test fun multipleTranslatorsUseTheNativeResolverAndTheNativePickerRemembersTheSelectedApp() {
+    @Test fun dictionaryIsTheDefaultAndTheNativePickerRemembersTheSelectedApp() {
         val context = RuntimeEnvironment.getApplication()
         context.getSharedPreferences("reader_translation", 0).edit().clear().commit()
         for (name in listOf("first", "second")) {
@@ -51,11 +53,11 @@ class ReaderSystemTranslationRobolectricTest {
             shadowOf(context.packageManager).addOrUpdateActivity(resolver.activityInfo)
             shadowOf(context.packageManager).addResolveInfoForIntent(readerTranslationIntent("文字"), resolver)
         }
-        openReaderTranslation(context, "文字")
-        val nativeResolver = shadowOf(context).nextStartedActivity
-        assertEquals(Intent.ACTION_TRANSLATE, nativeResolver.action)
-        assertNull(nativeResolver.component)
-        assertEquals("文字", nativeResolver.getCharSequenceExtra(Intent.EXTRA_TEXT).toString())
+        assertEquals("海词在线词典", selectedReaderTranslatorLabel(context))
+        openReaderTranslation(context, "中 文/#")
+        val lookup = shadowOf(context).nextStartedActivity
+        assertEquals(Intent.ACTION_VIEW, lookup.action)
+        assertEquals("https://dict.cn/%E4%B8%AD%20%E6%96%87%2F%23", lookup.data.toString())
         val picker = readerTranslationPickerIntent(context)!!
         assertEquals(Intent.ACTION_PICK_ACTIVITY, picker.action)
         val query = picker.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)!!
@@ -68,9 +70,11 @@ class ReaderSystemTranslationRobolectricTest {
         assertEquals("翻译-second", selectedReaderTranslatorLabel(context))
         openReaderTranslation(context, "再次选字")
         assertEquals("test.second", shadowOf(context).nextStartedActivity.component!!.packageName)
+        useReaderOnlineDictionary(context)
+        assertEquals("海词在线词典", selectedReaderTranslatorLabel(context))
     }
 
-    @Test fun processTextNativeChooserExcludesOtherProcessorsAndKeepsTheReadOnlyText() {
+    @Test fun selectedProcessTextTranslatorKeepsTheReadOnlyText() {
         val context = RuntimeEnvironment.getApplication()
         context.getSharedPreferences("reader_translation", 0).edit().clear().commit()
         val action = Intent(Intent.ACTION_PROCESS_TEXT).setType("text/plain")
@@ -82,15 +86,14 @@ class ReaderSystemTranslationRobolectricTest {
                 }
             })
         }
+        rememberReaderTranslator(context, android.app.Activity.RESULT_OK,
+            Intent().setClassName("test.SystemTranslatorB", "SystemTranslatorB"))
         openReaderTranslation(context, "文字")
-        val chooser = shadowOf(context).nextStartedActivity
-        assertEquals(Intent.ACTION_CHOOSER, chooser.action)
-        val target = chooser.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)!!
+        val target = shadowOf(context).nextStartedActivity
         assertEquals(Intent.ACTION_PROCESS_TEXT, target.action)
+        assertEquals("test.SystemTranslatorB", target.component!!.packageName)
         assertEquals("文字", target.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT).toString())
         assertTrue(target.getBooleanExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, false))
-        assertEquals(listOf("test.Browser"), chooser.getParcelableArrayExtra(Intent.EXTRA_EXCLUDE_COMPONENTS)!!
-            .map { (it as android.content.ComponentName).packageName })
     }
 
     @Test fun nativePickerContainsOnlyCallableTranslatorsWithMatchingIcons() {

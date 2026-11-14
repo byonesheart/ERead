@@ -128,6 +128,7 @@
     }
     let pageAnimation = null;
     let pageTransition = null;
+    let resourceLayoutPending = false;
     const continuousHost = window.parent !== window ? window.parent.EReadContinuous : null;
     const frameChapter = continuousHost ? Number(window.frameElement.dataset.chapter) : -1;
     const bridge = continuousHost ? {
@@ -550,6 +551,11 @@
     }
     function report(force) {
         if (!started || pageAnimation || pageTransition || touch?.dragging) return;
+        if (resourceLayoutPending) {
+            resourceLayoutPending = false;
+            refreshResourceLayout();
+            return;
+        }
         keepPagedViewport();
         const now = performance.now();
         if (!force && now - lastBridgeReport < 80) { drawDecorations(); return; }
@@ -557,6 +563,17 @@
         const state = viewport(), signature = JSON.stringify(state);
         if (force || signature !== lastViewport) { lastViewport = signature; send('viewport', state); }
         drawDecorations();
+    }
+    function refreshResourceLayout() {
+        const page = pageIndex();
+        rangeGeometry.clear();
+        applyImageCrop();
+        if (continuousHost) { measureChapter(); report(true); return; }
+        fitPageBoundary();
+        const anchor = reflowAnchor || navigationAnchor;
+        if (config.mode !== 'SCROLL') moveToPage(anchor?.lastPage ? pageCount() - 1 : page);
+        else if (anchor) navigate(anchor, true);
+        else report(true);
     }
     function readingAnchor() {
         if (reflowAnchor) return reflowAnchor;
@@ -952,6 +969,7 @@
                 from = found + Math.max(1, decorations.search.length);
             }
         }
+        rectsFor(decorations.selectionStart, decorations.selectionEnd).forEach(rect => mark(rect, 'SELECTION', '#687844', false));
     }
     function alignPagedSelection() {
         if (config.mode !== 'PAGED' || config.vertical || continuousHost || pageAnimation || pageTransition || touch?.dragging) return;
@@ -1180,15 +1198,8 @@
             }
             const resourceReady = function () {
                 if (!started) return;
-                const page = pageTransition?.page ?? pageIndex();
-                rangeGeometry.clear();
-                applyImageCrop();
-                if (continuousHost) { measureChapter(); report(true); return; }
-                fitPageBoundary();
-                const anchor = reflowAnchor || navigationAnchor;
-                if (config.mode !== 'SCROLL') moveToPage(anchor?.lastPage ? pageCount() - 1 : page);
-                else if (anchor) navigate(anchor, true);
-                else report(true);
+                resourceLayoutPending = true;
+                schedule();
             };
             nodes.forEach(node => node.addEventListener('load', resourceReady));
             document.fonts.addEventListener('loadingdone', resourceReady);

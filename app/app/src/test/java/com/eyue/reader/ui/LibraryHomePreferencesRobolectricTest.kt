@@ -57,14 +57,16 @@ class LibraryHomePreferencesRobolectricTest {
                 compose.onNodeWithTag("settings_${it}_card").fetchSemanticsNode().boundsInRoot
             }
             assertTrue(cards[0].bottom <= cards[1].top && cards[1].bottom <= cards[2].top)
+            compose.onNodeWithTag("settings_personalization").performScrollTo().performClick()
             compose.onNodeWithTag("settings_theme_light").assertIsSelected()
             capture("settings-${theme.name.lowercase()}")
-            compose.onNodeWithTag("settings_recent_reading").assertIsOn().performClick().assertIsOff()
+            compose.onNodeWithTag("settings_recent_reading").performScrollTo().assertIsOn().performClick().assertIsOff()
             compose.runOnIdle { assertEquals(books, state.books); settingsPage = false }
             compose.onNodeWithTag("recent_reading").assertDoesNotExist()
             compose.onNodeWithTag("history_row_latest").assertDoesNotExist()
             compose.runOnIdle { settingsPage = true }
-            compose.onNodeWithTag("settings_recent_reading").performClick().assertIsOn()
+            compose.onNodeWithTag("settings_personalization").performScrollTo().performClick()
+            compose.onNodeWithTag("settings_recent_reading").performScrollTo().performClick().assertIsOn()
             compose.runOnIdle { settingsPage = false }
             compose.onNodeWithTag("recent_reading").performScrollTo().assertIsDisplayed()
         }

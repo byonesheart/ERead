@@ -1370,6 +1370,43 @@ internal fun ReaderScreen(
     val renderChapters = book.chapters
     val renderStore = chapterStore
     val renderGeneration = layoutState.generation
+    val requestedSpread = ReaderPageLocation(chapterIndex, readerSpreadStart(pageIndex, dualPage))
+    val crop = settings.pdfCrop.normalized()
+    val preparedImages = remember(book.id, book.contentVersion, textWidth, crop) {
+        androidx.compose.runtime.mutableStateMapOf<PageSource, Result<android.graphics.Bitmap>>()
+    }
+    fun imageSource(location: ReaderPageLocation): PageSource? {
+        val chapter = renderChapters.getOrNull(location.chapter) ?: return null
+        if (raster) return chapter.pages.getOrNull(location.page)
+        val imageIndex = renderPages.getOrNull(location.chapter)?.getOrNull(location.page)?.imageIndex ?: return null
+        return chapter.inlineImages.getOrNull(imageIndex)?.let { PageSource(it.path) }
+    }
+    fun spreadImages(location: ReaderPageLocation): List<PageSource> = listOfNotNull(
+        imageSource(location), if (dualPage) imageSource(location.copy(page = location.page + 1)) else null
+    )
+    val preparePagedImages = !sourceEbook && settings.readingMode != ReadingMode.SCROLL
+    var displayedSpread by remember(book.id, preparePagedImages, dualPage) { mutableStateOf(requestedSpread) }
+    val previousSpread = if (preparePagedImages)
+        readerAdjacentPage(requestedSpread.chapter, requestedSpread.page, pageCounts, -1, dualPage) else null
+    val nextSpread = if (preparePagedImages)
+        readerAdjacentPage(requestedSpread.chapter, requestedSpread.page, pageCounts, 1, dualPage) else null
+    val requestedImages = if (preparePagedImages) spreadImages(requestedSpread) else emptyList()
+    val adjacentImages = listOfNotNull(previousSpread, nextSpread).flatMap(::spreadImages)
+    LaunchedEffect(book.id, book.contentVersion, textWidth, crop, requestedSpread, requestedImages, adjacentImages, preparePagedImages) {
+        if (!preparePagedImages) {
+            preparedImages.clear()
+            return@LaunchedEffect
+        }
+        val retainedImages = (requestedImages + adjacentImages + spreadImages(displayedSpread)).toSet()
+        preparedImages.keys.retainAll(retainedImages)
+        for (source in requestedImages.distinct()) {
+            if (source !in preparedImages) preparedImages[source] = prepareReaderPageBitmap(context, source, textWidth, crop)
+        }
+        displayedSpread = requestedSpread
+        for (source in adjacentImages.distinct()) {
+            if (source !in preparedImages) preparedImages[source] = prepareReaderPageBitmap(context, source, textWidth, crop)
+        }
+    }
     Box(Modifier.fillMaxSize().background(background).safeDrawingPadding().pointerInput(book.id) {
         awaitPointerEventScope {
             while (true) {
@@ -1428,7 +1465,8 @@ internal fun ReaderScreen(
                         paperDragDirection = direction
                         val origin = ReaderPageLocation(chapterIndex, readerSpreadStart(pageIndex, dualPage))
                         val target = readerAdjacentPage(origin.chapter, origin.page, pageCounts, direction, dualPage)
-                        if (target != null && (raster || target.chapter in paginatedChapters)) {
+                        if (displayedSpread == origin && target != null && (raster || target.chapter in paginatedChapters) &&
+                            spreadImages(target).all { it in preparedImages }) {
                             val current = paperDrag?.takeIf { it.origin == origin && it.target == target && it.direction == direction }
                                 ?: ReaderPaperDrag(origin, target, direction, fraction).also { paperDrag = it }
                             current.fraction = fraction
@@ -1480,6 +1518,7 @@ internal fun ReaderScreen(
                         selectionMenuEnabled = !holdPagingActive && selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() &&
                             tappedSourceFootnote == null && panel == null,
                         searchQuery = highlightQuery, spokenRange = spokenRange(sourceChapter), chineseConverter = chineseConverter,
+                        annotationSelection = selectedPassage,
                         onViewport = { state ->
                             val visibleChapter = state.chapterIndex.takeIf { it in book.chapters.indices } ?: sourceChapter
                             if ((state.chapterIndex >= 0 || sourceChapter == chapterIndex) && latestChapterStore === renderStore &&
@@ -1571,7 +1610,7 @@ internal fun ReaderScreen(
                                     onImagePreview = ::previewImage)
                             } else ReaderSelectableText(rememberReaderAnnotatedPage(renderDocument.text.getOrNull(sourceChapter).orEmpty(), page, book.id, sourceChapter, annotations, highlightQuery,
                                 colors.primaryContainer, settings.nightMode, renderDocument.sourceStyles.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
-                                renderChapters.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty(), dialogueColor), textStyle, sourceChapter, index, page.start, selectionReset,
+                                renderChapters.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty(), dialogueColor, selectedPassage), textStyle, sourceChapter, index, page.start, selectionReset,
                                 onAction = { selection, kind -> openSelection(selection, kind) }, modifier = Modifier.fillMaxWidth().padding(bottom =
                                     if (readerParagraphGapAfter(renderDocument.text.getOrNull(sourceChapter).orEmpty(), page.end))
                                         with(density) { (textStyle.fontSize.value * (renderDocument.sourceStyles.getOrNull(sourceChapter)
@@ -1595,14 +1634,16 @@ internal fun ReaderScreen(
                         readerPageDragGestures(settings.readingMode == ReadingMode.VERTICAL_PAGED,
                             onStart = { latestDragStart() }, onTurn = { latestPageTurn(it) }, onFinish = { if (paperDrag == null) manualDrag = false })
                     }) {
-                        ReaderPageTurnFrame(ReaderPageLocation(chapterIndex, readerSpreadStart(pageIndex, dualPage)),
+                        val visualSpread = if (requestedImages.all { it in preparedImages }) requestedSpread else displayedSpread
+                        ReaderPageTurnFrame(visualSpread,
                             dualPage, pageCounts, settings.pageTurnStyle, settings.readingMode == ReadingMode.VERTICAL_PAGED,
                             einkMode, background, backgroundContent = {
                                 backgroundImage?.let { bitmap ->
                                     Image(bitmap, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                                     Box(Modifier.fillMaxSize().background(if (settings.nightMode) Color.Black.copy(alpha = .72f) else Color.White.copy(alpha = .72f)))
                                 }
-                            }, drag = paperDrag) { sourceChapter, sourcePage, interactive ->
+                            }, drag = paperDrag) { sourceChapter, sourcePage, settled ->
+                        val interactive = settled && visualSpread == requestedSpread
                         val sourceText = renderDocument.text.getOrNull(sourceChapter).orEmpty()
                         if (raster) renderChapters.getOrNull(sourceChapter)?.pages?.getOrNull(sourcePage)?.let { source ->
                             val color = annotations.lastOrNull { it.bookId == book.id && it.chapterIndex == sourceChapter && it.pageIndex == sourcePage && it.kind != AnnotationKind.BOOKMARK && it.color != null }?.color?.let(::Color)
@@ -1612,7 +1653,8 @@ internal fun ReaderScreen(
                                 onLongPress = { if (interactive && !holdPagingActive) imageSelection(sourceChapter, sourcePage) }, markColor = color,
                                 modifier = Modifier.padding(readerContentPadding(settings)).testTag("reader_image_${sourceChapter}_$sourcePage"),
                                 speechOffset = pdfSpeechOffset(sourceChapter, sourcePage), speechText = renderDocument.pageText.getOrNull(sourceChapter)?.getOrNull(sourcePage).orEmpty(),
-                                einkMode = einkMode, onImagePreview = if (interactive) ::previewImage else null)
+                                einkMode = einkMode, onImagePreview = if (interactive) ::previewImage else null,
+                                preparedBitmap = preparedImages[source], managedBitmap = true)
                         } else renderPages.getOrNull(sourceChapter)?.getOrNull(sourcePage)?.let { page ->
                             if (page.imageIndex >= 0) {
                                 val image = renderChapters[sourceChapter].inlineImages[page.imageIndex]
@@ -1623,10 +1665,11 @@ internal fun ReaderScreen(
                                     onLongPress = { if (interactive && !holdPagingActive) inlineImageSelection(sourceChapter, sourcePage, page) }, markColor = color,
                                     modifier = Modifier.padding(readerContentPadding(settings)).then(imageTapObserver)
                                         .testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode, pdfCrop = settings.pdfCrop,
-                                    onImagePreview = if (interactive) ::previewImage else null)
+                                    onImagePreview = if (interactive) ::previewImage else null,
+                                    preparedBitmap = preparedImages[PageSource(image.path)], managedBitmap = true)
                             } else ReaderSelectableText(rememberReaderAnnotatedPage(sourceText, page, book.id, sourceChapter, annotations, highlightQuery,
                                 colors.primaryContainer, settings.nightMode, renderDocument.sourceStyles.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
-                                renderChapters.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty(), dialogueColor), textStyle, sourceChapter, sourcePage, page.start, selectionReset,
+                                renderChapters.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty(), dialogueColor, selectedPassage), textStyle, sourceChapter, sourcePage, page.start, selectionReset,
                                 onAction = { selection, kind -> if (interactive) openSelection(selection, kind) }, modifier = Modifier.fillMaxSize().padding(readerContentPadding(settings)),
                                 onTextLayout = { rememberLayout(sourceChapter, sourcePage, it, renderDocument, renderPages, renderGeneration, renderStore) },
                                 onTextTap = { offset, anchor -> if (interactive) tapText(sourceChapter, offset, anchor) },
@@ -1728,7 +1771,7 @@ internal fun ReaderScreen(
                     screenBrightness = if (brightness < 0) -1f else brightness.coerceIn(.01f, 1f)
                 } } })
             ReaderFloatingActions(autoReading, speechSession.active, onAuto = {
-                if (autoReading) autoControlsVisible = true
+                if (autoReading) { autoReading = false; autoPaused = false; autoControlsVisible = false }
                 else { stopSpeech(); autoReading = true; autoPaused = false; autoControlsVisible = false; chromeVisible = false }
             },
                 onSpeech = { autoControlsVisible = false; if (speechSession.active) stopSpeech() else startSpeech() },
@@ -1970,16 +2013,21 @@ internal fun readerPageText(text: String, page: ReaderTextPage): String = text.s
 @Composable
 private fun rememberReaderAnnotatedPage(text: String, page: ReaderTextPage, bookId: String, chapter: Int,
     annotations: List<Annotation>, query: String, searchColor: Color, night: Boolean, sourceStyles: ReaderSourceStyles?,
-    baseStyle: TextStyle, spoken: IntRange?, sourceFootnotes: List<SourceFootnote>, dialogueColor: Long?): AnnotatedString {
-    return remember(text, page, bookId, chapter, annotations, query, searchColor, night, sourceStyles, baseStyle, spoken, sourceFootnotes, dialogueColor) {
+    baseStyle: TextStyle, spoken: IntRange?, sourceFootnotes: List<SourceFootnote>, dialogueColor: Long?,
+    annotationSelection: ReaderSelectedPassage?): AnnotatedString {
+    val selection = annotationSelection?.takeIf { it.chapter == chapter && !it.raster && it.imagePath == null }
+    val selectionColor = MaterialTheme.colorScheme.primary.copy(alpha = .34f)
+    return remember(text, page, bookId, chapter, annotations, query, searchColor, night, sourceStyles, baseStyle, spoken,
+        sourceFootnotes, dialogueColor, selection, selectionColor) {
         readerAnnotatedPage(text, page, bookId, chapter, annotations, query, searchColor, night, sourceStyles, baseStyle,
-            spoken, sourceFootnotes, dialogueColor)
+            spoken, sourceFootnotes, dialogueColor, selection, selectionColor)
     }
 }
 
 private fun readerAnnotatedPage(text: String, page: ReaderTextPage, bookId: String, chapter: Int, annotations: List<Annotation>,
     query: String, searchColor: Color, night: Boolean, sourceStyles: ReaderSourceStyles?, baseStyle: TextStyle,
-    spoken: IntRange? = null, sourceFootnotes: List<SourceFootnote> = emptyList(), dialogueColor: Long? = null): AnnotatedString {
+    spoken: IntRange?, sourceFootnotes: List<SourceFootnote>, dialogueColor: Long?,
+    selection: ReaderSelectedPassage?, selectionColor: Color): AnnotatedString {
     val visible = readerPageText(text, page)
     val result = AnnotatedString.Builder(sourceStyles?.apply(text, page.start, page.end, baseStyle) ?: AnnotatedString(visible))
     dialogueColor?.let { result.colorDialogue(text, page.start, page.start + visible.length, it) }
@@ -2003,6 +2051,11 @@ private fun readerAnnotatedPage(text: String, page: ReaderTextPage, bookId: Stri
         val start = (it.first - page.start).coerceIn(0, visible.length)
         val end = (it.last + 1 - page.start).coerceIn(0, visible.length)
         if (end > start) result.addStyle(SpanStyle(background = Color(0xFFFFA66B).copy(alpha = if (night) .3f else .35f)), start, end)
+    }
+    selection?.let {
+        val start = (it.start - page.start).coerceIn(0, visible.length)
+        val end = (it.end - page.start).coerceIn(0, visible.length)
+        if (end > start) result.addStyle(SpanStyle(background = selectionColor), start, end)
     }
     return result.toAnnotatedString()
 }

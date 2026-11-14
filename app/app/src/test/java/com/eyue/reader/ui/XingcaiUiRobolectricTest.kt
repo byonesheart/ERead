@@ -98,14 +98,14 @@ class XingcaiUiRobolectricTest {
         compose.runOnIdle { vm.close() }
         await { vm.activeBookId == null }
         compose.onNodeWithTag("app_nav_2").performClick()
-        compose.onNodeWithTag("settings_app_theme").assertIsDisplayed()
+        compose.onNodeWithTag("settings_personalization").assertIsDisplayed()
         compose.onNodeWithTag("settings_update_arrow", useUnmergedTree = true).assertIsDisplayed()
         capture("xingcai-settings-dark")
         compose.onNodeWithTag("settings_cloud").performScrollTo().performClick()
         capture("xingcai-cloud-dark")
         compose.onNodeWithTag("cloud_open_account").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("settings_back").performClick()
-        compose.onNodeWithTag("settings_app_theme").performScrollTo().performClick()
+        compose.onNodeWithTag("settings_personalization").performScrollTo().performClick()
         compose.onNodeWithTag("app_theme_xingcai").assertIsSelected()
         compose.onNodeWithTag("app_theme_classic").performClick().assertIsSelected()
         compose.onNodeWithTag("app_theme_xingcai").performClick().assertIsSelected()
@@ -135,6 +135,7 @@ class XingcaiUiRobolectricTest {
         compose.onNodeWithText("《云端示例》还未下载，请点击云端图标下载").assertIsDisplayed()
         compose.runOnIdle { assertNull(vm.activeBookId) }
         compose.onNodeWithTag("app_nav_2").performClick()
+        compose.onNodeWithTag("settings_personalization").performScrollTo().performClick()
         compose.onNodeWithTag("settings_recent_reading").performScrollTo().assertIsOn().performClick().assertIsOff()
         await { !LibraryRepository(application).load().showRecentReading }
         compose.onNodeWithTag("app_nav_0").performClick()

@@ -949,8 +949,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (storageReady) changed(state.copy(showRecentReading = enabled))
     }
 
-    fun setHideCloudSyncIcons(hidden: Boolean) {
-        if (storageReady) changed(state.copy(hideCloudSyncIcons = hidden))
+    fun setHideCoverIcons(hidden: Boolean) {
+        if (storageReady) changed(state.copy(hideCoverIcons = hidden))
     }
 
     fun toggleNightMode() = setThemeMode(if (state.settings.nightMode) ThemeMode.LIGHT else ThemeMode.DARK)

@@ -242,8 +242,14 @@ internal fun ReaderSelectableText(
                 val actions = listOf(
                     ReaderCompactAction("note", "笔记") { action(AnnotationKind.NOTE) },
                     ReaderCompactAction("highlight", "标记") { action(AnnotationKind.HIGHLIGHT) },
-                    ReaderCompactAction("underline", "划线") { action(AnnotationKind.UNDERLINE) }
-                ) + listOfNotNull(if (onRole != null) ReaderCompactAction("role", "角色") {
+                    ReaderCompactAction("underline", "划线") { action(AnnotationKind.UNDERLINE) },
+                    ReaderCompactAction("copy", "复制") {
+                        copyAction?.invoke() ?: clipboard.setText(AnnotatedString(value.annotatedString.text.substring(value.selection.min, value.selection.max)))
+                        hideSelectionMenu()
+                        value = value.copy(selection = TextRange(value.selection.max))
+                        focus.clearFocus()
+                    }
+                ) + listOfNotNull(if (onRole != null) ReaderCompactAction("role", "角色", overflowOnly = true) {
                     selectedPassage()?.let { passage ->
                         toolbarHandedOff = true; hideSelectionMenu()
                         latestRole?.invoke(passage)
@@ -254,16 +260,11 @@ internal fun ReaderSelectableText(
                         toolbarHandedOff = true; hideSelectionMenu()
                         latestEdit?.invoke(passage)
                     }
-                } else null) + listOfNotNull(if (readerTranslationTargets(view.context, "").isNotEmpty()) ReaderCompactAction("translate", "系统翻译") {
+                } else null) + ReaderCompactAction("translate", "翻译") {
                     selectedPassage()?.let { passage ->
                         hideSelectionMenu(); value = value.copy(selection = TextRange(value.selection.max))
                         focus.clearFocus(); openReaderTranslation(view.context, passage.quote)
                     }
-                } else null) + ReaderCompactAction("copy", "复制") {
-                    copyAction?.invoke() ?: clipboard.setText(AnnotatedString(value.annotatedString.text.substring(value.selection.min, value.selection.max)))
-                    hideSelectionMenu()
-                    value = value.copy(selection = TextRange(value.selection.max))
-                    focus.clearFocus()
                 }
                 ReaderCompactActionMenu(actions, Modifier.testTag("reader_selection_menu"), moreTag = "reader_selection_more")
         }

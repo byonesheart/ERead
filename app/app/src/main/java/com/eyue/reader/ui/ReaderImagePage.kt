@@ -59,6 +59,7 @@ import com.eyue.reader.data.documentSourceIdentity
 import com.eyue.reader.data.withDocumentDescriptor
 import com.eyue.reader.data.withLocalDocument
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -69,6 +70,21 @@ private val readerBitmapCache = object : LruCache<String, Bitmap>(minOf(Runtime.
     override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
 }
 private val readerDecodePermits = Semaphore(2)
+
+internal suspend fun prepareReaderPageBitmap(context: Context, source: PageSource, width: Int, crop: PdfCrop): Result<Bitmap> =
+    withContext(Dispatchers.IO) {
+        readerDecodePermits.withPermit {
+            try {
+                val targetWidth = width.coerceIn(400, 1600)
+                val key = "${documentSourceIdentity(context, source.path)}:${source.pdfPage}:$targetWidth:$crop"
+                val bitmap = readerBitmapCache.get(key) ?: decodeReaderPage(context, source, targetWidth, crop).also {
+                    readerBitmapCache.put(key, it)
+                }
+                Result.success(bitmap)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { Result.failure(failure) }
+        }
+    }
 
 internal data class ReaderImagePreview(val bitmap: Bitmap, val zoom: Float, val focus: Offset)
 
@@ -124,13 +140,16 @@ internal fun ReaderImagePage(
     description: String = "漫画或 PDF 页面",
     speechOffset: Int? = null, speechText: String = "", einkMode: Boolean = false,
     pdfCrop: PdfCrop = PdfCrop(), onPageTap: ((Float, Float) -> Unit)? = null,
-    onImagePreview: ((ReaderImagePreview) -> Unit)? = null
+    onImagePreview: ((ReaderImagePreview) -> Unit)? = null,
+    preparedBitmap: Result<Bitmap>? = null,
+    managedBitmap: Boolean = false
 ) {
     val context = LocalContext.current
     val crop = pdfCrop.normalized()
     val cacheKey = "${source.path}:${source.pdfPage}:${targetWidth.coerceAtMost(1600)}:$crop"
-    var bitmap by remember(cacheKey) { mutableStateOf<Bitmap?>(null) }
-    var failure by remember(cacheKey) { mutableStateOf<String?>(null) }
+    var decoded by remember(cacheKey) { mutableStateOf<Result<Bitmap>?>(null) }
+    val bitmap = (preparedBitmap ?: decoded)?.getOrNull()
+    val failure = (preparedBitmap ?: decoded)?.exceptionOrNull()
     var speechGeometry by remember(cacheKey) { mutableStateOf<PdfSpeechGeometry?>(null) }
     val latestTap by rememberUpdatedState(onTap)
     val latestPageTap by rememberUpdatedState(onPageTap)
@@ -144,19 +163,8 @@ internal fun ReaderImagePage(
             }
         }
     }
-    LaunchedEffect(cacheKey) {
-        if (bitmap == null) {
-            val decoded = withContext(Dispatchers.IO) {
-                readerDecodePermits.withPermit { runCatching {
-                    val identity = "${documentSourceIdentity(context, source.path)}:${source.pdfPage}:${targetWidth.coerceAtMost(1600)}:$crop"
-                    readerBitmapCache.get(identity) ?: decodeReaderPage(context, source, targetWidth.coerceIn(400, 1600), crop).also { readerBitmapCache.put(identity, it) }
-                } }
-            }
-            decoded.fold(
-                onSuccess = { bitmap = it },
-                onFailure = { failure = "这一页读取失败：${it.message ?: "文件损坏或已移除"}" }
-            )
-        }
+    LaunchedEffect(cacheKey, managedBitmap) {
+        if (!managedBitmap && decoded == null) decoded = prepareReaderPageBitmap(context, source, targetWidth, crop)
     }
     fun preview(point: Offset, size: IntSize, scale: Float) {
         val image = bitmap ?: return
@@ -204,9 +212,10 @@ internal fun ReaderImagePage(
         contentAlignment = Alignment.Center
     ) {
         when {
-            failure != null -> Text(failure.orEmpty(), color = foreground, modifier = Modifier.padding(24.dp))
+            failure != null -> Text("这一页读取失败：${failure.message ?: "文件损坏或已移除"}",
+                color = foreground, modifier = Modifier.padding(24.dp))
             bitmap != null -> Image(
-                bitmap = bitmap!!.asImageBitmap(), contentDescription = description,
+                bitmap = bitmap.asImageBitmap(), contentDescription = description,
                 modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit
             )
             else -> BookLoadingAnimation(animate = !einkMode)
@@ -214,7 +223,7 @@ internal fun ReaderImagePage(
         if (bitmap != null && speechOffset != null && speechGeometry != null) {
             val highlights = speechGeometry!!.paragraph(speechOffset)
             Canvas(Modifier.fillMaxSize().testTag("reader_pdf_speech_highlight")) {
-                val image = bitmap!!
+                val image = bitmap
                 val fit = minOf(size.width / image.width, size.height / image.height)
                 val width = image.width * fit
                 val height = image.height * fit

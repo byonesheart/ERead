@@ -38,7 +38,7 @@ internal fun EbookContinuousSurface(
     onAction: (ReaderSelectedPassage, AnnotationKind) -> Unit, onEdit: ((ReaderSelectedPassage) -> Unit)?,
     onRole: ((ReaderSelectedPassage) -> Unit)?, onAnnotation: (List<String>, Rect) -> Unit,
     onFootnote: (SourceFootnote, Rect) -> Unit, session: EbookReaderSession?, onPageTap: ((Float, Float) -> Unit)? = null,
-    onImageViewer: (Boolean) -> Unit = {}
+    onImageViewer: (Boolean) -> Unit = {}, annotationSelection: ReaderSelectedPassage? = null
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -52,6 +52,7 @@ internal fun EbookContinuousSurface(
     val latestConverter by rememberUpdatedState(converter)
     val latestRead by rememberUpdatedState(readText)
     val latestAnnotations by rememberUpdatedState(annotations)
+    val latestAnnotationSelection by rememberUpdatedState(annotationSelection)
     val latestChapter by rememberUpdatedState(chapterIndex)
     val latestSearch by rememberUpdatedState(search)
     val latestSpoken by rememberUpdatedState(spoken)
@@ -85,6 +86,7 @@ internal fun EbookContinuousSurface(
             .put("color", it.color).put("image", it.imagePath).put("underline", it.underlineStyle.name)
     })).put("search", latestSearch).put("spokenStart", latestSpoken?.takeIf { index == latestChapter }?.first ?: -1)
         .put("spokenEnd", latestSpoken?.takeIf { index == latestChapter }?.let { it.last + 1 } ?: -1)
+        .withAnnotationSelection(latestAnnotationSelection, index)
     fun notes(chapter: Chapter) = JSONArray(chapter.sourceFootnotes.map {
         JSONObject().put("start", it.start).put("end", it.end).put("label", it.label).put("content", it.content)
     })
@@ -233,7 +235,7 @@ internal fun EbookContinuousSurface(
         }
         controller.consumePending()
     } }
-    LaunchedEffect(annotations, search, spoken, chapterIndex, ready) { if (ready) documents.keys.toList().forEach { index ->
+    LaunchedEffect(annotations, search, spoken, chapterIndex, ready, annotationSelection) { if (ready) documents.keys.toList().forEach { index ->
         invoke(JSONObject().put("type", "decorateChapter").put("chapter", index).put("decorations", decorations(index)))
     } }
     LaunchedEffect(store, ready, lifecycleOwner) { lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -265,16 +267,17 @@ internal fun EbookContinuousSurface(
             ReaderCompactActionMenu(listOf(
                 ReaderCompactAction("note", "笔记") { action(AnnotationKind.NOTE) },
                 ReaderCompactAction("highlight", "标记") { action(AnnotationKind.HIGHLIGHT) },
-                ReaderCompactAction("underline", "划线") { action(AnnotationKind.UNDERLINE) }
+                ReaderCompactAction("underline", "划线") { action(AnnotationKind.UNDERLINE) },
+                ReaderCompactAction("copy", "复制") {
+                    clipboard.setText(AnnotatedString(passage.quote)); selected = null; controller.clearSelection()
+                }
             ) + listOfNotNull(onEdit?.takeIf { passage.imagePath == null }?.let { callback -> ReaderCompactAction("edit", "编辑") {
                 selected = null; controller.clearSelection(); callback(passage)
-            } }, onRole?.let { callback -> ReaderCompactAction("role", "角色") {
+            } }, onRole?.takeIf { passage.imagePath == null }?.let { callback -> ReaderCompactAction("role", "角色", overflowOnly = true) {
                 selected = null; controller.clearSelection(); callback(passage)
-            } }) + ReaderCompactAction("translate", "系统翻译") {
+            } }, if (passage.imagePath == null) ReaderCompactAction("translate", "翻译") {
                 selected = null; controller.clearSelection(); openReaderTranslation(translationContext, passage.quote)
-            } + ReaderCompactAction("copy", "复制") {
-                clipboard.setText(AnnotatedString(passage.quote)); selected = null; controller.clearSelection()
-            })
+            } else null))
         }
     }
 }

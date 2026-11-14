@@ -175,7 +175,7 @@ data class LibraryState(
     val scanLocalChanges: Boolean = true,
     val scannedBookIds: Set<String> = emptySet(),
     val autoReloadSources: Boolean = false,
-    val hideCloudSyncIcons: Boolean = false
+    val hideCoverIcons: Boolean = false
 ) {
     val sourceScanMode: SourceScanMode get() = if (!scanLocalChanges) SourceScanMode.OFF
         else if (autoReloadSources) SourceScanMode.AUTO else SourceScanMode.MANUAL

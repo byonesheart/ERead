@@ -172,14 +172,15 @@ internal fun EbookReaderSurface(
     continuousChapters: List<Chapter> = emptyList(),
     readContinuousText: (suspend (Int) -> String)? = null,
     onPageTap: ((Float, Float) -> Unit)? = null,
-    onImageViewer: (Boolean) -> Unit = {}
+    onImageViewer: (Boolean) -> Unit = {},
+    annotationSelection: ReaderSelectedPassage? = null
 ) {
     if (settings.continuousEbookScroll && settings.readingMode == com.eyue.reader.data.ReadingMode.SCROLL &&
         continuousChapters.isNotEmpty() && readContinuousText != null) {
         EbookContinuousSurface(store, continuousChapters, readContinuousText, chapterIndex, initialOffset, initialImagePath,
             settings, annotations, controller, modifier, foreground, einkMode, selectionReset, selectionMenuEnabled,
             searchQuery, spokenRange, chineseConverter, onViewport, onTap, onManualStart, onManualEnd, onSelectionActive,
-            onAction, onEdit, onRole, onAnnotationTap, onFootnote, session, onPageTap, onImageViewer)
+            onAction, onEdit, onRole, onAnnotationTap, onFootnote, session, onPageTap, onImageViewer, annotationSelection)
         return
     }
     val context = LocalContext.current
@@ -253,12 +254,13 @@ internal fun EbookReaderSurface(
         selected = null; controller.clearSelection(); latestSelectionActive(false)
     }
     DisposableEffect(controller) { onDispose { controller.unbind(bindingOwner); latestSelectionActive(false) } }
-    val decorations = remember(annotations, chapterIndex, searchQuery, spokenRange) {
+    val decorations = remember(annotations, chapterIndex, searchQuery, spokenRange, annotationSelection) {
         JSONObject().put("annotations", JSONArray(annotations.filter { it.chapterIndex == chapterIndex }.map {
             JSONObject().put("id", it.id).put("start", it.characterOffset).put("end", it.endOffset)
                 .put("kind", it.kind.name).put("color", it.color).put("image", it.imagePath)
                 .put("underline", it.underlineStyle.name)
         })).put("search", searchQuery).put("spokenStart", spokenRange?.first ?: -1).put("spokenEnd", spokenRange?.let { it.last + 1 } ?: -1)
+            .withAnnotationSelection(annotationSelection, chapterIndex)
     }
     val latestDecorations by rememberUpdatedState(decorations)
     val sourceNotes = remember(chapter.sourceFootnotes) { JSONArray(chapter.sourceFootnotes.map {
@@ -444,18 +446,24 @@ internal fun EbookReaderSurface(
             ReaderCompactActionMenu(listOf(
                 ReaderCompactAction("note", "笔记") { action(AnnotationKind.NOTE) },
                 ReaderCompactAction("highlight", "标记") { action(AnnotationKind.HIGHLIGHT) },
-                ReaderCompactAction("underline", "划线") { action(AnnotationKind.UNDERLINE) }
-            ) + listOfNotNull(onRole?.let { callback -> ReaderCompactAction("role", "角色") {
+                ReaderCompactAction("underline", "划线") { action(AnnotationKind.UNDERLINE) },
+                ReaderCompactAction("copy", "复制") {
+                    clipboard.setText(AnnotatedString(passage.quote)); selected = null; controller.clearSelection()
+                }
+            ) + listOfNotNull(onRole?.takeIf { passage.imagePath == null }?.let { callback -> ReaderCompactAction("role", "角色", overflowOnly = true) {
                 selected = null; controller.clearSelection(); callback(passage)
             } }, onEdit?.takeIf { passage.imagePath == null }?.let { callback -> ReaderCompactAction("edit", "编辑") {
                 selected = null; controller.clearSelection(); callback(passage)
-            } }) + listOfNotNull(if (readerTranslationTargets(context, "").isNotEmpty()) ReaderCompactAction("translate", "系统翻译") {
+            } }, if (passage.imagePath == null) ReaderCompactAction("translate", "翻译") {
                 selected = null; controller.clearSelection(); openReaderTranslation(context, passage.quote)
-            } else null) + ReaderCompactAction("copy", "复制") {
-                clipboard.setText(AnnotatedString(passage.quote)); selected = null; controller.clearSelection()
-            })
+            } else null))
         }
     }
+}
+
+internal fun JSONObject.withAnnotationSelection(selection: ReaderSelectedPassage?, chapter: Int): JSONObject {
+    val passage = selection?.takeIf { it.chapter == chapter && it.imagePath == null && !it.raster }
+    return put("selectionStart", passage?.start ?: -1).put("selectionEnd", passage?.end ?: -1)
 }
 
 @Composable

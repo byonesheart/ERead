@@ -175,14 +175,17 @@ class BookshelfThemeActionsRobolectricTest {
         compose.onNodeWithTag("shelf_list_row_local").assertIsDisplayed()
     }
 
-    @Test fun hiddenCloudIconsReturnInBatchMode() {
+    @Test fun hiddenCoverIconsReturnInBatchMode() {
         compose.setContent { MaterialTheme {
             Bookshelf(listOf(book("local")), "", {}, {}, {}, {}, onCloud = {}, onCloudBatch = {},
-                hideCloudSyncIcons = true)
+                hideCoverIcons = true)
         } }
         compose.onNodeWithTag("cloud_book_local").assertDoesNotExist()
+        compose.onNodeWithTag("shelf_book_format_local").assertDoesNotExist()
+        compose.onNodeWithTag("shelf_book_more_local").assertDoesNotExist()
         compose.onNodeWithTag("shelf_batch_manage").performClick()
         compose.onNodeWithTag("cloud_book_local", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("shelf_book_format_local", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithTag("backup_select_local").performClick()
         compose.onNodeWithTag("shelf_batch_transfer").assertIsEnabled()
         compose.onNodeWithTag("shelf_batch_manage").performClick()
