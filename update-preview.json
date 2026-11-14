@@ -1,9 +1,9 @@
 {
-  "versionCode": 108,
-  "versionName": "1.11.31-beta.3",
+  "versionCode": 109,
+  "versionName": "1.11.31-beta.4",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.31-beta.3",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.31-beta.3/ERead-1.11.31-beta.3-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.31-beta.4",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.31-beta.4/ERead-1.11.31-beta.4-release.apk",
   "mirrors": [],
-  "changelog": "- 长按正文查询海词，释义直接显示在阅读页气泡中。\n- 「个性化」入口图标随当前主题切换。\n\n更多功能请自行体验。"
+  "changelog": "- 海词查询单个汉字时显示拼音，支持在浏览器查看完整词条。\n\n更多功能请自行体验。"
 }
