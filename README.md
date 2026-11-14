@@ -8,13 +8,13 @@
 
 ## 下载方式
 
-当前版本：**1.11.29 正式版**，适用 Android 8.0 及以上。下载 APK 后安装即可使用。
+当前版本：**1.11.30 正式版**，适用 Android 8.0 及以上。下载 APK 后安装即可使用。
 
 | 渠道 | 下载链接 | 提取码 |
 | --- | --- | --- |
-| GitHub Releases | [下载 1.11.29 正式版](https://github.com/byonesheart/ERead/releases/tag/v1.11.29) | 无 |
-| 百度网盘 | [点击下载](https://pan.baidu.com/s/1OgBTSOU-kh-dZTIXw-kr_w?pwd=READ) | `READ` |
-| 夸克网盘 | [点击下载](https://pan.quark.cn/s/47ec436a8b99) | `9URp` |
+| GitHub Releases | [下载 1.11.30 正式版](https://github.com/byonesheart/ERead/releases/tag/v1.11.30) | 无 |
+| 百度网盘 | [点击下载](https://pan.baidu.com/s/1lKIwbbETXKkEOkfjI2tS4w?pwd=READ) | `READ` |
+| 夸克网盘 | [点击下载](https://pan.quark.cn/s/5de55ef82bea) | `pqLv` |
 
 ## 贡献者
 

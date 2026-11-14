@@ -1,0 +1,22 @@
+{
+  "versionCode": 105,
+  "versionName": "1.11.30",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.30",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.30/ERead-1.11.30-release.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1lKIwbbETXKkEOkfjI2tS4w?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/5de55ef82bea",
+      "extractionCode": "pqLv"
+    }
+  ],
+  "changelog": [
+    "修复长篇 TXT 识别章节时内存占用过高，导致导入或从文件管理器打开失败的问题。",
+    "更多功能请自行体验。"
+  ]
+}
