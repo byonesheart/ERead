@@ -1,22 +1,25 @@
 {
-  "versionCode": 105,
-  "versionName": "1.11.30",
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.30",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.30/ERead-1.11.30-release.apk",
+  "versionCode": 110,
+  "versionName": "1.11.31",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.31",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.31/ERead-1.11.31-release.apk",
   "mirrors": [
     {
       "name": "百度网盘",
-      "url": "https://pan.baidu.com/s/1lKIwbbETXKkEOkfjI2tS4w?pwd=READ",
+      "url": "https://pan.baidu.com/s/1S4KmO47O4RHAtj6JhClJ_Q?pwd=READ",
       "extractionCode": "READ"
     },
     {
       "name": "夸克网盘",
-      "url": "https://pan.quark.cn/s/5de55ef82bea",
-      "extractionCode": "pqLv"
+      "url": "https://pan.quark.cn/s/3c642d076bf6",
+      "extractionCode": "LdMe"
     }
   ],
   "changelog": [
-    "修复长篇 TXT 识别章节时内存占用过高，导致导入或从文件管理器打开失败的问题。",
+    "设置页集中管理主题、夜间模式和阅读偏好，个性化入口随主题换图标，支持隐藏封面图标。",
+    "选中文字可在阅读页查询海词，单个汉字显示拼音，也可在浏览器查看详细解释。",
+    "改善图片和 PDF 翻页闪动，再点自动翻页按钮即可停止。",
+    "优化书架分组长按操作，记住小说和漫画各自的书架布局。",
     "更多功能请自行体验。"
   ]
 }
