@@ -31,7 +31,7 @@ import com.eyue.reader.data.AppThemeStyle
         "settings_speech" -> Color(0xFF5FD0A0)
         "settings_cloud" -> Color(0xFF7FA9F0)
         "settings_cache", "settings_support" -> Color(0xFFFF8B7B)
-        "settings_app_theme", "settings_feedback" -> Color(0xFFA78BFA)
+        "settings_personalization", "settings_app_theme", "settings_feedback" -> Color(0xFFA78BFA)
         "settings_about", "settings_eink_mode" -> Color(0xFFFFC24B)
         else -> MaterialTheme.colorScheme.primary
     }

@@ -273,6 +273,7 @@ internal fun ReaderScreen(
     var panel by remember(book.id) { mutableStateOf<ReaderPanel?>(if (resumeSearch != null) ReaderPanel.SEARCH else null) }
     var interfaceLayoutAnchor by remember(book.id) { mutableStateOf<Pair<Int, Int>?>(null) }
     var selectedPassage by remember(book.id) { mutableStateOf<ReaderSelectedPassage?>(null) }
+    var dictionaryPassage by remember(book.id) { mutableStateOf<ReaderSelectedPassage?>(null) }
     var txtSelection by remember(book.id) { mutableStateOf<ReaderSelectedPassage?>(null) }
     var tappedNoteIds by remember(book.id) { mutableStateOf<List<String>>(emptyList()) }
     var tappedSourceFootnote by remember(book.id) { mutableStateOf<SourceFootnote?>(null) }
@@ -437,8 +438,14 @@ internal fun ReaderScreen(
         spokenLocation = null; speechDetached = false; followPagePrompt = false; promptOnReturn = false
     }
     fun dismissAnnotationBubble() {
+        dictionaryPassage = null
         if (selectedPassage != null || tappedNoteIds.isNotEmpty() || tappedSourceFootnote != null || activeTextSelections.isNotEmpty()) {
             selectedPassage = null; tappedNoteIds = emptyList(); tappedSourceFootnote = null; activeTextSelections = emptySet(); selectionReset++
+        }
+    }
+    fun translatePassage(passage: ReaderSelectedPassage) {
+        if (!launchSelectedReaderTranslator(context, passage.quote)) {
+            dictionaryPassage = passage.copy(anchor = passage.anchor ?: pointerAnchor)
         }
     }
     fun textSelectionChanged(sourceChapter: Int, sourcePage: Int, active: Boolean) {
@@ -1012,9 +1019,9 @@ internal fun ReaderScreen(
         }
     }
     LaunchedEffect(chapterIndex, pageIndex) { if (selectedPassage == null) dismissAnnotationBubble() }
-    BackHandler(enabled = selectedPassage != null || tappedNoteIds.isNotEmpty() || tappedSourceFootnote != null) { dismissAnnotationBubble() }
+    BackHandler(enabled = selectedPassage != null || dictionaryPassage != null || tappedNoteIds.isNotEmpty() || tappedSourceFootnote != null) { dismissAnnotationBubble() }
     BackHandler(enabled = (panel == null || panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS) && selectedPassage == null && txtSelection == null &&
-        tappedNoteIds.isEmpty() && tappedSourceFootnote == null && speechError == null) {
+        dictionaryPassage == null && tappedNoteIds.isEmpty() && tappedSourceFootnote == null && speechError == null) {
         if (panel == ReaderPanel.INTERFACE || panel == ReaderPanel.SETTINGS) panel = null
         else if (chromeVisible) chromeVisible = false else { stopSpeech(); onClose() }
     }
@@ -1357,7 +1364,7 @@ internal fun ReaderScreen(
     LaunchedEffect(autoReading, autoAtEnd) { if (autoReading && autoAtEnd) autoReading = false }
     ReaderAutoAdvance(autoReading && !autoPaused && readerForeground && panel == null &&
         requestedSettings.readingMode == activeReadingMode &&
-        selectedPassage == null && txtSelection == null && activeTextSelections.isEmpty() && tappedNoteIds.isEmpty() &&
+        selectedPassage == null && dictionaryPassage == null && txtSelection == null && activeTextSelections.isEmpty() && tappedNoteIds.isEmpty() &&
         tappedSourceFootnote == null && progressDraft == null && !manualDrag && !speaking && !speechSession.active &&
         document != null && !layoutState.preparing && !layoutState.restoring && layoutState.error == null &&
         documentReadError == null && (!sourceEbook || ebookViewport.ready) && !autoAtEnd,
@@ -1371,42 +1378,8 @@ internal fun ReaderScreen(
     val renderStore = chapterStore
     val renderGeneration = layoutState.generation
     val requestedSpread = ReaderPageLocation(chapterIndex, readerSpreadStart(pageIndex, dualPage))
-    val crop = settings.pdfCrop.normalized()
-    val preparedImages = remember(book.id, book.contentVersion, textWidth, crop) {
-        androidx.compose.runtime.mutableStateMapOf<PageSource, Result<android.graphics.Bitmap>>()
-    }
-    fun imageSource(location: ReaderPageLocation): PageSource? {
-        val chapter = renderChapters.getOrNull(location.chapter) ?: return null
-        if (raster) return chapter.pages.getOrNull(location.page)
-        val imageIndex = renderPages.getOrNull(location.chapter)?.getOrNull(location.page)?.imageIndex ?: return null
-        return chapter.inlineImages.getOrNull(imageIndex)?.let { PageSource(it.path) }
-    }
-    fun spreadImages(location: ReaderPageLocation): List<PageSource> = listOfNotNull(
-        imageSource(location), if (dualPage) imageSource(location.copy(page = location.page + 1)) else null
-    )
-    val preparePagedImages = !sourceEbook && settings.readingMode != ReadingMode.SCROLL
-    var displayedSpread by remember(book.id, preparePagedImages, dualPage) { mutableStateOf(requestedSpread) }
-    val previousSpread = if (preparePagedImages)
-        readerAdjacentPage(requestedSpread.chapter, requestedSpread.page, pageCounts, -1, dualPage) else null
-    val nextSpread = if (preparePagedImages)
-        readerAdjacentPage(requestedSpread.chapter, requestedSpread.page, pageCounts, 1, dualPage) else null
-    val requestedImages = if (preparePagedImages) spreadImages(requestedSpread) else emptyList()
-    val adjacentImages = listOfNotNull(previousSpread, nextSpread).flatMap(::spreadImages)
-    LaunchedEffect(book.id, book.contentVersion, textWidth, crop, requestedSpread, requestedImages, adjacentImages, preparePagedImages) {
-        if (!preparePagedImages) {
-            preparedImages.clear()
-            return@LaunchedEffect
-        }
-        val retainedImages = (requestedImages + adjacentImages + spreadImages(displayedSpread)).toSet()
-        preparedImages.keys.retainAll(retainedImages)
-        for (source in requestedImages.distinct()) {
-            if (source !in preparedImages) preparedImages[source] = prepareReaderPageBitmap(context, source, textWidth, crop)
-        }
-        displayedSpread = requestedSpread
-        for (source in adjacentImages.distinct()) {
-            if (source !in preparedImages) preparedImages[source] = prepareReaderPageBitmap(context, source, textWidth, crop)
-        }
-    }
+    val pagedImages = rememberReaderPagedImages(book, renderPages, requestedSpread, pageCounts,
+        dualPage, raster, !sourceEbook && settings.readingMode != ReadingMode.SCROLL, textWidth, settings.pdfCrop)
     Box(Modifier.fillMaxSize().background(background).safeDrawingPadding().pointerInput(book.id) {
         awaitPointerEventScope {
             while (true) {
@@ -1465,8 +1438,8 @@ internal fun ReaderScreen(
                         paperDragDirection = direction
                         val origin = ReaderPageLocation(chapterIndex, readerSpreadStart(pageIndex, dualPage))
                         val target = readerAdjacentPage(origin.chapter, origin.page, pageCounts, direction, dualPage)
-                        if (displayedSpread == origin && target != null && (raster || target.chapter in paginatedChapters) &&
-                            spreadImages(target).all { it in preparedImages }) {
+                        if (pagedImages.displayed == origin && target != null && (raster || target.chapter in paginatedChapters) &&
+                            pagedImages.isReady(target)) {
                             val current = paperDrag?.takeIf { it.origin == origin && it.target == target && it.direction == direction }
                                 ?: ReaderPaperDrag(origin, target, direction, fraction).also { paperDrag = it }
                             current.fraction = fraction
@@ -1519,6 +1492,7 @@ internal fun ReaderScreen(
                             tappedSourceFootnote == null && panel == null,
                         searchQuery = highlightQuery, spokenRange = spokenRange(sourceChapter), chineseConverter = chineseConverter,
                         annotationSelection = selectedPassage,
+                        onTranslate = ::translatePassage,
                         onViewport = { state ->
                             val visibleChapter = state.chapterIndex.takeIf { it in book.chapters.indices } ?: sourceChapter
                             if ((state.chapterIndex >= 0 || sourceChapter == chapterIndex) && latestChapterStore === renderStore &&
@@ -1621,7 +1595,7 @@ internal fun ReaderScreen(
                                 selectionMenuEnabled = !holdPagingActive && selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() && tappedSourceFootnote == null && panel == null,
                                 paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter,
                                 sourceContext = renderDocument.text.getOrNull(sourceChapter),
-                                onSelectionActive = { textSelectionChanged(sourceChapter, index, it) })
+                                onSelectionActive = { textSelectionChanged(sourceChapter, index, it) }, onTranslate = ::translatePassage)
                         }
                         }
                     }
@@ -1634,7 +1608,7 @@ internal fun ReaderScreen(
                         readerPageDragGestures(settings.readingMode == ReadingMode.VERTICAL_PAGED,
                             onStart = { latestDragStart() }, onTurn = { latestPageTurn(it) }, onFinish = { if (paperDrag == null) manualDrag = false })
                     }) {
-                        val visualSpread = if (requestedImages.all { it in preparedImages }) requestedSpread else displayedSpread
+                        val visualSpread = pagedImages.displayed
                         ReaderPageTurnFrame(visualSpread,
                             dualPage, pageCounts, settings.pageTurnStyle, settings.readingMode == ReadingMode.VERTICAL_PAGED,
                             einkMode, background, backgroundContent = {
@@ -1654,7 +1628,7 @@ internal fun ReaderScreen(
                                 modifier = Modifier.padding(readerContentPadding(settings)).testTag("reader_image_${sourceChapter}_$sourcePage"),
                                 speechOffset = pdfSpeechOffset(sourceChapter, sourcePage), speechText = renderDocument.pageText.getOrNull(sourceChapter)?.getOrNull(sourcePage).orEmpty(),
                                 einkMode = einkMode, onImagePreview = if (interactive) ::previewImage else null,
-                                preparedBitmap = preparedImages[source], managedBitmap = true)
+                                preparedBitmap = pagedImages.bitmaps[source], managedBitmap = true)
                         } else renderPages.getOrNull(sourceChapter)?.getOrNull(sourcePage)?.let { page ->
                             if (page.imageIndex >= 0) {
                                 val image = renderChapters[sourceChapter].inlineImages[page.imageIndex]
@@ -1666,7 +1640,7 @@ internal fun ReaderScreen(
                                     modifier = Modifier.padding(readerContentPadding(settings)).then(imageTapObserver)
                                         .testTag("reader_inline_image_${sourceChapter}_${page.imageIndex}"), description = "正文插图", einkMode = einkMode, pdfCrop = settings.pdfCrop,
                                     onImagePreview = if (interactive) ::previewImage else null,
-                                    preparedBitmap = preparedImages[PageSource(image.path)], managedBitmap = true)
+                                    preparedBitmap = pagedImages.bitmaps[PageSource(image.path)], managedBitmap = true)
                             } else ReaderSelectableText(rememberReaderAnnotatedPage(sourceText, page, book.id, sourceChapter, annotations, highlightQuery,
                                 colors.primaryContainer, settings.nightMode, renderDocument.sourceStyles.getOrNull(sourceChapter), textStyle, spokenRange(sourceChapter),
                                 renderChapters.getOrNull(sourceChapter)?.sourceFootnotes.orEmpty(), dialogueColor, selectedPassage), textStyle, sourceChapter, sourcePage, page.start, selectionReset,
@@ -1677,7 +1651,7 @@ internal fun ReaderScreen(
                                 onRole = onRoleSelection?.let { callback -> { passage -> selectionReset++; callback(passage.quote) } },
                                 selectionMenuEnabled = !holdPagingActive && interactive && selectedPassage == null && txtSelection == null && tappedNoteIds.isEmpty() && tappedSourceFootnote == null && panel == null,
                                 paragraphSpacing = settings.paragraphSpacing, chineseConverter = chineseConverter, sourceContext = sourceText,
-                                onSelectionActive = { textSelectionChanged(sourceChapter, sourcePage, it) })
+                                onSelectionActive = { textSelectionChanged(sourceChapter, sourcePage, it) }, onTranslate = ::translatePassage)
                         }
                         }
                     }
@@ -1896,6 +1870,7 @@ internal fun ReaderScreen(
 
     if (speechError != null) AlertDialog(onDismissRequest = { speechSession.clearError(speech) }, title = { Text("朗读失败") },
         text = { ReaderDialogAppearance(settings); Text(speechError.orEmpty()) }, confirmButton = { TextButton(onClick = { speechSession.clearError(speech) }) { Text("知道了") } })
+    dictionaryPassage?.let { ReaderDictionaryBubble(it) { dictionaryPassage = null } }
     selectedPassage?.let { selected ->
         fun clearSelection() { selectedPassage = null; selectionReset++ }
         ReaderSelectionEditor(settings, selected, editorKind, { editorKind = it }, noteDraft, { noteDraft = it }, markColor, { markColor = it },

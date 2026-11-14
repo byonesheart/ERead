@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.ComponentName
 import android.content.pm.ApplicationInfo
-import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
@@ -104,22 +103,21 @@ private fun launchTranslation(context: Context, intent: Intent) {
     context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
 
-internal fun openReaderTranslation(context: Context, text: String) {
+internal fun launchSelectedReaderTranslator(context: Context, text: String): Boolean {
     val query = text.trim()
-    if (query.isEmpty()) return
+    if (query.isEmpty()) return false
     val preferences = context.getSharedPreferences(TRANSLATION_PREFERENCES, 0)
     val remembered = preferences.getString(DEFAULT_TRANSLATOR, null)
     if (remembered != null) {
         val target = readerTranslationTargets(context, query).firstOrNull { it.component?.flattenToString() == remembered }
         if (target != null) {
-            try { launchTranslation(context, target); return }
+            try { launchTranslation(context, target); return true }
             catch (_: ActivityNotFoundException) {}
             catch (_: SecurityException) {}
         }
         useReaderOnlineDictionary(context)
     }
-    val url = Uri.Builder().scheme("https").authority("dict.cn").appendPath(query).build()
-    openAuthorLink(context, url.toString())
+    return false
 }
 
 internal fun showMissingTranslation(context: Context) {

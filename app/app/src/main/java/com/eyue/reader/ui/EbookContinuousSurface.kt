@@ -38,7 +38,8 @@ internal fun EbookContinuousSurface(
     onAction: (ReaderSelectedPassage, AnnotationKind) -> Unit, onEdit: ((ReaderSelectedPassage) -> Unit)?,
     onRole: ((ReaderSelectedPassage) -> Unit)?, onAnnotation: (List<String>, Rect) -> Unit,
     onFootnote: (SourceFootnote, Rect) -> Unit, session: EbookReaderSession?, onPageTap: ((Float, Float) -> Unit)? = null,
-    onImageViewer: (Boolean) -> Unit = {}, annotationSelection: ReaderSelectedPassage? = null
+    onImageViewer: (Boolean) -> Unit = {}, annotationSelection: ReaderSelectedPassage? = null,
+    onTranslate: (ReaderSelectedPassage) -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -259,7 +260,6 @@ internal fun EbookContinuousSurface(
         if (loadingVisible && (!ready || chapterLoading) && error == null)
             BookLoadingAnimation(Modifier.align(Alignment.Center), animate = !eink)
     }
-    val translationContext = androidx.compose.ui.platform.LocalContext.current
     val clipboard = LocalClipboardManager.current
     selected?.takeIf { menuEnabled }?.let { passage ->
         ReaderAnnotationPopup(passage.anchor ?: Rect.Zero, onDismiss = { selected = null }) {
@@ -276,7 +276,7 @@ internal fun EbookContinuousSurface(
             } }, onRole?.takeIf { passage.imagePath == null }?.let { callback -> ReaderCompactAction("role", "角色", overflowOnly = true) {
                 selected = null; controller.clearSelection(); callback(passage)
             } }, if (passage.imagePath == null) ReaderCompactAction("translate", "翻译") {
-                selected = null; controller.clearSelection(); openReaderTranslation(translationContext, passage.quote)
+                selected = null; controller.clearSelection(); onTranslate(passage)
             } else null))
         }
     }

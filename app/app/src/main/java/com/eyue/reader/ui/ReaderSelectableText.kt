@@ -72,7 +72,8 @@ internal fun ReaderSelectableText(
     onRole: ((ReaderSelectedPassage) -> Unit)? = null,
     chineseConverter: ChineseTextConverter? = null,
     sourceContext: String? = null,
-    onSelectionActive: (Boolean) -> Unit = {}
+    onSelectionActive: (Boolean) -> Unit = {},
+    onTranslate: (ReaderSelectedPassage) -> Unit = {}
 ) {
     var value by remember(chapter, pageStart, text.text) { mutableStateOf(TextFieldValue(text)) }
     var toolbarVisible by remember(chapter, pageStart) { mutableStateOf(false) }
@@ -263,7 +264,7 @@ internal fun ReaderSelectableText(
                 } else null) + ReaderCompactAction("translate", "翻译") {
                     selectedPassage()?.let { passage ->
                         hideSelectionMenu(); value = value.copy(selection = TextRange(value.selection.max))
-                        focus.clearFocus(); openReaderTranslation(view.context, passage.quote)
+                        focus.clearFocus(); onTranslate(passage)
                     }
                 }
                 ReaderCompactActionMenu(actions, Modifier.testTag("reader_selection_menu"), moreTag = "reader_selection_more")

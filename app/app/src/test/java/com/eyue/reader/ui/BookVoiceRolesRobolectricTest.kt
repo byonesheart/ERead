@@ -175,6 +175,7 @@ class BookVoiceRolesRobolectricTest {
         } }
         compose.onNodeWithContentDescription("阅读正文").performSemanticsAction(SemanticsActions.SetSelection) { it(2, 10, false) }
         compose.runOnIdle { toolbar!!.showMenu(Rect(120f, 250f, 200f, 280f), null, null, null, null) }
+        compose.onNodeWithTag("reader_selection_more").performClick()
         compose.onNodeWithTag("reader_action_role").performClick()
         compose.runOnIdle { assertEquals("selected", passage?.quote); toolbar!!.showMenu(Rect(120f, 250f, 200f, 280f), null, null, null, null) }
         compose.onNodeWithTag("reader_selection_menu").assertDoesNotExist()

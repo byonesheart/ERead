@@ -24,7 +24,7 @@ class ReaderSystemTranslationRobolectricTest {
         shadowOf(context.packageManager).addResolveInfoForIntent(readerTranslationIntent("原文"), resolver)
         rememberReaderTranslator(context, android.app.Activity.RESULT_OK,
             Intent().setClassName("test.translate", "Translator"))
-        openReaderTranslation(context, "原文")
+        assertTrue(launchSelectedReaderTranslator(context, "原文"))
         val request = shadowOf(context).nextStartedActivity
         assertEquals(Intent.ACTION_TRANSLATE, request.action)
         assertEquals("test.translate", request.component!!.packageName)
@@ -54,10 +54,9 @@ class ReaderSystemTranslationRobolectricTest {
             shadowOf(context.packageManager).addResolveInfoForIntent(readerTranslationIntent("文字"), resolver)
         }
         assertEquals("海词在线词典", selectedReaderTranslatorLabel(context))
-        openReaderTranslation(context, "中 文/#")
-        val lookup = shadowOf(context).nextStartedActivity
-        assertEquals(Intent.ACTION_VIEW, lookup.action)
-        assertEquals("https://dict.cn/%E4%B8%AD%20%E6%96%87%2F%23", lookup.data.toString())
+        assertFalse(launchSelectedReaderTranslator(context, "中 文/#"))
+        assertNull(shadowOf(context).nextStartedActivity)
+        assertEquals("https://dict.cn/%E4%B8%AD%20%E6%96%87%2F%23", readerDictionaryUrl("中 文/#").toString())
         val picker = readerTranslationPickerIntent(context)!!
         assertEquals(Intent.ACTION_PICK_ACTIVITY, picker.action)
         val query = picker.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)!!
@@ -68,7 +67,7 @@ class ReaderSystemTranslationRobolectricTest {
         assertNull(context.getSharedPreferences("reader_translation", 0).getString("component", null))
         rememberReaderTranslator(context, android.app.Activity.RESULT_OK, Intent().putExtra(Intent.EXTRA_SHORTCUT_NAME, "翻译-second"))
         assertEquals("翻译-second", selectedReaderTranslatorLabel(context))
-        openReaderTranslation(context, "再次选字")
+        assertTrue(launchSelectedReaderTranslator(context, "再次选字"))
         assertEquals("test.second", shadowOf(context).nextStartedActivity.component!!.packageName)
         useReaderOnlineDictionary(context)
         assertEquals("海词在线词典", selectedReaderTranslatorLabel(context))
@@ -88,12 +87,26 @@ class ReaderSystemTranslationRobolectricTest {
         }
         rememberReaderTranslator(context, android.app.Activity.RESULT_OK,
             Intent().setClassName("test.SystemTranslatorB", "SystemTranslatorB"))
-        openReaderTranslation(context, "文字")
+        assertTrue(launchSelectedReaderTranslator(context, "文字"))
         val target = shadowOf(context).nextStartedActivity
         assertEquals(Intent.ACTION_PROCESS_TEXT, target.action)
         assertEquals("test.SystemTranslatorB", target.component!!.packageName)
         assertEquals("文字", target.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT).toString())
         assertTrue(target.getBooleanExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, false))
+    }
+
+    @Test fun dictionaryExtractsBothDefinitionFormatsAndIgnoresEmptyResults() {
+        assertEquals("n. 书 & 卷", readerDictionaryDefinition("""
+            <ul class="dict-basic-ul"><li><span>n.</span> <strong>书 &amp; 卷</strong></li>
+            <li><script>advertising()</script></li></ul>
+        """.trimIndent()))
+        assertEquals("hello\nhi", readerDictionaryDefinition("""
+            <div class="layout cn"><ul><li><a href="/hello">hello</a></li><li><a href="/hi">hi</a></li></ul></div>
+        """.trimIndent()))
+        assertEquals("早上好", readerDictionaryDefinition("""
+            <div class="basic clearfix"><ul><li><strong>早上好</strong></li></ul></div>
+        """.trimIndent()))
+        assertEquals("", readerDictionaryDefinition("<title>该词条未找到</title>"))
     }
 
     @Test fun nativePickerContainsOnlyCallableTranslatorsWithMatchingIcons() {

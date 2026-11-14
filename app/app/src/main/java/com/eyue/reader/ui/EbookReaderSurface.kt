@@ -173,14 +173,15 @@ internal fun EbookReaderSurface(
     readContinuousText: (suspend (Int) -> String)? = null,
     onPageTap: ((Float, Float) -> Unit)? = null,
     onImageViewer: (Boolean) -> Unit = {},
-    annotationSelection: ReaderSelectedPassage? = null
+    annotationSelection: ReaderSelectedPassage? = null,
+    onTranslate: (ReaderSelectedPassage) -> Unit = {}
 ) {
     if (settings.continuousEbookScroll && settings.readingMode == com.eyue.reader.data.ReadingMode.SCROLL &&
         continuousChapters.isNotEmpty() && readContinuousText != null) {
         EbookContinuousSurface(store, continuousChapters, readContinuousText, chapterIndex, initialOffset, initialImagePath,
             settings, annotations, controller, modifier, foreground, einkMode, selectionReset, selectionMenuEnabled,
             searchQuery, spokenRange, chineseConverter, onViewport, onTap, onManualStart, onManualEnd, onSelectionActive,
-            onAction, onEdit, onRole, onAnnotationTap, onFootnote, session, onPageTap, onImageViewer, annotationSelection)
+            onAction, onEdit, onRole, onAnnotationTap, onFootnote, session, onPageTap, onImageViewer, annotationSelection, onTranslate)
         return
     }
     val context = LocalContext.current
@@ -455,7 +456,7 @@ internal fun EbookReaderSurface(
             } }, onEdit?.takeIf { passage.imagePath == null }?.let { callback -> ReaderCompactAction("edit", "编辑") {
                 selected = null; controller.clearSelection(); callback(passage)
             } }, if (passage.imagePath == null) ReaderCompactAction("translate", "翻译") {
-                selected = null; controller.clearSelection(); openReaderTranslation(context, passage.quote)
+                selected = null; controller.clearSelection(); onTranslate(passage)
             } else null))
         }
     }

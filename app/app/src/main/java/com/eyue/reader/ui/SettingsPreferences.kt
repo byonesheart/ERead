@@ -123,7 +123,7 @@ private enum class SettingsPage(val title: String) {
                     SettingsCard(Modifier.testTag("settings_display_card")) {
                         val display = listOfNotNull(state.appTheme.displayName, state.themeMode.settingsLabel,
                             "墨水屏".takeIf { state.einkMode }, "平板双页".takeIf { state.tabletDualPage }).joinToString(" · ")
-                        SettingsLink(Icons.Outlined.Palette, "个性化", display, "settings_personalization",
+                        SettingsLink(state.appTheme.settingsIcon, "个性化", display, "settings_personalization",
                             { open(SettingsPage.PERSONALIZATION) })
                     }
                     SettingsCard(Modifier.testTag("settings_reading_card")) {
@@ -151,7 +151,7 @@ private enum class SettingsPage(val title: String) {
                     scanningLocalSources, sourceSyncing, sourcePending, onScannedBooks, onAutoReload,
                     onGrantScanBooks, onGrantScanFolder, onScanLocalChanges, onScanSourcesNow)
                 SettingsPage.PERSONALIZATION -> SettingsCard {
-                    SettingsDisplayChoices("主题", Icons.Outlined.Palette, "settings_app_theme") {
+                    SettingsDisplayChoices("主题", state.appTheme.settingsIcon, "settings_app_theme") {
                         AppThemeSettingsPage(state.appTheme, onAppTheme)
                     }
                     SettingsSeparator()
@@ -184,7 +184,7 @@ private enum class SettingsPage(val title: String) {
                             catch (_: SecurityException) { showMissingTranslation(context) }
                         }
                     })
-                    Text("使用海词时，选中的文字会在浏览器中提交给海词查询。", Modifier.padding(16.dp),
+                    Text("海词会接收选中的文字，释义会显示在阅读页气泡中。翻译应用会在各自的界面中显示结果。", Modifier.padding(16.dp),
                         style = MaterialTheme.typography.bodySmall, color = Muted)
                 }
                 SettingsPage.SPEECH -> {

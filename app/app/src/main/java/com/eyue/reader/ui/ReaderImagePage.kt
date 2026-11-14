@@ -86,6 +86,57 @@ internal suspend fun prepareReaderPageBitmap(context: Context, source: PageSourc
         }
     }
 
+internal class ReaderPagedImages(
+    val displayed: ReaderPageLocation,
+    val bitmaps: Map<PageSource, Result<Bitmap>>,
+    val isReady: (ReaderPageLocation) -> Boolean
+)
+
+@Composable
+internal fun rememberReaderPagedImages(book: com.eyue.reader.data.Book, renderPages: List<List<ReaderTextPage>>,
+    requestedSpread: ReaderPageLocation, pageCounts: List<Int>, dualPage: Boolean, raster: Boolean,
+    enabled: Boolean, textWidth: Int, pdfCrop: PdfCrop): ReaderPagedImages {
+    val context = LocalContext.current
+    val renderChapters = book.chapters
+    val crop = pdfCrop.normalized()
+    val preparedImages = remember(book.id, book.contentVersion, textWidth, crop) {
+        androidx.compose.runtime.mutableStateMapOf<PageSource, Result<android.graphics.Bitmap>>()
+    }
+    fun imageSource(location: ReaderPageLocation): PageSource? {
+        val chapter = renderChapters.getOrNull(location.chapter) ?: return null
+        if (raster) return chapter.pages.getOrNull(location.page)
+        val imageIndex = renderPages.getOrNull(location.chapter)?.getOrNull(location.page)?.imageIndex ?: return null
+        return chapter.inlineImages.getOrNull(imageIndex)?.let { PageSource(it.path) }
+    }
+    fun spreadImages(location: ReaderPageLocation): List<PageSource> = listOfNotNull(
+        imageSource(location), if (dualPage) imageSource(location.copy(page = location.page + 1)) else null
+    )
+    var displayedSpread by remember(book.id, enabled, dualPage) { mutableStateOf(requestedSpread) }
+    val previousSpread = if (enabled)
+        readerAdjacentPage(requestedSpread.chapter, requestedSpread.page, pageCounts, -1, dualPage) else null
+    val nextSpread = if (enabled)
+        readerAdjacentPage(requestedSpread.chapter, requestedSpread.page, pageCounts, 1, dualPage) else null
+    val requestedImages = if (enabled) spreadImages(requestedSpread) else emptyList()
+    val adjacentImages = listOfNotNull(previousSpread, nextSpread).flatMap(::spreadImages)
+    LaunchedEffect(book.id, book.contentVersion, textWidth, crop, requestedSpread, requestedImages, adjacentImages, enabled) {
+        if (!enabled) {
+            preparedImages.clear()
+            return@LaunchedEffect
+        }
+        val retainedImages = (requestedImages + adjacentImages + spreadImages(displayedSpread)).toSet()
+        preparedImages.keys.retainAll(retainedImages)
+        for (source in requestedImages.distinct()) {
+            if (source !in preparedImages) preparedImages[source] = prepareReaderPageBitmap(context, source, textWidth, crop)
+        }
+        displayedSpread = requestedSpread
+        for (source in adjacentImages.distinct()) {
+            if (source !in preparedImages) preparedImages[source] = prepareReaderPageBitmap(context, source, textWidth, crop)
+        }
+    }
+    val displayed = if (requestedImages.all { it in preparedImages }) requestedSpread else displayedSpread
+    return ReaderPagedImages(displayed, preparedImages) { location -> spreadImages(location).all { it in preparedImages } }
+}
+
 internal data class ReaderImagePreview(val bitmap: Bitmap, val zoom: Float, val focus: Offset)
 
 @Composable
