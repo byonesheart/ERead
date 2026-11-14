@@ -1,5 +1,9 @@
 package com.eyue.reader.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
@@ -108,7 +112,15 @@ internal fun ReaderDictionaryBubble(passage: ReaderSelectedPassage, onClose: () 
             { it.definition.ifBlank { if (it.pronunciation.isBlank()) "海词未收录这段文字" else "简明释义暂不可用" } },
             { "查询失败，请检查网络后重试" }
         ) ?: "正在查询…")
-        TextButton(onClick = { openAuthorLink(context, readerDictionaryUrl(passage.quote).toString()) },
+        TextButton(onClick = {
+            val uri = Uri.parse(readerDictionaryUrl(passage.quote).toString())
+            try {
+                context.startActivity(Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (_: ActivityNotFoundException) {
+                Toast.makeText(context, "未找到可打开链接的浏览器", Toast.LENGTH_SHORT).show()
+            }
+        },
             modifier = Modifier.testTag("reader_dictionary_details")) { Text("查看详细解释") }
     }
 }
