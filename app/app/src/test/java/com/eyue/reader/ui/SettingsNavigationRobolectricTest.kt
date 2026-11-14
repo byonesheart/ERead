@@ -139,6 +139,17 @@ class SettingsNavigationRobolectricTest {
         compose.onNodeWithTag("cloud_restore_info").performScrollTo().assertIsEnabled()
     }
 
+    @Test fun cloudIconPreferenceIsAvailableWithoutAConfiguredAccount() {
+        var state by mutableStateOf(LibraryState())
+        compose.setContent { MaterialTheme {
+            SettingsScreen(state, {}, {}, {}, {},
+                onHideCloudSyncIcons = { state = state.copy(hideCloudSyncIcons = it) })
+        } }
+        compose.onNodeWithTag("settings_cloud").performScrollTo().performClick()
+        compose.onNodeWithTag("cloud_hide_sync_icons").performScrollTo().assertIsOff().performClick().assertIsOn()
+        compose.onNodeWithText("先还原书籍信息，再通过书架多选或书籍更多选项下载正文。").assertExists()
+    }
+
     @Test fun cacheActionsRequireSeparateConfirmationsAndNeverInvokeEachOther() {
         var history = 0
         var speech = 0

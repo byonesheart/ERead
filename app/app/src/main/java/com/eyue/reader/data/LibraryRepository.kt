@@ -73,6 +73,7 @@ class LibraryRepository(private val context: Context) {
                 },
                 cloudAutoBackup = json.optBoolean("cloudAutoBackup", false),
                 cloudAutoBackupMetered = json.optBoolean("cloudAutoBackupMetered", false),
+                hideCloudSyncIcons = json.optBoolean("hideCloudSyncIcons", false),
                 cloudIdentity = json.nullableString("cloudIdentity"),
                 speechEngine = enumValue(json.optString("speechEngine"), SpeechEngine.SYSTEM),
                 themeMode = enumValue(json.optString("themeMode"), if (settings.nightMode) ThemeMode.DARK else ThemeMode.LIGHT),
@@ -109,6 +110,7 @@ class LibraryRepository(private val context: Context) {
             }))
             .put("readingSeconds", state.readingSeconds).put("cloudAutoBackup", state.cloudAutoBackup)
             .put("cloudAutoBackupMetered", state.cloudAutoBackupMetered).put("cloudIdentity", state.cloudIdentity)
+            .put("hideCloudSyncIcons", state.hideCloudSyncIcons)
             .put("speechEngine", state.speechEngine.name).put("themeMode", state.themeMode.name)
             .put("aiSpeechFallback", state.aiSpeechFallback)
             .put("einkMode", state.einkMode).put("tabletDualPage", state.tabletDualPage)

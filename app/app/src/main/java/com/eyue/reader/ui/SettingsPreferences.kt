@@ -85,7 +85,8 @@ private enum class SettingsPage(val title: String) {
     onScannedBooks: (Set<String>) -> Unit = {}, onAutoReload: (Boolean) -> Unit = {},
     onGrantScanBooks: (Set<String>) -> Unit = {}, onGrantScanFolder: () -> Unit = {},
     onScanLocalChanges: (Boolean) -> Unit = {}, onScanSourcesNow: () -> Unit = {},
-    automaticUpdateChecks: Boolean = true, onAutomaticUpdateChecks: (Boolean) -> Unit = {}) {
+    automaticUpdateChecks: Boolean = true, onAutomaticUpdateChecks: (Boolean) -> Unit = {},
+    onHideCloudSyncIcons: (Boolean) -> Unit = {}) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
     val page = pages.lastOrNull()
@@ -188,7 +189,8 @@ private enum class SettingsPage(val title: String) {
                 SettingsPage.CLOUD -> CloudBackupSettings(cloudAccount, cloudConfigured, state.cloudAutoBackup, cloudBusy,
                     cloudTaskLabel, cloudFraction, onSaveCloudAccount, onTestCloudConnection, onCloudAutoBackup,
                     onRestoreCloudBookInfo, onDisconnectCloud, cloudServerUrl, state.cloudAutoBackupMetered,
-                    onCloudAutoBackupMetered, onTestCloudDraftConnection, restoreProgress, onSelectCloudProfile)
+                    onCloudAutoBackupMetered, onTestCloudDraftConnection, restoreProgress, onSelectCloudProfile,
+                    state.hideCloudSyncIcons, onHideCloudSyncIcons)
                 SettingsPage.CACHE -> {
                     SettingsCard {
                         LibraryCleanupKind.entries.forEachIndexed { index, kind ->
@@ -303,7 +305,8 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
     serverUrl: String = DEFAULT_WEBDAV_SERVER, autoBackupMetered: Boolean = false,
     onAutoBackupMetered: (Boolean) -> Unit = {},
     onTestDraftConnection: (suspend (account: String, password: String, server: String) -> String)? = null,
-    restoreProgress: CloudOperationProgress? = null, onSelectProfile: (String) -> Unit = {}) {
+    restoreProgress: CloudOperationProgress? = null, onSelectProfile: (String) -> Unit = {},
+    hideCloudSyncIcons: Boolean = false, onHideCloudSyncIcons: (Boolean) -> Unit = {}) {
     var accountDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current.applicationContext
     val profiles by produceState(emptyList<WebDavProfile>(), context, account, serverUrl, configured, accountDialog, busy) {
@@ -334,13 +337,16 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
                 "cloud_auto_backup", onAutoBackup)
             CloudPreferenceToggle("允许计费网络备份", "同时用于手动和自动备份；手动确认时默认勾选，可能使用移动数据", autoBackupMetered, configured && !busy,
                 "cloud_auto_backup_metered", onAutoBackupMetered)
+            CloudPreferenceToggle("隐藏云同步图标", "阅读首页和书架的封面隐藏云图标，多选时显示", hideCloudSyncIcons, true,
+                "cloud_hide_sync_icons", onHideCloudSyncIcons)
             HorizontalDivider(color = Line)
             Button(onClick = onRestore, enabled = configured && !busy && restoreProgress == null,
                 modifier = Modifier.fillMaxWidth().testTag("cloud_restore_info")) {
                 Text("手动还原书籍信息")
             }
             restoreProgress?.let { CloudRestoreProgressIndicator(it, "cloud_restore_progress") }
-            Text("先还原书架、分组及阅读记录，再点击书籍云图标下载正文。", style = MaterialTheme.typography.bodySmall, color = Muted)
+            Text(if (hideCloudSyncIcons) "先还原书籍信息，再通过书架多选或书籍更多选项下载正文。"
+                else "先还原书架、分组及阅读记录，再点击书籍云图标下载正文。", style = MaterialTheme.typography.bodySmall, color = Muted)
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("云端书籍下载位置", fontSize = 14.sp)
                 SelectionContainer {

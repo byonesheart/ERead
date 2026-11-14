@@ -155,6 +155,63 @@ class BookshelfThemeActionsRobolectricTest {
         compose.onNodeWithTag("backup_select_local").assertIsOn()
     }
 
+    @Test fun listLayoutSurvivesLeavingShelfAndIsSavedPerLibraryMode() {
+        var showing by mutableStateOf(true)
+        var mode by mutableStateOf(LibraryMode.NOVEL)
+        compose.setContent { MaterialTheme {
+            if (showing) key(mode) {
+                Bookshelf(listOf(book("local").copy(mode = mode)), "", {}, {}, {}, {}, libraryMode = mode)
+            }
+        } }
+        compose.onNodeWithContentDescription("切换书架布局").performClick()
+        compose.onNodeWithTag("shelf_list_row_local").assertIsDisplayed()
+        compose.runOnIdle { showing = false }
+        compose.onNodeWithTag("shelf_list_row_local").assertDoesNotExist()
+        compose.runOnIdle { showing = true }
+        compose.onNodeWithTag("shelf_list_row_local").assertIsDisplayed()
+        compose.runOnIdle { mode = LibraryMode.COMIC }
+        compose.onNodeWithTag("shelf_book_cover_local", useUnmergedTree = true).assertIsDisplayed()
+        compose.runOnIdle { mode = LibraryMode.NOVEL }
+        compose.onNodeWithTag("shelf_list_row_local").assertIsDisplayed()
+    }
+
+    @Test fun hiddenCloudIconsReturnInBatchMode() {
+        compose.setContent { MaterialTheme {
+            Bookshelf(listOf(book("local")), "", {}, {}, {}, {}, onCloud = {}, onCloudBatch = {},
+                hideCloudSyncIcons = true)
+        } }
+        compose.onNodeWithTag("cloud_book_local").assertDoesNotExist()
+        compose.onNodeWithTag("shelf_batch_manage").performClick()
+        compose.onNodeWithTag("cloud_book_local", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("backup_select_local").performClick()
+        compose.onNodeWithTag("shelf_batch_transfer").assertIsEnabled()
+        compose.onNodeWithTag("shelf_batch_manage").performClick()
+        compose.onNodeWithTag("cloud_book_local").assertDoesNotExist()
+        compose.onNodeWithContentDescription("切换书架布局").performClick()
+        compose.onNodeWithTag("cloud_book_local").assertDoesNotExist()
+        compose.onNodeWithTag("shelf_batch_manage").performClick()
+        compose.onNodeWithTag("cloud_book_local", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test fun groupLongPressExpandsChipAroundItsActions() {
+        val group = ShelfGroup("收藏", LibraryMode.NOVEL, "parent")
+        compose.setContent { MaterialTheme {
+            Bookshelf(listOf(book("local")), "", {}, {}, {}, {}, groups = listOf(group), onCreateSubgroup = { _, _ -> })
+        } }
+        val chip = compose.onNodeWithTag("shelf_group_parent", useUnmergedTree = true)
+        val original = chip.fetchSemanticsNode().boundsInRoot
+        chip.performTouchInput { longClick() }
+        val expanded = chip.fetchSemanticsNode().boundsInRoot
+        assertTrue(expanded.width > original.width)
+        for (tag in listOf("shelf_chip_hide_tags_parent", "shelf_group_add_subgroup_parent", "shelf_chip_delete_parent")) {
+            val action = compose.onNodeWithTag(tag, useUnmergedTree = true).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            assertTrue(action.left >= expanded.left && action.right <= expanded.right)
+            assertTrue(action.top >= expanded.top && action.bottom <= expanded.bottom)
+        }
+        compose.onNodeWithTag("shelf_chip_hide_tags_parent", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("收藏 · 隐藏标签").assertIsDisplayed()
+    }
+
     @Test @Config(qualifiers = "w392dp-h520dp-mdpi")
     fun compactMenuStillScrollsInternallyOnAShortScreen() {
         var chosen = false

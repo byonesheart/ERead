@@ -26,11 +26,11 @@ import com.eyue.reader.data.displayAuthor
 
 @Composable internal fun XingcaiFeaturedBook(book: Book, resume: Boolean, onOpen: () -> Unit, onCloud: (() -> Unit)?,
     cloudBusy: Boolean, cloudInProgress: Boolean, cloudTaskLabel: String, cloudFraction: Float?,
-    onCancelCloud: (() -> Unit)?, cloudCanCancel: Boolean, cloudDirty: Boolean) {
+    onCancelCloud: (() -> Unit)?, cloudCanCancel: Boolean, cloudDirty: Boolean, hideCloudSyncIcon: Boolean = false) {
     Row(Modifier.fillMaxWidth().clip(appShape(20.dp)).background(MaterialTheme.colorScheme.primaryContainer)
         .clickable(onClick = onOpen).padding(16.dp).testTag("xingcai_featured_book")) {
         BookCover(book, Modifier.width(72.dp).height(108.dp),
-            onCloud, cloudBusy, cloudInProgress, cloudTaskLabel, cloudFraction, onCancelCloud, cloudCanCancel, cloudDirty)
+            onCloud, cloudBusy, cloudInProgress, cloudTaskLabel, cloudFraction, onCancelCloud, cloudCanCancel, cloudDirty, hideCloudSyncIcon)
         Column(Modifier.weight(1f).padding(start = 16.dp)) {
             Text(if (resume) "上次读到这里" else "从这里开始",
                 fontSize = 12.sp, color = Muted, maxLines = 1)

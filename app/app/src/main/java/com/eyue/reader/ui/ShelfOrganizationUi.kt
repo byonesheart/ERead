@@ -11,8 +11,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.LabelOff
@@ -26,6 +24,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
@@ -203,32 +202,45 @@ private fun ManagedShelfGroupRow(group: ShelfGroup?, count: Int, expanded: Boole
 }
 
 @Composable
-internal fun ShelfGroupChip(group: ShelfGroup?, label: String, selected: Boolean, edit: Boolean, modifier: Modifier = Modifier,
+internal fun ShelfGroupChip(group: ShelfGroup?, label: String, selected: Boolean, edit: Boolean, listState: LazyListState,
+    modifier: Modifier = Modifier,
     onSelect: () -> Unit, onEdit: () -> Unit, onHideTags: () -> Unit, onAddChild: (() -> Unit)?, onDelete: (() -> Unit)?) {
     val id = group?.id ?: UNGROUPED_FILTER
-    var menu by remember { mutableStateOf(false) }
-    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        FilterChip(selected, onSelect, { Text(label, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            modifier = Modifier.widthIn(max = 178.dp).testTag(if (group == null) "shelf_group_ungrouped" else
-                if (group.parentId == null) "shelf_group_$id" else "shelf_subgroup_$id").semantics {
-                onLongClick("分组操作") { onEdit(); true }
-            })
-        if (edit) {
-            val actions = remember { BringIntoViewRequester() }
-            LaunchedEffect(actions) { withFrameNanos { }; actions.bringIntoView() }
-            Row(Modifier.bringIntoViewRequester(actions), verticalAlignment = Alignment.CenterVertically) {
-                Box {
-                    IconButton(onClick = { menu = true }, modifier = Modifier.size(28.dp).testTag("shelf_chip_more_$id")) {
-                        Icon(Icons.Outlined.MoreVert, "分组操作", Modifier.size(17.dp))
+    val tag = when {
+        group == null -> "shelf_group_ungrouped"
+        group.parentId == null -> "shelf_group_$id"
+        else -> "shelf_subgroup_$id"
+    }
+    var width by remember { mutableIntStateOf(0) }
+    val chip = modifier.onSizeChanged { width = it.width }.testTag(tag)
+        .semantics { onLongClick("分组操作") { onEdit(); true } }
+    if (edit && width > 0) LaunchedEffect(listState, id, width) {
+        val layout = listState.layoutInfo
+        val item = layout.visibleItemsInfo.firstOrNull { it.key == id } ?: return@LaunchedEffect
+        val clipped = item.offset + width - layout.viewportEndOffset + layout.afterContentPadding
+        if (clipped > 0) listState.scrollBy(clipped.toFloat())
+    }
+    FilterChip(selected, onSelect, {
+        Text(label, modifier = Modifier.widthIn(max = if (edit) 112.dp else 162.dp),
+            fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }, modifier = chip, trailingIcon = if (edit) {
+        {
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onHideTags, modifier = Modifier.size(30.dp).testTag("shelf_chip_hide_tags_$id")) {
+                        Icon(Icons.AutoMirrored.Outlined.LabelOff, "隐藏标签", Modifier.size(17.dp))
                     }
-                    ShelfGroupActionsMenu(group, menu, { menu = false }, onHideTags, onAddChild, null, null)
-                }
-                if (onDelete != null) IconButton(onClick = onDelete, modifier = Modifier.size(28.dp).testTag("shelf_chip_delete_$id")) {
-                    Icon(Icons.Outlined.Close, "删除分组 ${group?.name}", Modifier.size(17.dp), tint = MaterialTheme.colorScheme.error)
+                    if (onAddChild != null) IconButton(onClick = onAddChild, modifier = Modifier.size(30.dp)
+                        .testTag("shelf_group_add_subgroup_$id")) {
+                        Icon(Icons.Outlined.CreateNewFolder, "新建二级分组", Modifier.size(17.dp))
+                    }
+                    if (onDelete != null) IconButton(onClick = onDelete, modifier = Modifier.size(30.dp).testTag("shelf_chip_delete_$id")) {
+                        Icon(Icons.Outlined.Close, "删除分组 ${group?.name}", Modifier.size(17.dp), tint = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
         }
-    }
+    } else null)
 }
 
 @Stable

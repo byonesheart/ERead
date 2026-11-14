@@ -337,7 +337,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                     cloudTaskLabel = vm.cloudTaskLabel, cloudFraction = vm.cloudFraction,
                                     onCancelCloud = vm::cancelCloudTransfer, cloudCanCancel = vm.cloudTransferCancellable,
                                     cloudTransfers = vm.cloudTransfers, cloudDirtyBookIds = vm.cloudDirtyBookIds,
-                                    showRecentReading = state.showRecentReading)
+                                    showRecentReading = state.showRecentReading, hideCloudSyncIcons = state.hideCloudSyncIcons)
                                 1 -> key(vm.mode) {
                                     Bookshelf(books, query, { query = it }, vm::open, vm::deleteBook, { showImport = true },
                                         state.groups.filter { it.mode == vm.mode }, vm::createGroup, vm::renameGroup,
@@ -361,7 +361,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                         onRenameBook = vm::renameBook, libraryMode = vm.mode, onCreateSubgroup = vm::createSubgroup,
                                         onMoveBooks = vm::moveBooksToGroup, onEditTags = vm::setBookTags, onEditCover = vm::setBookCover,
                                         onReorderGroup = vm::reorderGroup, searchVisible = showShelfSearch, searchRequest = searchRequest,
-                                        onCloseSearch = ::closeShelfSearch)
+                                        onCloseSearch = ::closeShelfSearch, hideCloudSyncIcons = state.hideCloudSyncIcons)
                                 }
                                 else -> SettingsScreen(state, { vm.settings(vm.readerSettings.copy(nightMode = it.nightMode)) }, vm::saveChapterRule,
                                     ::importFont, vm::clearHistory, mode = LibraryMode.NOVEL, cloudAccount = vm.cloudAccount,
@@ -372,6 +372,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                     onTestCloudConnection = vm::testCloudConnection, onCloudAutoBackup = vm::setCloudAutoBackup,
                                     onRestoreCloudBookInfo = vm::restoreCloudBookInfo, onDisconnectCloud = vm::disconnectCloud,
                                     onCloudAutoBackupMetered = vm::setCloudAutoBackupMetered,
+                                    onHideCloudSyncIcons = vm::setHideCloudSyncIcons,
                                     aiSpeechConfig = vm.aiSpeechConfig, onSpeechEngine = vm::setSpeechEngine, onSaveAiSpeech = vm::saveAiSpeech,
                                     aiSpeechProfiles = vm.aiSpeechProfiles, onSelectAiSpeechProfile = vm::selectAiSpeechProfile,
                                     onSaveAiSpeechProfile = vm::saveAiSpeechProfile,

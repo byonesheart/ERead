@@ -17,6 +17,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.ArrowUpward
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -160,9 +161,17 @@ internal fun openAuthorLink(context: Context, url: String) {
                 Text(if (checking) "检查中…" else "检查更新", Modifier.padding(start = 4.dp))
             }
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("自动检测更新", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-            Switch(automaticUpdateChecks, onAutomaticUpdateChecks, Modifier.testTag("settings_auto_update"))
+        Surface(Modifier.fillMaxWidth(), shape = appShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
+            Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Outlined.SystemUpdate, null, Modifier.size(21.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("自动检测更新", style = MaterialTheme.typography.titleSmall)
+                    Text("启动时检查新版本", style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(automaticUpdateChecks, onAutomaticUpdateChecks, Modifier.testTag("settings_auto_update"))
+            }
         }
         error?.let { Text("检查失败：$it", color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("settings_update_error")) }
         (availableUpdate ?: result)?.let { update ->

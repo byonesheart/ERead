@@ -54,6 +54,10 @@ internal class ShelfBrowsePreferences(context: Context, private val mode: Librar
     private val prefs = context.getSharedPreferences("shelf-browsing", Context.MODE_PRIVATE)
     private val key = mode.name
 
+    var gridLayout: Boolean
+        get() = prefs.getBoolean("$key-grid", true)
+        set(value) { prefs.edit().putBoolean("$key-grid", value).apply() }
+
     fun read() = ShelfBrowseFilter(prefs.getString("$key-group", null),
         prefs.getStringSet("$key-subgroups", emptySet()).orEmpty().toSet(),
         prefs.getString("$key-tag", null), prefs.getBoolean("$key-tag-mode", false))
