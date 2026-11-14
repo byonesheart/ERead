@@ -1,9 +1,9 @@
 {
-  "versionCode": 107,
-  "versionName": "1.11.31-beta.2",
+  "versionCode": 108,
+  "versionName": "1.11.31-beta.3",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.31-beta.2",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.31-beta.2/ERead-1.11.31-beta.2-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.31-beta.3",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.31-beta.3/ERead-1.11.31-beta.3-release.apk",
   "mirrors": [],
-  "changelog": "- 重排设置页，个性化支持隐藏封面图标，主题和夜间模式用带图标的选项切换。\n- 选中文本可使用海词词典或设备上的翻译应用，撰写笔记时保留原文选区。\n- 改善图片和 PDF 翻页时的闪动，再点自动翻页即可停止。\n\n更多功能请自行体验。"
+  "changelog": "- 长按正文查询海词，释义直接显示在阅读页气泡中。\n- 「个性化」入口图标随当前主题切换。\n\n更多功能请自行体验。"
 }
