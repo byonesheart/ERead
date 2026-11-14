@@ -11,6 +11,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -36,13 +37,17 @@ private val readerDictionaryClient = OkHttpClient.Builder()
 internal fun readerDictionaryUrl(text: String) = "https://dict.cn".toHttpUrl().newBuilder()
     .addPathSegment(text.trim()).build()
 
-internal fun readerDictionaryDefinition(html: String): String {
-    fun section(tag: String, cssClass: String, content: String) = Regex(
+internal data class ReaderDictionaryEntry(val definition: String, val pronunciation: String = "")
+
+internal fun readerDictionaryEntry(query: String, html: String): ReaderDictionaryEntry {
+    fun section(tag: String, cssClass: String) = Regex(
         """<$tag\b[^>]*\bclass\s*=\s*["'][^"']*\b$cssClass\b[^"']*["'][^>]*>(.*?)</$tag\s*>""",
         setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
-    ).find(content)?.groupValues?.get(1).orEmpty()
-    val english = section("ul", "dict-basic-ul", html).ifBlank { section("div", "basic", html) }
-    val chinese = section("div", "layout cn", html)
+    ).find(html)?.groupValues?.get(1).orEmpty()
+    fun plainText(markup: String) = HtmlCompat.fromHtml(markup.replace(Regex("""\s+"""), " "),
+        HtmlCompat.FROM_HTML_MODE_COMPACT).toString().trim()
+    val english = section("ul", "dict-basic-ul").ifBlank { section("div", "basic") }
+    val chinese = section("div", "layout cn")
     val entries = if (english.isNotBlank()) {
         Regex("""<li\b[^>]*>(.*?)</li>""", RegexOption.DOT_MATCHES_ALL).findAll(english)
             .map { it.groupValues[1] }.filter { it.contains("<strong", ignoreCase = true) }
@@ -50,13 +55,17 @@ internal fun readerDictionaryDefinition(html: String): String {
         Regex("""<li\b[^>]*>(.*?)</li>""", RegexOption.DOT_MATCHES_ALL).findAll(chinese)
             .map { it.groupValues[1] }
     }
-    return entries.map {
-        HtmlCompat.fromHtml(it.replace(Regex("""\s+"""), " "), HtmlCompat.FROM_HTML_MODE_COMPACT)
-            .toString().trim()
-    }.filter { it.isNotBlank() }.distinct().take(8).joinToString("\n")
+    val word = query.trim()
+    val pronunciation = if (Regex("""\p{IsHan}""").matches(word)) {
+        Regex("""\[([^\[\]]+)\]""").findAll(plainText(section("div", "phonetic")))
+            .flatMap { it.groupValues[1].split(',', '，') }
+            .map(String::trim).filter(String::isNotBlank).distinct().joinToString("、")
+    } else ""
+    return ReaderDictionaryEntry(entries.map(::plainText).filter(String::isNotBlank)
+        .distinct().take(8).joinToString("\n"), pronunciation)
 }
 
-private suspend fun lookupReaderDictionary(text: String): String = suspendCancellableCoroutine { continuation ->
+private suspend fun lookupReaderDictionary(text: String): ReaderDictionaryEntry = suspendCancellableCoroutine { continuation ->
     val request = Request.Builder().url(readerDictionaryUrl(text)).build()
     val call = readerDictionaryClient.newCall(request)
     continuation.invokeOnCancellation { call.cancel() }
@@ -65,9 +74,9 @@ private suspend fun lookupReaderDictionary(text: String): String = suspendCancel
         override fun onResponse(call: Call, response: Response) {
             val result = runCatching {
                 response.use {
-                    if (it.code == 404) return@use ""
+                    if (it.code == 404) return@use ReaderDictionaryEntry("")
                     if (!it.isSuccessful) throw IOException("HTTP ${it.code}")
-                    readerDictionaryDefinition(it.peekBody(512L * 1024).string())
+                    readerDictionaryEntry(text, it.peekBody(512L * 1024).string())
                 }
             }
             continuation.resumeWith(result)
@@ -77,7 +86,8 @@ private suspend fun lookupReaderDictionary(text: String): String = suspendCancel
 
 @Composable
 internal fun ReaderDictionaryBubble(passage: ReaderSelectedPassage, onClose: () -> Unit) {
-    val definition by produceState<Result<String>?>(null, passage) {
+    val context = LocalContext.current
+    val entry by produceState<Result<ReaderDictionaryEntry>?>(null, passage) {
         value = null
         value = try { Result.success(lookupReaderDictionary(passage.quote)) }
         catch (cancelled: CancellationException) { throw cancelled }
@@ -91,6 +101,14 @@ internal fun ReaderDictionaryBubble(passage: ReaderSelectedPassage, onClose: () 
         }
         Text(passage.quote, maxLines = 2, overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.labelMedium)
-        Text(definition?.fold({ it.ifBlank { "海词未收录这段文字" } }, { "查询失败，请检查网络后重试" }) ?: "正在查询…")
+        entry?.getOrNull()?.pronunciation?.takeIf(String::isNotBlank)?.let {
+            Text("拼音 $it", style = MaterialTheme.typography.bodyMedium)
+        }
+        Text(entry?.fold(
+            { it.definition.ifBlank { if (it.pronunciation.isBlank()) "海词未收录这段文字" else "简明释义暂不可用" } },
+            { "查询失败，请检查网络后重试" }
+        ) ?: "正在查询…")
+        TextButton(onClick = { openAuthorLink(context, readerDictionaryUrl(passage.quote).toString()) },
+            modifier = Modifier.testTag("reader_dictionary_details")) { Text("查看详细解释") }
     }
 }

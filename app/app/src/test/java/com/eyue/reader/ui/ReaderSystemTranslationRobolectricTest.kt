@@ -96,17 +96,25 @@ class ReaderSystemTranslationRobolectricTest {
     }
 
     @Test fun dictionaryExtractsBothDefinitionFormatsAndIgnoresEmptyResults() {
-        assertEquals("n. 书 & 卷", readerDictionaryDefinition("""
+        assertEquals("n. 书 & 卷", readerDictionaryEntry("book", """
             <ul class="dict-basic-ul"><li><span>n.</span> <strong>书 &amp; 卷</strong></li>
             <li><script>advertising()</script></li></ul>
-        """.trimIndent()))
-        assertEquals("hello\nhi", readerDictionaryDefinition("""
+        """.trimIndent()).definition)
+        assertEquals("hello\nhi", readerDictionaryEntry("你好", """
             <div class="layout cn"><ul><li><a href="/hello">hello</a></li><li><a href="/hi">hi</a></li></ul></div>
-        """.trimIndent()))
-        assertEquals("早上好", readerDictionaryDefinition("""
+        """.trimIndent()).definition)
+        assertEquals("早上好", readerDictionaryEntry("good morning", """
             <div class="basic clearfix"><ul><li><strong>早上好</strong></li></ul></div>
-        """.trimIndent()))
-        assertEquals("", readerDictionaryDefinition("<title>该词条未找到</title>"))
+        """.trimIndent()).definition)
+        assertEquals(ReaderDictionaryEntry(""), readerDictionaryEntry("无", "<title>该词条未找到</title>"))
+    }
+
+    @Test fun singleHanCharacterShowsEveryPronunciationFromTheHeadword() {
+        val phonetics = """<div class="phonetic"><span>[hàng, xíng, háng, héng]</span></div>"""
+        assertEquals("hàng、xíng、háng、héng", readerDictionaryEntry(" 行 ", phonetics).pronunciation)
+        assertEquals("", readerDictionaryEntry("行走", phonetics).pronunciation)
+        assertEquals("", readerDictionaryEntry("a", phonetics).pronunciation)
+        assertEquals("shēng", readerDictionaryEntry("生", """<div class="phonetic"><span>[shēng]</span></div>""").pronunciation)
     }
 
     @Test fun nativePickerContainsOnlyCallableTranslatorsWithMatchingIcons() {
