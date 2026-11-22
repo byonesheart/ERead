@@ -2,6 +2,7 @@ package com.eyue.reader.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -52,7 +53,7 @@ internal fun S3BackupSettings(profiles: List<WebDavProfile>, busy: Boolean, open
 }
 
 @Composable
-private fun S3AccountDialog(saved: CloudCredentials?, initialName: String, onSave: (CloudCredentials, String) -> Unit,
+internal fun S3AccountDialog(saved: CloudCredentials?, initialName: String, onSave: (CloudCredentials, String) -> Unit,
     onTest: (suspend (CloudCredentials) -> String)?, onClose: () -> Unit) {
     var name by remember { mutableStateOf(initialName) }
     var endpoint by remember { mutableStateOf(saved?.serverUrl.orEmpty()) }
@@ -69,7 +70,9 @@ private fun S3AccountDialog(saved: CloudCredentials?, initialName: String, onSav
         val location = S3Location(bucket.trim(), region.trim(), prefix.trim().trim('/'), pathStyle)
         val password = secret.ifBlank {
             require(saved != null && saved.account == access.trim() && saved.serverUrl ==
-                com.eyue.reader.data.cloud.normalizeWebDavServer(endpoint)) { "请填写 Secret Key" }
+                com.eyue.reader.data.cloud.normalizeWebDavServer(endpoint)) {
+                if (saved == null) "请填写 Secret Key" else "地址或 Access Key 已更改，请重新填写 Secret Key"
+            }
             saved.password
         }
         CloudCredentials(access.trim(), password, endpoint, location)
@@ -81,6 +84,7 @@ private fun S3AccountDialog(saved: CloudCredentials?, initialName: String, onSav
                 fun fieldModifier(tag: String) = Modifier.fillMaxWidth().testTag("s3_$tag")
                 OutlinedTextField(name, { name = it }, label = { Text("配置名称") }, enabled = !testing, modifier = fieldModifier("name"))
                 OutlinedTextField(endpoint, { endpoint = it }, label = { Text("Endpoint") }, placeholder = { Text("https://s3.example.com") },
+                    supportingText = { Text("填写服务地址，不要包含 Bucket 桶名") },
                     singleLine = true, enabled = !testing, modifier = fieldModifier("endpoint"))
                 OutlinedTextField(bucket, { bucket = it }, label = { Text("Bucket 存储桶") }, singleLine = true, enabled = !testing, modifier = fieldModifier("bucket"))
                 OutlinedTextField(region, { region = it }, label = { Text("Region 区域") }, singleLine = true, enabled = !testing, modifier = fieldModifier("region"))
@@ -89,6 +93,11 @@ private fun S3AccountDialog(saved: CloudCredentials?, initialName: String, onSav
                 OutlinedTextField(secret, { secret = it }, label = { Text("Secret Key") }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(), enabled = !testing, modifier = fieldModifier("secret"))
                 if (saved != null) Text("密钥留空沿用此地址和账户已保存的密钥", style = MaterialTheme.typography.bodySmall)
+                if (endpoint.isNotBlank() && bucket.isNotBlank() && access.isNotBlank()) {
+                    draft.exceptionOrNull()?.message?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("s3_validation_error"))
+                    }
+                }
                 Row { Checkbox(pathStyle, { pathStyle = it }, enabled = !testing, modifier = Modifier.testTag("s3_path_style"))
                     Text("路径式地址（MinIO 等兼容服务）") }
                 Text("需要列举、读取、写入和删除权限。连接测试会创建并清理临时文件。使用现有存储桶，区域按服务商填写。",
@@ -105,7 +114,7 @@ private fun S3AccountDialog(saved: CloudCredentials?, initialName: String, onSav
                             finally { testing = false }
                         }
                     }) { Text(if (testing) "正在测试…" else "测试连接") }
-                result?.let { Text(it, modifier = Modifier.testTag("s3_test_result")) }
+                result?.let { SelectionContainer { Text(it, modifier = Modifier.testTag("s3_test_result")) } }
             }
         },
         confirmButton = { TextButton(enabled = draft.isSuccess && name.isNotBlank() && !testing,

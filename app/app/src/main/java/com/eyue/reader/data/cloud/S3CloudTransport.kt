@@ -157,14 +157,24 @@ internal class S3CloudTransport(
     fun testWriteAccess() {
         val path = ".connection-test-${UUID.randomUUID()}"
         val content = UUID.randomUUID().toString().toByteArray()
+        var created = false
+        var failure: Throwable? = null
         try {
             require(putVersionedMetadata(path, content, null)) { "S3 测试文件创建失败" }
+            created = true
             require(!putVersionedMetadata(path, content, null)) { "此服务不支持 S3 条件写入，无法安全同步" }
             require(metadata(path, content.size)?.contentEquals(content) == true) { "S3 读写测试不一致" }
             val version = requireNotNull(versionedMetadata(path))
             require(putVersionedMetadata(path, "updated".toByteArray(), version.etag)) { "S3 条件更新失败" }
             require(!putVersionedMetadata(path, content, version.etag)) { "此服务不支持 S3 版本条件更新" }
-        } finally { delete(path) }
+        } catch (error: Throwable) {
+            failure = error
+            throw error
+        } finally {
+            if (created) try { delete(path) } catch (cleanup: Throwable) {
+                if (failure != null) failure.addSuppressed(cleanup) else throw cleanup
+            }
+        }
     }
 
     override fun upload(path: String, file: File, offset: Long, bytes: Long, progress: (Long) -> Unit) {
@@ -214,7 +224,16 @@ internal class S3CloudTransport(
             val response = try { client.newCall(request).execute() }
             catch (failure: IOException) {
                 checkActive()
-                if (attempt == 2) throw IOException("连接 S3 失败，请检查网络后重试", failure)
+                if (attempt == 2) {
+                    val reason = when (failure) {
+                        is java.net.UnknownHostException -> "域名解析失败，请检查 Endpoint 与 Bucket 是否重复"
+                        is javax.net.ssl.SSLException -> "TLS 连接失败，请检查服务器域名与证书"
+                        is java.net.SocketTimeoutException -> "连接或传输超时"
+                        is java.net.ConnectException -> "无法连接服务器"
+                        else -> "网络连接中断"
+                    }
+                    throw IOException("连接 S3 失败：$reason", failure)
+                }
                 waitForRetry(attempt)
                 continue
             }
@@ -231,9 +250,51 @@ internal class S3CloudTransport(
     }
 
     private fun requireSuccess(response: Response) {
-        if (!response.isSuccessful) throw CloudHttpException(response.code,
-            response.code == 429 || response.code >= 500,
-            "S3 请求失败（HTTP ${response.code}），请检查地址、区域、密钥和存储桶权限")
+        if (response.isSuccessful) return
+        val details = runCatching {
+            val xml = response.peekBody(16 * 1024L).string()
+            require('\u0000' !in xml && !xml.contains("<!DOCTYPE", true) && !xml.contains("<!ENTITY", true))
+            val doc = DocumentBuilderFactory.newInstance().apply {
+                isNamespaceAware = true
+                isExpandEntityReferences = false
+            }.newDocumentBuilder().apply {
+                setEntityResolver { _, _ -> InputSource(StringReader("")) }
+                setErrorHandler(org.xml.sax.helpers.DefaultHandler())
+            }.parse(InputSource(StringReader(xml)))
+            fun value(tag: String) = doc.getElementsByTagNameNS("*", tag).item(0)?.textContent.orEmpty()
+            listOf(value("Code"), value("Message"), value("RequestId"))
+        }.getOrDefault(listOf("", "", ""))
+        fun safe(value: String, maximum: Int) = value.replace(credentials.password, "[已隐藏]")
+            .replace(credentials.account, "[已隐藏]").filterNot { it.isISOControl() }.take(maximum)
+        val code = safe(details[0], 100)
+        val operation = when {
+            response.request.url.queryParameter("list-type") != null -> "列举存储桶"
+            response.request.method == "PUT" -> "写入备份"
+            response.request.method == "DELETE" -> "删除备份或清理测试文件"
+            else -> "读取备份"
+        }
+        val reason = if (code == "AccessDenied") when {
+            details[1].contains("SignatureDoesNotMatch", ignoreCase = true) -> "SignatureDoesNotMatch"
+            details[1].contains("Request has expired", ignoreCase = true) -> "RequestExpired"
+            else -> code
+        } else code
+        val hint = when (reason) {
+            "AccessDenied" -> "检查此子用户的桶权限、备份路径权限及拒绝策略"
+            "InvalidAccessKeyId" -> "检查 Access Key 是否为有效的 SecretId"
+            "SignatureDoesNotMatch" -> "核对 Secret Key、Endpoint 和 Region；也可能是服务签名兼容问题"
+            "RequestTimeTooSkewed", "RequestExpired" -> "请开启手机的自动日期与时间后重试"
+            "AuthorizationHeaderMalformed", "InvalidRegion" -> "检查 Region 是否与存储桶和服务要求一致"
+            else -> "请检查地址、区域、密钥和存储桶权限"
+        }
+        val requestId = safe(details[2].ifBlank { response.header("x-cos-request-id") ?: response.header("x-amz-request-id").orEmpty() }, 160)
+        val message = buildString {
+            append("S3 请求失败（HTTP ${response.code}）\n操作：$operation")
+            if (code.isNotBlank()) append("\n错误码：$code")
+            if (details[1].isNotBlank()) append("\n服务端说明：${safe(details[1], 500)}")
+            if (requestId.isNotBlank()) append("\n请求编号：$requestId")
+            append("\n$hint")
+        }
+        throw CloudHttpException(response.code, response.code == 429 || response.code >= 500, message)
     }
 
     private fun readBounded(response: Response, maximum: Int): ByteArray {

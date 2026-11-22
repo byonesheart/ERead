@@ -13,6 +13,58 @@ import java.nio.file.Files
 import java.time.Instant
 
 class S3TransportTest {
+    @Test fun cosErrorsShowOperationCodeAndRequestIdWithoutReturningCredentials() {
+        val client = transport { request -> response(request, 403, """<Error>
+            <Code>SignatureDoesNotMatch</Code><Message>Signature mismatch test-secret test-access</Message>
+            <RequestId>cos-request-123</RequestId><StringToSign>PRIVATE DEBUG CONTENT</StringToSign>
+            </Error>""".toByteArray()) }
+        val error = assertThrows(CloudHttpException::class.java) { client.ensureCollection("") }
+        assertTrue(error.message!!.contains("HTTP 403"))
+        assertTrue(error.message!!.contains("列举存储桶"))
+        assertTrue(error.message!!.contains("SignatureDoesNotMatch"))
+        assertTrue(error.message!!.contains("cos-request-123"))
+        assertFalse(error.message!!.contains("test-secret"))
+        assertFalse(error.message!!.contains("test-access"))
+        assertFalse(error.message!!.contains("PRIVATE DEBUG CONTENT"))
+    }
+
+    @Test fun malformedAndExternalEntityErrorsStillReportHttpStatus() {
+        for (body in listOf("<html>Denied</html>", "<!DOCTYPE root SYSTEM 'file:///private'><Error/>", "not xml")) {
+            val client = transport { request -> response(request, 403, body.toByteArray()) }
+            val error = assertThrows(CloudHttpException::class.java) { client.metadata("catalog.json") }
+            assertTrue(error.message!!.contains("HTTP 403"))
+            assertTrue(error.message!!.contains("读取备份"))
+            assertFalse(error.message!!.contains("file:///private"))
+        }
+    }
+
+    @Test fun cosSignatureMessageIsNotMisdiagnosedAsMissingPermissions() {
+        val client = transport { request -> response(request, 403,
+            "<Error><Code>AccessDenied</Code><Message>SignatureDoesNotMatch</Message></Error>".toByteArray()) }
+        val error = assertThrows(CloudHttpException::class.java) { client.metadata("catalog.json") }
+        assertTrue(error.message!!.contains("签名兼容"))
+        assertFalse(error.message!!.contains("拒绝策略"))
+    }
+
+    @Test fun failedTestWritesDoNotDeleteAndCleanupCannotHideTheOriginalFailure() {
+        val requests = mutableListOf<String>()
+        val rejected = transport { request ->
+            requests += request.method
+            response(request, 403, "<Error><Code>AccessDenied</Code></Error>".toByteArray())
+        }
+        assertThrows(CloudHttpException::class.java) { rejected.testWriteAccess() }
+        assertEquals(listOf("PUT"), requests)
+        var writes = 0
+        val cleanupFails = transport { request ->
+            if (request.method == "PUT" && ++writes == 1) response(request, 200)
+            else response(request, 403, "<Error><Code>${if(request.method == "DELETE") "CleanupDenied" else "OriginalDenied"}</Code></Error>".toByteArray())
+        }
+        val error = assertThrows(CloudHttpException::class.java) { cleanupFails.testWriteAccess() }
+        assertTrue(error.message!!.contains("OriginalDenied"))
+        assertEquals(1, error.suppressed.size)
+        assertTrue(error.suppressed.single().message!!.contains("CleanupDenied"))
+    }
+
     private val credentials = CloudCredentials("test-access", "test-secret", "https://storage.example.invalid/",
         S3Location("reader-backups", "us-east-1", "书架 + 1"))
 

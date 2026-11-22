@@ -5,6 +5,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import com.eyue.reader.data.cloud.CloudCredentials
+import com.eyue.reader.data.cloud.S3Location
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -20,6 +21,20 @@ import org.robolectric.annotation.LooperMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class S3BackupSettingsRobolectricTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun changingSavedEndpointExplainsWhySecretMustBeEnteredAgain() {
+        val saved = CloudCredentials("access", "saved-secret", "https://bucket.cos.ap-nanjing.myqcloud.com",
+            S3Location("reader-backups", "ap-nanjing"))
+        compose.setContent { MaterialTheme { S3AccountDialog(saved, "S3", { _, _ -> }, { "成功" }, {}) } }
+        compose.onNodeWithTag("s3_save").assertIsEnabled()
+        compose.onNodeWithTag("s3_endpoint").performScrollTo().performTextReplacement("https://cos.ap-nanjing.myqcloud.com")
+        compose.onNodeWithTag("s3_validation_error").performScrollTo().assertTextEquals("地址或 Access Key 已更改，请重新填写 Secret Key")
+        compose.onNodeWithTag("s3_save").assertIsNotEnabled()
+        compose.onNodeWithTag("s3_secret").performScrollTo().performTextReplacement("saved-secret")
+        compose.onNodeWithTag("s3_validation_error").assertDoesNotExist()
+        compose.onNodeWithTag("s3_save").assertIsEnabled()
+        compose.onNodeWithTag("s3_test").performScrollTo().assertIsEnabled()
+    }
 
     @Test fun configurationValidatesTestsAndSavesWithoutExposingTheSecret() {
         var saved: CloudCredentials? = null
