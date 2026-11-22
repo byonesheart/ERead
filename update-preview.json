@@ -1,9 +1,9 @@
 {
-  "versionCode": 111,
-  "versionName": "1.11.32-beta.1",
+  "versionCode": 112,
+  "versionName": "1.11.32-beta.2",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.32-beta.1",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.32-beta.1/ERead-1.11.32-beta.1-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.32-beta.2",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.32-beta.2/ERead-1.11.32-beta.2-release.apk",
   "mirrors": [],
-  "changelog": "- 新增 S3 兼容存储备份，可保存配置并与 WebDAV 切换使用。\n- 支持按书上传、还原和后台自动备份，连接测试验证读写与版本更新权限。\n\n更多功能请自行体验。"
+  "changelog": "- 改善 S3 连接诊断，显示失败操作、服务端错误码与请求编号。\n- 修正测试连接清理失败掩盖原始错误的问题，补充配置校验提示。\n\n更多功能请自行体验。"
 }
