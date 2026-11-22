@@ -34,7 +34,8 @@ import java.security.MessageDigest
 import java.util.UUID
 
 internal data class WebDavImportEntry(val name: String, val directory: Boolean, val bytes: Long?)
-internal data class WebDavProfile(val id: String, val account: String, val server: String, val name: String, val active: Boolean)
+internal data class WebDavProfile(val id: String, val account: String, val server: String, val name: String, val active: Boolean,
+    val s3: Boolean = false)
 internal data class WebDavReadyImport(val id: UUID, val file: File, val mode: LibraryMode)
 
 internal fun supportedWebDavBook(name: String): Boolean =
@@ -112,7 +113,7 @@ internal class WebDavProfiles(context: Context,
 
     private fun profile(id: String, credentials: CloudCredentials, active: Boolean) =
         WebDavProfile(id, credentials.account, credentials.serverUrl,
-            preferences.getString("name-$id", null)?.takeIf { it.isNotBlank() } ?: credentials.account, active)
+            preferences.getString("name-$id", null)?.takeIf { it.isNotBlank() } ?: credentials.account, active, credentials.s3 != null)
 }
 
 internal object WebDavImports {

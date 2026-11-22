@@ -41,21 +41,32 @@ internal fun normalizeWebDavServer(value: String): String {
     require(input.length <= 4096 && input.none { it.code < 32 || it == '\\' }) { "服务器地址无效" }
     val url = input.toHttpUrlOrNull()
     require(url != null && url.username.isEmpty() && url.password.isEmpty() && url.query == null && url.fragment == null) {
-        "请输入完整的 HTTP 或 HTTPS WebDAV 服务器地址，不要包含账户、参数或片段"
+        "请输入完整的 HTTP 或 HTTPS 服务器地址，不要包含账户、参数或片段"
     }
     return url.newBuilder().encodedPath(url.encodedPath.trimEnd('/') + "/").build().toString().also {
         require(it.length <= 4096) { "服务器地址过长" }
     }
 }
 
-class CloudCredentials(val account: String, val password: String, serverUrl: String = DEFAULT_WEBDAV_SERVER) {
+data class S3Location(val bucket: String, val region: String, val prefix: String = "ERead", val pathStyle: Boolean = true) {
+    init {
+        require(bucket.matches(Regex("[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]"))) { "存储桶名称无效" }
+        require(region.matches(Regex("[a-z0-9-]{1,64}"))) { "区域名称无效" }
+        require(prefix.length <= 512 && prefix.split('/').all { it != "." && it != ".." } &&
+            prefix.none { it.isISOControl() || it == '\\' }) { "备份路径无效" }
+    }
+}
+
+class CloudCredentials(val account: String, val password: String, serverUrl: String = DEFAULT_WEBDAV_SERVER,
+    val s3: S3Location? = null) {
     val serverUrl: String = normalizeWebDavServer(serverUrl)
     // Keep the original provider's history and resumable parts without migrating sensitive files.
-    val identity: String get() = if (serverUrl == DEFAULT_WEBDAV_SERVER) account else "$serverUrl\n$account"
+    val identity: String get() = s3?.let { "s3\n$serverUrl\n$account\n${it.bucket}\n${it.prefix.trim('/')}" }
+        ?: if (serverUrl == DEFAULT_WEBDAV_SERVER) account else "$serverUrl\n$account"
     val rootUrl: String get() = serverUrl + "ERead/"
     init {
-        require(account.isNotBlank() && account.length <= 320 && ':' !in account && '\r' !in account && '\n' !in account) { "请输入 WebDAV 账户" }
-        require(password.isNotBlank() && password.length <= 4096) { "请输入 WebDAV 密码" }
+        require(account.isNotBlank() && account.length <= 320 && ':' !in account && '\r' !in account && '\n' !in account) { if (s3 == null) "请输入 WebDAV 账户" else "请输入 Access Key" }
+        require(password.isNotBlank() && password.length <= 4096) { if (s3 == null) "请输入 WebDAV 密码" else "请输入 Secret Key" }
     }
     override fun toString(): String = "CloudCredentials(redacted)"
 }

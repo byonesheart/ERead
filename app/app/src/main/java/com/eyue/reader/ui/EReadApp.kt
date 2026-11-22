@@ -379,6 +379,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                     onTestAiSpeechConnection = vm::testAiSpeechConnection,
                                     onThemeMode = vm::setThemeMode, onClearAiSpeechCaches = vm::clearAiSpeechCaches,
                                     onTestCloudDraftConnection = vm::testCloudDraftConnection,
+                                    onSaveS3 = vm::saveS3Account, onTestS3 = vm::testS3Connection,
                                     onAiSpeechFallback = vm::setAiSpeechFallback,
                                     onBookVoiceRoles = { id -> selectedRoleText = null; voiceRolesBookId = id },
                                     onCleanup = vm::cleanupLibrary, speechCacheRevision = vm.aiSpeechCacheRevision,

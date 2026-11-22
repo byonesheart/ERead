@@ -51,7 +51,7 @@ internal fun WebDavImportDialog(mode: LibraryMode, onDismiss: () -> Unit, onQueu
     val store = remember(context) { WebDavProfiles(context) }
     val scope = rememberCoroutineScope()
     var profileRevision by remember { mutableIntStateOf(0) }
-    val profiles by produceState(emptyList(), store, profileRevision) { value = withContext(Dispatchers.IO) { store.list() } }
+    val profiles by produceState(emptyList(), store, profileRevision) { value = withContext(Dispatchers.IO) { store.list().filterNot { it.s3 } } }
     var profile by remember { mutableStateOf<WebDavProfile?>(null) }
     var removing by remember { mutableStateOf<WebDavProfile?>(null) }
     var folder by remember { mutableStateOf(emptyList<String>()) }

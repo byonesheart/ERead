@@ -10,6 +10,26 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
 class WebDavProfilesRobolectricTest {
+    @Test fun s3AndWebDavRemainSeparateAndSwitchWithoutLosingSecrets() {
+        val context = RuntimeEnvironment.getApplication()
+        val webDav = CloudCredentials("reader", "dav-secret")
+        val s3 = CloudCredentials("access", "s3-secret", "https://storage.example.invalid",
+            S3Location("reader-backups", "us-east-1"))
+        val active = TestStore(webDav)
+        val stores = mutableMapOf<String, TestStore>()
+        val profiles = WebDavProfiles(context, active) { stores.getOrPut(it) { TestStore() } }
+        val original = profiles.list().single()
+        val backup = profiles.save(s3, "备用 S3", activate = true)
+        assertTrue(backup.s3)
+        assertTrue(profiles.list().single { it.s3 }.active)
+        assertSame(webDav, profiles.read(original.id))
+        assertSame(s3, active.read())
+        profiles.activate(original.id)
+        assertSame(webDav, active.read())
+        assertSame(s3, profiles.read(backup.id))
+        assertFalse(profiles.list().single { it.s3 }.active)
+    }
+
     @Test fun legacyBackupAndImportConfigurationsCanBothBeSelectedWithoutLosingCredentials() {
         val context = RuntimeEnvironment.getApplication()
         val legacy = CloudCredentials("reader", "legacy-secret")

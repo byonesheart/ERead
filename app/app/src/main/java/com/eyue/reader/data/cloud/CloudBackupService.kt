@@ -78,7 +78,9 @@ internal class CloudDownloadCancellation {
 class CloudBackupService(
     private val context: Context,
     private val credentialStore: CloudCredentialStore = EncryptedCloudCredentialStore(context),
-    private val transportFactory: (CloudCredentials, () -> Unit) -> CloudTransport = { credentials, check -> WebDavCloudTransport(credentials, check) },
+    private val transportFactory: (CloudCredentials, () -> Unit) -> CloudTransport = { credentials, check ->
+        if (credentials.s3 != null) S3CloudTransport(credentials, check) else WebDavCloudTransport(credentials, check)
+    },
     private val onProgress: (CloudOperationProgress) -> Unit = {}
 ) {
     private val repository = LibraryRepository(context)
@@ -142,6 +144,7 @@ class CloudBackupService(
             transport.ensureCollection("")
             transport.ensureCollection("books/")
             transport.metadata("catalog.json")
+            if (transport is S3CloudTransport) transport.testWriteAccess()
             Unit
         } finally { cancellation.cancel(); transport.cancel() }
     }
@@ -158,7 +161,7 @@ class CloudBackupService(
         CloudArchive.safeId(book.id)
         val job = currentCoroutineContext()
         val check = { job.ensureActive(); checkAllowed() }
-        val credentials = requireNotNull(credentialStore.read()) { "请先配置 WebDAV 服务器、账户与密码" }
+        val credentials = requireNotNull(credentialStore.read()) { "请先配置云端备份账户" }
         val transport = transportFactory(credentials, check)
         val temporary = pendingDirectory(book.id, credentials.identity)
         val cancellationWatcher = launch {
@@ -313,11 +316,11 @@ class CloudBackupService(
     } }
 
     suspend fun bookStorageBytes(ids: Set<String>): Map<String, Long> = withContext(Dispatchers.IO) {
-        val credentials = requireNotNull(credentialStore.read()) { "请先配置 WebDAV 网盘" }
+        val credentials = requireNotNull(credentialStore.read()) { "请先配置云端备份" }
         val work = currentCoroutineContext()
         val transport = transportFactory(credentials) {
             work.ensureActive()
-            require(credentialStore.read()?.identity == credentials.identity) { "WebDAV 配置已更改，请重新打开删除确认" }
+            require(credentialStore.read()?.identity == credentials.identity) { "云端备份配置已更改，请重新打开删除确认" }
         }
         try {
             buildMap {
@@ -348,8 +351,8 @@ class CloudBackupService(
     private suspend fun scanCatalog(expectedIdentity: String?, includeCovers: Boolean, verify: Boolean = true,
         candidate: ((CloudBookSummary) -> Boolean)? = null): List<CloudBookInfo> = withContext(Dispatchers.IO) {
         val job = currentCoroutineContext()
-        val credentials = requireNotNull(credentialStore.read()) { "请先配置 WebDAV 服务器、账户与密码" }
-        require(expectedIdentity == null || credentials.identity == expectedIdentity) { "WebDAV 配置已更改，请重新还原书籍信息" }
+        val credentials = requireNotNull(credentialStore.read()) { "请先配置云端备份账户" }
+        require(expectedIdentity == null || credentials.identity == expectedIdentity) { "云端备份配置已更改，请重新还原书籍信息" }
         val check = { job.ensureActive() }
         val transport = transportFactory(credentials, check)
         val cancellation = launch { try { awaitCancellation() } finally { transport.cancel() } }
@@ -398,7 +401,7 @@ class CloudBackupService(
                     }
                 }
             }
-            require(credentialStore.read()?.identity == credentials.identity) { "WebDAV 配置已更改，请重新还原书籍信息" }
+            require(credentialStore.read()?.identity == credentials.identity) { "云端备份配置已更改，请重新还原书籍信息" }
             if (verify && saved != null && observed.any { (id, row) -> saved.summaries[id]?.sameIdentity(row) != true }) {
                 cloudOperationMutex.withCatalog(credentials.identity) {
                     try {
@@ -462,8 +465,8 @@ class CloudBackupService(
     /** The caller may hold the short catalog lock while validating and merging a metadata snapshot. */
     suspend fun catalogBookIds(expectedIdentity: String): Set<String> = withContext(Dispatchers.IO) {
         val job = currentCoroutineContext()
-        val credentials = requireNotNull(credentialStore.read()) { "请先配置 WebDAV 网盘" }
-        require(credentials.identity == expectedIdentity) { "WebDAV 配置已更改，请重新还原书籍信息" }
+        val credentials = requireNotNull(credentialStore.read()) { "请先配置云端备份" }
+        require(credentials.identity == expectedIdentity) { "云端备份配置已更改，请重新还原书籍信息" }
         val transport = transportFactory(credentials) { job.ensureActive() }
         try {
             val index = CloudMetadataCache(context, credentials.identity).read(transport, "catalog.json", "index", parse = CloudCatalog::read)
@@ -476,7 +479,7 @@ class CloudBackupService(
         val id = CloudArchive.safeId(bookId)
         val job = currentCoroutineContext()
         val check = { job.ensureActive() }
-        val credentials = requireNotNull(credentialStore.read()) { "请先配置 WebDAV 服务器、账户与密码" }
+        val credentials = requireNotNull(credentialStore.read()) { "请先配置云端备份账户" }
         val transport = transportFactory(credentials, check)
         cloudOperationMutex.withCatalog(credentials.identity) {
         onProgress(CloudOperationProgress("检查云端图书记录"))
@@ -631,7 +634,7 @@ class CloudBackupService(
     } }
 
     private fun transport(check: () -> Unit): CloudTransport = transportFactory(
-        requireNotNull(credentialStore.read()) { "请先配置 WebDAV 服务器、账户与密码" }, check)
+        requireNotNull(credentialStore.read()) { "请先配置云端备份账户" }, check)
 
     private fun cloudCoverDirectory(credentials: CloudCredentials): File {
         val root = File(context.filesDir, "cloud-covers")

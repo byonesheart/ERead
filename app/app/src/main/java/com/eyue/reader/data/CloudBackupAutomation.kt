@@ -260,9 +260,9 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
         val history = CloudBackupHistory(applicationContext)
         try {
             val account = service.identity() ?: return@withContext if (manualBookId == null) Result.success()
-                else Result.failure(workDataOf(CloudBackupAutomation.KEY_ERROR to "请先配置 WebDAV 服务器、账户与密码"))
+                else Result.failure(workDataOf(CloudBackupAutomation.KEY_ERROR to "请先配置云端备份账户"))
             if (manualBookId != null) {
-                require(account == inputData.getString(CloudBackupAutomation.KEY_ACCOUNT)) { "WebDAV 配置已变更，请重新上传" }
+                require(account == inputData.getString(CloudBackupAutomation.KEY_ACCOUNT)) { "云端备份配置已变更，请重新上传" }
                 setForeground(foregroundInfo("准备上传备份", null))
                 setProgress(progressData("排队等待", null))
             }
@@ -308,7 +308,7 @@ class CloudBackupWorker(context: Context, parameters: WorkerParameters) : Corout
             val keys = cloudUploadIdentityKeys(account, hydrateBookSourceIdentity(applicationContext, book))
             var completed = false
             cloudOperationMutex.withUploadIdentity(keys) {
-                require(service.identity() == account && service.configured()) { "WebDAV 配置已变更，请重新上传" }
+                require(service.identity() == account && service.configured()) { "云端备份配置已变更，请重新上传" }
                 val beforeLock = currentBook(repository.load()) ?: run { completed = true; return@withUploadIdentity }
                 if (cloudUploadIdentityKeys(account, hydrateBookSourceIdentity(applicationContext, beforeLock)) != keys) return@withUploadIdentity
                 if (manualBookId == null && history.uploadedDigest(account, bookId) != null) {

@@ -1,0 +1,115 @@
+package com.eyue.reader.ui
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+import com.eyue.reader.data.cloud.CloudCredentials
+import com.eyue.reader.data.cloud.S3Location
+import com.eyue.reader.data.cloud.WebDavProfile
+import com.eyue.reader.data.cloud.WebDavProfiles
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+@Composable
+internal fun S3BackupSettings(profiles: List<WebDavProfile>, busy: Boolean, open: Boolean, onOpen: (Boolean) -> Unit,
+    onSave: (CloudCredentials, String) -> Unit, onTest: (suspend (CloudCredentials) -> String)?,
+    onActivate: (String) -> Unit) {
+    val context = LocalContext.current.applicationContext
+    var editing by remember { mutableStateOf<CloudCredentials?>(null) }
+    var name by remember { mutableStateOf("S3 备份") }
+    val scope = rememberCoroutineScope()
+    val saved = profiles.filter { it.s3 }
+    OutlinedButton(onClick = { editing = null; name = "S3 备份"; onOpen(true) }, enabled = !busy,
+        modifier = Modifier.fillMaxWidth().testTag("cloud_open_s3")) { Text("添加 S3 备份配置") }
+    profiles.firstOrNull { it.active }?.let {
+        Text("当前备份 · ${if (it.s3) "S3" else "WebDAV"} · ${it.name}", style = MaterialTheme.typography.bodySmall)
+    }
+    Text("WebDAV 与 S3 可切换使用，自动备份使用当前启用的配置。切换后可手动还原该配置的书架。",
+        style = MaterialTheme.typography.bodySmall)
+    saved.forEach { profile ->
+        Row(Modifier.fillMaxWidth()) {
+            TextButton(onClick = { onActivate(profile.id) }, enabled = !busy && !profile.active,
+                modifier = Modifier.weight(1f)) { Text(if (profile.active) "已启用 · ${profile.name}" else "启用 · ${profile.name}") }
+            TextButton(enabled = !busy, onClick = {
+                scope.launch {
+                    editing = withContext(Dispatchers.IO) { WebDavProfiles(context).read(profile.id) }
+                    name = profile.name
+                    onOpen(true)
+                }
+            }) { Text("编辑") }
+        }
+    }
+    if (open) S3AccountDialog(editing, name, onSave, onTest) { onOpen(false) }
+}
+
+@Composable
+private fun S3AccountDialog(saved: CloudCredentials?, initialName: String, onSave: (CloudCredentials, String) -> Unit,
+    onTest: (suspend (CloudCredentials) -> String)?, onClose: () -> Unit) {
+    var name by remember { mutableStateOf(initialName) }
+    var endpoint by remember { mutableStateOf(saved?.serverUrl.orEmpty()) }
+    var bucket by remember { mutableStateOf(saved?.s3?.bucket.orEmpty()) }
+    var region by remember { mutableStateOf(saved?.s3?.region ?: "us-east-1") }
+    var prefix by remember { mutableStateOf(saved?.s3?.prefix ?: "ERead") }
+    var access by remember { mutableStateOf(saved?.account.orEmpty()) }
+    var secret by remember { mutableStateOf("") }
+    var pathStyle by remember { mutableStateOf(saved?.s3?.pathStyle ?: true) }
+    var result by remember { mutableStateOf<String?>(null) }
+    var testing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val draft = runCatching {
+        val location = S3Location(bucket.trim(), region.trim(), prefix.trim().trim('/'), pathStyle)
+        val password = secret.ifBlank {
+            require(saved != null && saved.account == access.trim() && saved.serverUrl ==
+                com.eyue.reader.data.cloud.normalizeWebDavServer(endpoint)) { "请填写 Secret Key" }
+            saved.password
+        }
+        CloudCredentials(access.trim(), password, endpoint, location)
+    }
+    LaunchedEffect(endpoint, bucket, region, prefix, access, secret, pathStyle) { result = null }
+    AlertDialog(onDismissRequest = { if (!testing) onClose() }, title = { Text("S3 备份配置") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                fun fieldModifier(tag: String) = Modifier.fillMaxWidth().testTag("s3_$tag")
+                OutlinedTextField(name, { name = it }, label = { Text("配置名称") }, enabled = !testing, modifier = fieldModifier("name"))
+                OutlinedTextField(endpoint, { endpoint = it }, label = { Text("Endpoint") }, placeholder = { Text("https://s3.example.com") },
+                    singleLine = true, enabled = !testing, modifier = fieldModifier("endpoint"))
+                OutlinedTextField(bucket, { bucket = it }, label = { Text("Bucket 存储桶") }, singleLine = true, enabled = !testing, modifier = fieldModifier("bucket"))
+                OutlinedTextField(region, { region = it }, label = { Text("Region 区域") }, singleLine = true, enabled = !testing, modifier = fieldModifier("region"))
+                OutlinedTextField(prefix, { prefix = it }, label = { Text("备份路径前缀") }, singleLine = true, enabled = !testing, modifier = fieldModifier("prefix"))
+                OutlinedTextField(access, { access = it }, label = { Text("Access Key") }, singleLine = true, enabled = !testing, modifier = fieldModifier("access"))
+                OutlinedTextField(secret, { secret = it }, label = { Text("Secret Key") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(), enabled = !testing, modifier = fieldModifier("secret"))
+                if (saved != null) Text("密钥留空沿用此地址和账户已保存的密钥", style = MaterialTheme.typography.bodySmall)
+                Row { Checkbox(pathStyle, { pathStyle = it }, enabled = !testing, modifier = Modifier.testTag("s3_path_style"))
+                    Text("路径式地址（MinIO 等兼容服务）") }
+                Text("需要列举、读取、写入和删除权限。连接测试会创建并清理临时文件。使用现有存储桶，区域按服务商填写。",
+                    style = MaterialTheme.typography.bodySmall)
+                if (endpoint.startsWith("http://")) Text("HTTP 会明文传输书籍和记录，建议使用 HTTPS。", color = MaterialTheme.colorScheme.error)
+                TextButton(enabled = draft.isSuccess && !testing && onTest != null, modifier = Modifier.testTag("s3_test"),
+                    onClick = {
+                        val credentials = draft.getOrThrow()
+                        testing = true; result = null
+                        scope.launch {
+                            try { result = onTest?.invoke(credentials) }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (failure: Exception) { result = failure.message ?: "S3 连接失败" }
+                            finally { testing = false }
+                        }
+                    }) { Text(if (testing) "正在测试…" else "测试连接") }
+                result?.let { Text(it, modifier = Modifier.testTag("s3_test_result")) }
+            }
+        },
+        confirmButton = { TextButton(enabled = draft.isSuccess && name.isNotBlank() && !testing,
+            modifier = Modifier.testTag("s3_save"),
+            onClick = { onSave(draft.getOrThrow(), name.trim()); onClose() }) { Text("保存并启用") } },
+        dismissButton = { TextButton(onClick = onClose, enabled = !testing) { Text("取消") } })
+}

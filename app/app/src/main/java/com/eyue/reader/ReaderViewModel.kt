@@ -1158,7 +1158,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             selected.any { it.id in editingBookIds || it.id in cloudTransfers }) {
             message = "所选书籍仍在处理中，请完成或取消后再批量删除"; return
         }
-        if (removeCloud && selected.any { it.cloudEnabled || it.cloudOnly } && !cloudConfigured) { message = "请先配置 WebDAV 网盘"; return }
+        if (removeCloud && selected.any { it.cloudEnabled || it.cloudOnly } && !cloudConfigured) { message = "请先配置云端备份"; return }
         selected.forEach { removeBook(it, cloudIds?.contains(it.id) ?: (removeCloud && (it.cloudEnabled || it.cloudOnly)), removeOriginal) }
     }
 
@@ -1261,7 +1261,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
           catch (error: Exception) {
             cloudConfigured = false
             CloudBackupAutomation.configure(getApplication(), false)
-            message = error.message ?: "WebDAV 配置无法读取，请重新填写服务器、账户和密码"
+            message = error.message ?: "备份配置无法读取，请重新填写连接信息"
         }
     }
 
@@ -1310,7 +1310,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 beforeLock(service)
                 if (bookId == null) cloudOperationMutex.withLock { action(service) }
                 else cloudOperationMutex.withBooks(listOf(bookId, requestedIdentity?.let { cloudHistory.cloudBookId(it, bookId) } ?: bookId)) {
-                    require(withContext(Dispatchers.IO) { service.identity() } == requestedIdentity) { "WebDAV 配置已更改，请重新操作这本书" }
+                    require(withContext(Dispatchers.IO) { service.identity() } == requestedIdentity) { "备份配置已更改，请重新操作这本书" }
                     action(service)
                 }
             }
@@ -1355,14 +1355,31 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         message = "WebDAV 配置已保存，可测试连接或点击书籍云图标上传"
     }
 
-    fun selectCloudProfile(id: String) = cloudOperation(label = "切换 WebDAV 配置") {
+    fun selectCloudProfile(id: String) = cloudOperation(label = "切换备份配置") {
         persistNow()
         CloudBackupAutomation.cancelUploads(getApplication())
         withContext(Dispatchers.IO) { WebDavProfiles(getApplication()).activate(id) }
         refreshCloudConfiguration()
     }
 
-    fun disconnectCloud() = cloudOperation(label = "解除 WebDAV 连接") {
+    fun saveS3Account(credentials: com.eyue.reader.data.cloud.CloudCredentials, name: String) =
+        cloudOperation(label = "保存 S3 备份配置") {
+            require(credentials.s3 != null)
+            persistNow()
+            if (cloudIdentity != credentials.identity) CloudBackupAutomation.cancelUploads(getApplication())
+            withContext(Dispatchers.IO) { WebDavProfiles(getApplication()).save(credentials, name, activate = true) }
+            refreshCloudConfiguration()
+            persistNow()
+            message = "S3 备份配置已启用"
+        }
+
+    suspend fun testS3Connection(credentials: com.eyue.reader.data.cloud.CloudCredentials): String {
+        require(credentials.s3 != null)
+        CloudBackupService(getApplication()).testConnection(credentials)
+        return "S3 连接成功，已验证列举、上传、读取和删除权限"
+    }
+
+    fun disconnectCloud() = cloudOperation(label = "解除备份连接") {
         CloudBackupAutomation.cancelUploads(getApplication())
         withContext(Dispatchers.IO) { WebDavProfiles(getApplication()).disconnect() }
         changed(state.copy(cloudAutoBackup = false))
@@ -1387,7 +1404,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setCloudAutoBackup(enabled: Boolean) {
         if (!storageReady) { message = "请先等待本地书架成功加载"; return }
-        if (enabled && !cloudConfigured) { message = "请先配置 WebDAV 网盘"; return }
+        if (enabled && !cloudConfigured) { message = "请先配置云端备份"; return }
         changed(state.copy(cloudAutoBackup = enabled))
         CloudBackupAutomation.configure(getApplication(), enabled && cloudConfigured, state.cloudAutoBackupMetered)
     }
@@ -1603,7 +1620,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun cleanupLibrary(kind: LibraryCleanupKind, clearCloud: Boolean) {
         if (bookDrafts.isNotEmpty()) { message = "请先保存或放弃未保存的正文修改，再清理记录"; return }
         if (cleaningLibrary || loading || importing || savingBookVoiceRoles || cloudBusy) return
-        if (clearCloud && !cloudConfigured) { message = "请先配置 WebDAV 网盘"; return }
+        if (clearCloud && !cloudConfigured) { message = "请先配置云端备份"; return }
         val allowMetered = meteredNetwork
         val ids = state.books.map { it.id }.toSet()
         cleaningLibrary = true
@@ -1654,7 +1671,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun transferCloudBooks(books: List<Book>) {
         if (loading || rebuildingContents || !storageReady || cloudBusy) { message = "请等待书架或当前云端操作完成"; return }
-        if (!cloudConfigured) { message = "请先配置 WebDAV 网盘"; return }
+        if (!cloudConfigured) { message = "请先配置云端备份"; return }
         val ids = books.map { it.id }.toSet()
         val selected = state.books.filter { it.id in ids }
         val available = selected.filter { it.id !in cloudTransfers && it.id !in editingBookIds && !hasBookDraft(it.id) }
@@ -1676,7 +1693,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (books.isNotEmpty() && books.all { hasBookDraft(it.id) }) return
         if (cloudBusy) return
         if (!storageReady || loading || rebuildingContents) { message = "请等待本地书架和文件整理完成"; return }
-        if (!cloudConfigured) { message = "请先配置 WebDAV 网盘"; return }
+        if (!cloudConfigured) { message = "请先配置云端备份"; return }
         val selected = books.mapNotNull { target -> state.books.find { it.id == target.id && !it.cloudOnly && it.id !in cloudTransfers &&
             it.id !in editingBookIds && !hasBookDraft(it.id) && !(organizing && activeImportId == null && it.id == activeBookId) } }.distinctBy { it.id }
         val account = cloudIdentity ?: return
@@ -1702,7 +1719,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     matches = service.restoreBookMatches(snapshot, available)
                 }
                 while (cloudBusy) delay(100)
-                require(cloudIdentity == account) { "WebDAV 配置已变更，请重新上传" }
+                require(cloudIdentity == account) { "备份配置已变更，请重新上传" }
                 selected.forEach { original ->
                     val book = state.books.find { it.id == original.id && !it.cloudOnly } ?: return@forEach
                     if (book.id !in pendingCloudUploads || book.id in cancellingCloudUploads) return@forEach
@@ -1736,7 +1753,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     persistNow()
                     cloudUploadQueueMutex.withLock {
                         kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                        require(cloudIdentity == account) { "WebDAV 配置已变更，请重新上传" }
+                        require(cloudIdentity == account) { "备份配置已变更，请重新上传" }
                         // Complete this book's DB submission before its cancellation removes the task.
                         withContext(NonCancellable) { CloudBackupAutomation.upload(getApplication(), book, account, allowMetered) }
                     }
@@ -1857,12 +1874,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun deleteCloudBook(book: Book) = cloudOperation(book.id, "删除《${book.title}》的云端文件", beforeLock = { service ->
-        val account = withContext(Dispatchers.IO) { requireNotNull(service.identity()) { "请先配置 WebDAV 网盘" } }
+        val account = withContext(Dispatchers.IO) { requireNotNull(service.identity()) { "请先配置云端备份" } }
         withContext(Dispatchers.IO) { cloudHistory.pauseAutomatic(account, book.id) }
         stopCloudUploadSubmission(book.id)
     }) { service ->
         val current = state.books.find { it.id == book.id && it.cloudEnabled } ?: return@cloudOperation
-        val account = withContext(Dispatchers.IO) { requireNotNull(service.identity()) { "请先配置 WebDAV 网盘" } }
+        val account = withContext(Dispatchers.IO) { requireNotNull(service.identity()) { "请先配置云端备份" } }
         service.deleteBook(cloudHistory.cloudBookId(account, current.id))
         withContext(Dispatchers.IO) { cloudHistory.forget(account, current.id) }
         if (current.cloudOnly) {
@@ -1879,7 +1896,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun restoreCloudBookInfo() {
         if (cloudMetadataJob?.isActive == true || cloudBusy) return
         if (loading || rebuildingContents || !storageReady) { message = "请等待本地书架和文件整理完成"; return }
-        val account = cloudIdentity.takeIf { cloudConfigured } ?: run { message = "请先配置 WebDAV 网盘"; return }
+        val account = cloudIdentity.takeIf { cloudConfigured } ?: run { message = "请先配置云端备份"; return }
         val epoch = cloudMetadataEpoch
         val progressToken = cloudRestoreState.begin("读取云端书架")
         cloudMetadataJob = viewModelScope.launch {

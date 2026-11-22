@@ -27,6 +27,13 @@ internal object CloudCredentialPayload {
             it.writeUTF(credentials.account)
             it.writeUTF(credentials.password)
             it.writeUTF(credentials.serverUrl)
+            credentials.s3?.let { s3 ->
+                it.writeUTF("s3")
+                it.writeUTF(s3.bucket)
+                it.writeUTF(s3.region)
+                it.writeUTF(s3.prefix)
+                it.writeBoolean(s3.pathStyle)
+            }
         }
     }.toByteArray()
 
@@ -34,8 +41,12 @@ internal object CloudCredentialPayload {
         val account = it.readUTF()
         val password = it.readUTF()
         val server = if (it.available() > 0) it.readUTF() else DEFAULT_WEBDAV_SERVER
+        val s3 = if (it.available() > 0) {
+            require(it.readUTF() == "s3") { "备份类型无效" }
+            S3Location(it.readUTF(), it.readUTF(), it.readUTF(), it.readBoolean())
+        } else null
         require(it.available() == 0) { "云端账号配置损坏，请重新填写" }
-        CloudCredentials(account, password, server)
+        CloudCredentials(account, password, server, s3)
     }
 }
 

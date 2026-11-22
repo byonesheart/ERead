@@ -49,7 +49,7 @@ import java.io.File
 
 private enum class SettingsPage(val title: String) {
     PERSONALIZATION("个性化"), SOURCE_SCAN("扫描本地修改"), TRANSLATION("翻译"),
-    SPEECH("朗读引擎"), CLOUD("WebDAV 备份与还原"), CACHE("清理缓存"),
+    SPEECH("朗读引擎"), CLOUD("云端备份与还原"), CACHE("清理缓存"),
     FEEDBACK("问题反馈"), SUPPORT("支持作者"), ABOUT("关于"), AUTHOR("作者"),
     PRIVACY("隐私政策"), TERMS("用户协议"), OPEN_SOURCE("开源相关"), CHANGELOG("更新日志"),
     CHANGELOG_HISTORY("历史更新日志"), CONTRIBUTORS("贡献者")
@@ -86,7 +86,9 @@ private enum class SettingsPage(val title: String) {
     onGrantScanBooks: (Set<String>) -> Unit = {}, onGrantScanFolder: () -> Unit = {},
     onScanLocalChanges: (Boolean) -> Unit = {}, onScanSourcesNow: () -> Unit = {},
     automaticUpdateChecks: Boolean = true, onAutomaticUpdateChecks: (Boolean) -> Unit = {},
-    onHideCoverIcons: (Boolean) -> Unit = {}) {
+    onHideCoverIcons: (Boolean) -> Unit = {},
+    onSaveS3: (com.eyue.reader.data.cloud.CloudCredentials, String) -> Unit = { _, _ -> },
+    onTestS3: (suspend (com.eyue.reader.data.cloud.CloudCredentials) -> String)? = null) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
     val page = pages.lastOrNull()
@@ -130,7 +132,7 @@ private enum class SettingsPage(val title: String) {
                         SettingsLink(Icons.Outlined.Headphones, "朗读引擎", if (state.speechEngine == SpeechEngine.AI) "AI 语音" else "系统语音",
                             "settings_speech", { open(SettingsPage.SPEECH) })
                         SettingsSeparator()
-                        SettingsLink(Icons.Outlined.Cloud, "WebDAV 备份与还原", if (cloudConfigured) "已连接" else "未配置", "settings_cloud", { open(SettingsPage.CLOUD) })
+                        SettingsLink(Icons.Outlined.Cloud, "云端备份与还原", if (cloudConfigured) "已连接" else "未配置", "settings_cloud", { open(SettingsPage.CLOUD) })
                         SettingsSeparator()
                         SettingsLink(Icons.Outlined.Sync, "扫描本地修改", state.sourceScanMode.displayName,
                             "settings_scan_local_changes", { open(SettingsPage.SOURCE_SCAN) })
@@ -208,7 +210,7 @@ private enum class SettingsPage(val title: String) {
                 SettingsPage.CLOUD -> CloudBackupSettings(cloudAccount, cloudConfigured, state.cloudAutoBackup, cloudBusy,
                     cloudTaskLabel, cloudFraction, onSaveCloudAccount, onTestCloudConnection, onCloudAutoBackup,
                     onRestoreCloudBookInfo, onDisconnectCloud, cloudServerUrl, state.cloudAutoBackupMetered,
-                    onCloudAutoBackupMetered, onTestCloudDraftConnection, restoreProgress, onSelectCloudProfile)
+                    onCloudAutoBackupMetered, onTestCloudDraftConnection, restoreProgress, onSelectCloudProfile, onSaveS3, onTestS3)
                 SettingsPage.CACHE -> {
                     SettingsCard {
                         LibraryCleanupKind.entries.forEachIndexed { index, kind ->
@@ -336,8 +338,11 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
     serverUrl: String = DEFAULT_WEBDAV_SERVER, autoBackupMetered: Boolean = false,
     onAutoBackupMetered: (Boolean) -> Unit = {},
     onTestDraftConnection: (suspend (account: String, password: String, server: String) -> String)? = null,
-    restoreProgress: CloudOperationProgress? = null, onSelectProfile: (String) -> Unit = {}) {
+    restoreProgress: CloudOperationProgress? = null, onSelectProfile: (String) -> Unit = {},
+    onSaveS3: (com.eyue.reader.data.cloud.CloudCredentials, String) -> Unit = { _, _ -> },
+    onTestS3: (suspend (com.eyue.reader.data.cloud.CloudCredentials) -> String)? = null) {
     var accountDialog by remember { mutableStateOf(false) }
+    var s3Dialog by remember { mutableStateOf(false) }
     val context = LocalContext.current.applicationContext
     val profiles by produceState(emptyList<WebDavProfile>(), context, account, serverUrl, configured, accountDialog, busy) {
         if (!busy) value = withContext(Dispatchers.IO) { WebDavProfiles(context).list() }
@@ -356,8 +361,10 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
             OutlinedButton(onClick = { accountDialog = true }, enabled = !busy,
                 modifier = Modifier.fillMaxWidth().testTag("cloud_open_account")) {
                 val name = profiles.firstOrNull { it.active }?.name ?: account
-                Text(if (configured) "网盘配置 · $name" else "网盘配置", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (configured && profiles.any { it.active && !it.s3 }) "WebDAV 配置 · $name" else "WebDAV 配置",
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            S3BackupSettings(profiles, busy, s3Dialog, { s3Dialog = it }, onSaveS3, onTestS3, onSelectProfile)
             if (busy) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(17.dp), color = Olive, strokeWidth = 2.dp)
                 Text(taskLabel, fontSize = 12.sp, modifier = Modifier.weight(1f).padding(start = 8.dp))
@@ -392,7 +399,10 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
             }
         }
     }
-    if (accountDialog) CloudAccountDialog(account, serverUrl, configured, busy, profiles, onSave, onSelectProfile,
+    val s3Active = profiles.any { it.active && it.s3 }
+    if (accountDialog) CloudAccountDialog(if (s3Active) "" else account,
+        if (s3Active) DEFAULT_WEBDAV_SERVER else serverUrl, configured && !s3Active, busy,
+        profiles.filterNot { it.s3 }, onSave, onSelectProfile,
         onTestDraftConnection, onTest) { accountDialog = false }
 }
 
