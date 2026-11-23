@@ -1,9 +1,9 @@
 {
-  "versionCode": 112,
-  "versionName": "1.11.32-beta.2",
+  "versionCode": 113,
+  "versionName": "1.11.33-beta.1",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.32-beta.2",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.32-beta.2/ERead-1.11.32-beta.2-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.33-beta.1",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.33-beta.1/ERead-1.11.33-beta.1-release.apk",
   "mirrors": [],
-  "changelog": "- 改善 S3 连接诊断，显示失败操作、服务端错误码与请求编号。\n- 修正测试连接清理失败掩盖原始错误的问题，补充配置校验提示。\n\n更多功能请自行体验。"
+  "changelog": "- 新增腾讯云 COS 备份，支持独立版本记录与多设备冲突保护。\n- 备份配置可停用、确认删除，并在 WebDAV、S3、COS 之间切换。\n- 新增文件夹递归批量导入书籍，逐本并行处理并即时入库。\n- 漫画文件夹支持 EPUB、MOBI 图片，按单本漫画导入并忽略文本。\n\n更多功能请自行体验。"
 }
