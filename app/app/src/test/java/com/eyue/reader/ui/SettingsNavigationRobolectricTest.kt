@@ -10,6 +10,7 @@ import com.eyue.reader.data.ThemeMode
 import com.eyue.reader.BuildConfig
 import com.eyue.reader.data.AppUpdateResult
 import com.eyue.reader.data.AppUpdateMirror
+import com.eyue.reader.data.cloud.WebDavProfile
 import com.eyue.reader.data.cloud.DEFAULT_WEBDAV_SERVER
 import com.eyue.reader.data.cloud.CloudOperationProgress
 import kotlinx.coroutines.CompletableDeferred
@@ -242,6 +243,8 @@ class SettingsNavigationRobolectricTest {
         } }
         compose.onNodeWithTag("cloud_test_connection").assertDoesNotExist()
         compose.onNodeWithTag("cloud_open_account").performClick()
+        compose.onNodeWithTag("cloud_provider_WEBDAV").performClick()
+        compose.onNodeWithTag("cloud_create_profile").performClick()
         compose.onNodeWithTag("cloud_test_connection").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithTag("cloud_server").performTextReplacement("https://files.example.com/dav")
         compose.onNodeWithTag("cloud_account").performTextInput("reader@example.com")
@@ -258,10 +261,10 @@ class SettingsNavigationRobolectricTest {
         val result = CompletableDeferred<String>()
         var calls = 0
         compose.setContent { MaterialTheme {
-            CloudBackupSettings("reader@example.com", true, false, false, "", null, { _, _, _, _ -> }, {}, {}, {}, {},
-                onTestDraftConnection = { _, _, _ -> calls++; withContext(NonCancellable) { result.await() } })
+            CloudAccountDialog("reader@example.com", DEFAULT_WEBDAV_SERVER, true, false, emptyList(), { _, _, _, _ -> },
+                onTestDraft = { _, _, _ -> calls++; withContext(NonCancellable) { result.await() } },
+                onTestSaved = {}, initialName = "已保存", onDismiss = {})
         } }
-        compose.onNodeWithTag("cloud_open_account").performClick()
         compose.onNodeWithTag("cloud_test_connection").performScrollTo().performClick()
         compose.onNodeWithTag("cloud_cancel_test").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("cloud_server").performScrollTo().performTextReplacement("https://other.example.com/dav")
@@ -271,24 +274,30 @@ class SettingsNavigationRobolectricTest {
         compose.runOnIdle { assertEquals(1, calls) }
     }
 
-    @Test fun configuredWebDavCanTestItsSavedPasswordAndMeteredBackupIsExplicit() {
-        val requests = mutableListOf<Triple<String, String, String>>()
+    @Test fun configuredBackupRestoresAndMeteredOptionIsExplicit() {
         var restores = 0
         var metered = false
         compose.setContent { MaterialTheme {
             CloudBackupSettings("reader@example.com", true, false, false, "", null, { _, _, _, _ -> }, {}, {}, { restores++ }, {},
-                onAutoBackupMetered = { metered = it }, onTestDraftConnection = { account, password, server ->
-                    requests += Triple(account, password, server); "连接成功"
-                })
+                onAutoBackupMetered = { metered = it })
         } }
-        compose.runOnIdle { assertFalse(metered); assertEquals(0, restores); assertTrue(requests.isEmpty()) }
+        compose.runOnIdle { assertFalse(metered); assertEquals(0, restores) }
         compose.onNodeWithTag("cloud_auto_backup_metered").performClick()
         compose.onNodeWithTag("cloud_restore_info").performClick()
-        compose.onNodeWithTag("cloud_open_account").performClick()
+        compose.runOnIdle { assertTrue(metered); assertEquals(1, restores) }
+    }
+
+    @Test fun savedWebDavEditorCanTestWithoutRetypingItsPassword() {
+        val requests = mutableListOf<Triple<String, String, String>>()
+        compose.setContent { MaterialTheme {
+            CloudAccountDialog("reader@example.com", DEFAULT_WEBDAV_SERVER, true, false,
+                listOf(WebDavProfile("dav", "reader@example.com", DEFAULT_WEBDAV_SERVER, "主用", true)),
+                { _, _, _, _ -> }, onTestDraft = { account, password, server ->
+                    requests += Triple(account, password, server); "连接成功"
+                }, onTestSaved = {}, initialName = "主用", onDismiss = {})
+        } }
+        compose.onNodeWithTag("cloud_profile_name").assertTextContains("主用", substring = true)
         compose.onNodeWithTag("cloud_test_connection").performScrollTo().performClick()
-        compose.runOnIdle {
-            assertTrue(metered); assertEquals(1, restores)
-            assertEquals(listOf(Triple("reader@example.com", "", DEFAULT_WEBDAV_SERVER)), requests)
-        }
+        compose.runOnIdle { assertEquals(listOf(Triple("reader@example.com", "", DEFAULT_WEBDAV_SERVER)), requests) }
     }
 }

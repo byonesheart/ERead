@@ -1,7 +1,6 @@
 package com.eyue.reader.ui
 
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -24,32 +23,60 @@ import org.robolectric.annotation.LooperMode
 class S3BackupSettingsRobolectricTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun activeS3CanBeStoppedDeletedWithConfirmationAndSwitchedToWebDav() {
-        var stopped = false
+    @Test fun providerPickerHidesSavedConfigurationsOutsideAndNameClickOnlyEdits() {
+        var selectedForEdit: String? = null
+        var created: CloudProvider? = null
+        var profiles by mutableStateOf(listOf(
+            WebDavProfile("s3", "access", "https://s3.example.com", "S3备用", false, true),
+            WebDavProfile("dav", "reader", "https://dav.example.com", "WebDAV主用", true)))
+        compose.setContent { MaterialTheme {
+            CloudProfileControl(profiles, profiles.any { it.active }, false,
+                { id -> profiles = profiles.map { it.copy(active = it.id == id) } },
+                { profiles = profiles.map { it.copy(active = false) } }, { selectedForEdit = it.id }, { created = it }, {})
+        } }
+        compose.onNodeWithTag("cloud_current_profile").assertTextContains("WebDAV主用", substring = true)
+        compose.onNodeWithTag("cloud_toggle_s3").assertDoesNotExist()
+        compose.onNodeWithTag("cloud_edit_dav").assertDoesNotExist()
+        compose.onNodeWithText("S3备用").assertDoesNotExist()
+        compose.onNodeWithTag("cloud_open_account").performClick()
+        compose.onNodeWithTag("cloud_provider_S3").performClick()
+        compose.onNodeWithTag("cloud_edit_s3").performClick()
+        compose.runOnIdle { assertEquals("s3", selectedForEdit); assertTrue(profiles.single { it.id == "dav" }.active) }
+        compose.onNodeWithTag("cloud_toggle_s3").assertIsOff().performClick()
+        compose.runOnIdle { assertEquals(1, profiles.count { it.active }); assertTrue(profiles.single { it.id == "s3" }.active) }
+        compose.onNodeWithTag("cloud_provider_back").performClick()
+        compose.onNodeWithTag("cloud_provider_WEBDAV").performClick()
+        compose.onNodeWithTag("cloud_toggle_dav").assertIsOff().performClick()
+        compose.runOnIdle { assertEquals(1, profiles.count { it.active }); assertTrue(profiles.single { it.id == "dav" }.active) }
+        compose.onNodeWithTag("cloud_toggle_dav").performClick()
+        compose.runOnIdle { assertTrue(profiles.none { it.active }) }
+        compose.onNodeWithTag("cloud_provider_back").performClick()
+        compose.onNodeWithTag("cloud_provider_COS").performClick()
+        compose.onNodeWithTag("cloud_create_profile").performClick()
+        compose.runOnIdle { assertEquals(CloudProvider.COS, created) }
+        compose.onNodeWithText("关闭").performClick()
+        compose.onNodeWithTag("cloud_current_profile").assertTextEquals("当前配置：未启用")
+    }
+
+    @Test fun profileRemovalRequiresConfirmationInsideTheSelectedProvider() {
         var removed: String? = null
-        var activated: String? = null
-        val profiles = listOf(WebDavProfile("s3", "access", "https://s3.example.com", "备用", true, true),
-            WebDavProfile("dav", "reader", "https://dav.example.com", "网盘", false))
-        compose.setContent { MaterialTheme { Column {
-            S3BackupSettings(profiles, false, false, {}, { _, _ -> }, null, { activated = it },
-                { stopped = true }, { removed = it })
-        } } }
-        compose.onNodeWithTag("cloud_stop_s3").performClick()
-        compose.runOnIdle { assertTrue(stopped) }
-        compose.onNodeWithTag("cloud_activate_dav").performClick()
-        compose.runOnIdle { assertEquals("dav", activated) }
+        compose.setContent { MaterialTheme {
+            CloudProfileControl(listOf(WebDavProfile("s3", "access", "https://s3.example.com", "备用", true, true)),
+                true, false, {}, {}, {}, {}, { removed = it })
+        } }
+        compose.onNodeWithTag("cloud_open_account").performClick()
+        compose.onNodeWithTag("cloud_provider_S3").performClick()
         compose.onNodeWithTag("cloud_remove_s3").performClick()
         compose.runOnIdle { assertNull(removed) }
         compose.onNodeWithTag("cloud_confirm_remove").performClick()
         compose.runOnIdle { assertEquals("s3", removed) }
     }
 
-    @Test fun cosCanBeSelectedAndSavedWithoutPathStyle() {
+    @Test fun cosEditorSavesSelectedProviderWithoutPathStyle() {
         var selected: CloudCredentials? = null
         compose.setContent { MaterialTheme {
-            S3AccountDialog(null, "腾讯云", { credentials, _ -> selected = credentials }, null, {})
+            S3AccountDialog(null, "腾讯云", { credentials, _ -> selected = credentials }, null, {}, initialCos = true)
         } }
-        compose.onNodeWithTag("s3_provider_cos").performClick()
         for ((tag, value) in listOf("endpoint" to "https://cos.ap-nanjing.myqcloud.com", "region" to "ap-nanjing",
             "bucket" to "reader-1250000000", "access" to "example-access", "secret" to "example-secret")) {
             compose.onNodeWithTag("s3_$tag").performScrollTo().performTextReplacement(value)
@@ -77,11 +104,10 @@ class S3BackupSettingsRobolectricTest {
         var saved: CloudCredentials? = null
         var tested: CloudCredentials? = null
         compose.setContent { MaterialTheme {
-            var open by remember { mutableStateOf(false) }
-            S3BackupSettings(emptyList(), false, open, { open = it }, { credentials, _ -> saved = credentials },
-                { tested = it; "S3 连接成功：已验证读写权限" }, {})
+            var open by remember { mutableStateOf(true) }
+            if (open) S3AccountDialog(null, "S3", { credentials, _ -> saved = credentials },
+                { tested = it; "S3 连接成功：已验证读写权限" }, { open = false })
         } }
-        compose.onNodeWithTag("cloud_open_s3").performClick()
         compose.onNodeWithTag("s3_save").assertIsNotEnabled()
         for ((tag, value) in listOf("endpoint" to "https://storage.example.com", "bucket" to "reader-backups",
             "access" to "example-access", "secret" to "example-secret")) {
@@ -103,8 +129,8 @@ class S3BackupSettingsRobolectricTest {
     @Test fun testFailureIsVisibleAndDoesNotSaveAConfiguration() {
         compose.setContent { MaterialTheme {
             var open by remember { mutableStateOf(true) }
-            S3BackupSettings(emptyList(), false, open, { open = it }, { _, _ -> fail("Unexpected save") },
-                { error("S3 权限不足") }, {})
+            if (open) S3AccountDialog(null, "S3", { _, _ -> fail("Unexpected save") },
+                { error("S3 权限不足") }, { open = false })
         } }
         for ((tag, value) in listOf("endpoint" to "https://storage.example.com", "bucket" to "reader-backups",
             "access" to "example-access", "secret" to "example-secret")) {

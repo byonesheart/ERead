@@ -343,10 +343,13 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
     onSaveS3: (com.eyue.reader.data.cloud.CloudCredentials, String) -> Unit = { _, _ -> },
     onTestS3: (suspend (com.eyue.reader.data.cloud.CloudCredentials) -> String)? = null,
     onRemoveCloudProfile: (String) -> Unit = {}) {
-    var accountDialog by remember { mutableStateOf(false) }
-    var s3Dialog by remember { mutableStateOf(false) }
+    var editor by remember { mutableStateOf<CloudProvider?>(null) }
+    var editingProfile by remember { mutableStateOf<WebDavProfile?>(null) }
+    var editingCredentials by remember { mutableStateOf<com.eyue.reader.data.cloud.CloudCredentials?>(null) }
+    var profileError by remember { mutableStateOf<String?>(null) }
+    val profileScope = rememberCoroutineScope()
     val context = LocalContext.current.applicationContext
-    val profiles by produceState(emptyList<WebDavProfile>(), context, account, serverUrl, configured, accountDialog, busy) {
+    val profiles by produceState(emptyList<WebDavProfile>(), context, account, serverUrl, configured, editor, busy) {
         if (!busy) value = withContext(Dispatchers.IO) { WebDavProfiles(context).list() }
     }
     val downloadLocation = remember(context) { CloudDownloadLocation(context) }
@@ -360,14 +363,20 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
     }
     SettingsCard {
         Column(Modifier.fillMaxWidth().padding(16.dp).testTag("cloud_settings"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            OutlinedButton(onClick = { accountDialog = true }, enabled = !busy,
-                modifier = Modifier.fillMaxWidth().testTag("cloud_open_account")) {
-                val name = profiles.firstOrNull { it.active }?.name ?: account
-                Text(if (configured && profiles.any { it.active && !it.s3 }) "WebDAV 配置 · $name" else "WebDAV 配置",
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            S3BackupSettings(profiles, busy, s3Dialog, { s3Dialog = it }, onSaveS3, onTestS3, onSelectProfile,
-                onDisconnect, onRemoveCloudProfile)
+            CloudProfileControl(profiles, configured, busy, onSelectProfile, onDisconnect,
+                onEdit = { profile ->
+                    profileScope.launch {
+                        profileError = null
+                        try {
+                            val credentials = withContext(Dispatchers.IO) { WebDavProfiles(context).read(profile.id) }
+                            requireNotNull(credentials) { "配置已不存在" }
+                            editingProfile = profile; editingCredentials = credentials; editor = profile.provider
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                          catch (failure: Exception) { profileError = failure.message ?: "配置无法读取" }
+                    }
+                }, onCreate = { kind ->
+                    profileError = null; editingProfile = null; editingCredentials = null; editor = kind
+                }, onRemove = onRemoveCloudProfile, error = profileError)
             if (busy) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(17.dp), color = Olive, strokeWidth = 2.dp)
                 Text(taskLabel, fontSize = 12.sp, modifier = Modifier.weight(1f).padding(start = 8.dp))
@@ -397,16 +406,21 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
                 }
                 Text("原文件保存至此处，阅读缓存留在应用内；仅影响后续下载。", style = MaterialTheme.typography.bodySmall, color = Muted)
             }
-            if (configured) TextButton(onClick = onDisconnect, enabled = !busy, modifier = Modifier.align(Alignment.End).testTag("cloud_disconnect")) {
-                Text("断开当前备份配置")
-            }
+
         }
     }
-    val s3Active = profiles.any { it.active && it.s3 }
-    if (accountDialog) CloudAccountDialog(if (s3Active) "" else account,
-        if (s3Active) DEFAULT_WEBDAV_SERVER else serverUrl, configured && !s3Active, busy,
-        profiles.filterNot { it.s3 }, onSave, onSelectProfile,
-        onTestDraftConnection, onTest) { accountDialog = false }
+    when (editor) {
+        CloudProvider.WEBDAV -> CloudAccountDialog(editingCredentials?.account.orEmpty(),
+            editingCredentials?.serverUrl ?: DEFAULT_WEBDAV_SERVER, editingProfile?.active == true, busy,
+            profiles.filterNot { it.s3 }, onSave = { user, password, server, name ->
+                onSave(user, password, server, name); editor = null
+            }, onTestDraft = onTestDraftConnection, onTestSaved = onTest,
+            initialName = editingProfile?.name.orEmpty(), onDismiss = { editor = null })
+        CloudProvider.S3, CloudProvider.COS -> S3AccountDialog(editingCredentials,
+            editingProfile?.name ?: if (editor == CloudProvider.COS) "COS 备份" else "S3 备份",
+            onSaveS3, onTestS3, onClose = { editor = null }, initialCos = editor == CloudProvider.COS)
+        null -> Unit
+    }
 }
 
 @Composable internal fun CloudRestoreProgressIndicator(progress: CloudOperationProgress, tag: String, modifier: Modifier = Modifier) {
@@ -433,12 +447,13 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
     }
 }
 
-@Composable private fun CloudAccountDialog(account: String, serverUrl: String, configured: Boolean, busy: Boolean,
-    profiles: List<WebDavProfile>, onSave: (String, String, String, String) -> Unit, onSelectProfile: (String) -> Unit,
-    onTestDraft: (suspend (String, String, String) -> String)?, onTestSaved: () -> Unit, onDismiss: () -> Unit) {
+@Composable internal fun CloudAccountDialog(account: String, serverUrl: String, configured: Boolean, busy: Boolean,
+    profiles: List<WebDavProfile>, onSave: (String, String, String, String) -> Unit,
+    onTestDraft: (suspend (String, String, String) -> String)?, onTestSaved: () -> Unit,
+    initialName: String, onDismiss: () -> Unit) {
     var accountDraft by remember(account) { mutableStateOf(account) }
     var serverDraft by remember(serverUrl) { mutableStateOf(serverUrl) }
-    val activeName = profiles.firstOrNull { it.active }?.name.orEmpty()
+    val activeName = initialName
     var nameDraft by remember(activeName) { mutableStateOf(activeName) }
     var passwordDraft by remember(account, serverUrl, configured) { mutableStateOf("") }
     var testJob by remember { mutableStateOf<Job?>(null) }
@@ -457,25 +472,6 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
     DisposableEffect(Unit) { onDispose { testJob?.cancel() } }
     AlertDialog(onDismissRequest = ::close, modifier = Modifier.testTag("cloud_account_dialog"), title = { Text("网盘配置") }, text = {
         Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (profiles.isNotEmpty()) {
-                Text("已保存的网盘", style = MaterialTheme.typography.titleSmall)
-                profiles.forEach { profile ->
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(profile.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(profile.server, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Muted,
-                                style = MaterialTheme.typography.bodySmall)
-                        }
-                        if (profile.active) Text("当前备份", color = Olive, style = MaterialTheme.typography.bodySmall)
-                        else TextButton(enabled = !busy, onClick = { onSelectProfile(profile.id); close() },
-                            modifier = Modifier.testTag("cloud_use_profile_${profile.id}")) { Text("切换") }
-                    }
-                }
-                TextButton(enabled = !busy, onClick = {
-                    invalidateTest(); nameDraft = ""; accountDraft = ""; serverDraft = DEFAULT_WEBDAV_SERVER; passwordDraft = ""
-                }) { Text("新增配置") }
-                HorizontalDivider(color = Line)
-            }
             OutlinedTextField(nameDraft, { nameDraft = it.take(60) }, label = { Text("配置名称（选填）") },
                 modifier = Modifier.fillMaxWidth().testTag("cloud_profile_name"), enabled = !busy, singleLine = true)
             OutlinedTextField(serverDraft, { invalidateTest(); serverDraft = it }, label = { Text("WebDAV 服务器") },
@@ -514,6 +510,6 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
         }
     }, confirmButton = { TextButton(onClick = {
         invalidateTest(); onSave(accountDraft.trim(), passwordDraft, normalized.getOrThrow(), nameDraft); passwordDraft = ""
-    }, enabled = !busy && !testing && valid, modifier = Modifier.testTag("cloud_save_account")) { Text("保存账号") } },
+    }, enabled = !busy && !testing && valid, modifier = Modifier.testTag("cloud_save_account")) { Text("保存配置") } },
         dismissButton = { TextButton(onClick = ::close) { Text("关闭") } })
 }

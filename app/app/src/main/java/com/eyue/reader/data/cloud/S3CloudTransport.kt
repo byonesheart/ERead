@@ -30,7 +30,8 @@ internal class S3CloudTransport(
     private val checkActive: () -> Unit = {},
     private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS).writeTimeout(120, TimeUnit.SECONDS)
-        .followRedirects(false).followSslRedirects(false).build()
+        .followRedirects(false).followSslRedirects(false).build(),
+    private val uncachedReads: Boolean = false
 ) : CloudTransport {
     private val location = requireNotNull(credentials.s3)
     private val prefix = location.prefix.trim('/').let { if (it.isEmpty()) "" else "$it/" }
@@ -342,7 +343,8 @@ internal class S3CloudTransport(
 
     private fun signed(method: String, url: HttpUrl, body: RequestBody? = null,
         hash: String = sha256(byteArrayOf()), headers: Map<String, String> = emptyMap()): Request =
-        signS3Request(credentials, method, url, body, hash, headers, Instant.now())
+        signS3Request(credentials, method, url, body, hash,
+            if (uncachedReads && method == "GET") headers + ("Cache-Control" to "no-cache, no-store") else headers, Instant.now())
 }
 
 internal fun signS3Request(credentials: CloudCredentials, method: String, url: HttpUrl, body: RequestBody?,

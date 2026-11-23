@@ -226,16 +226,14 @@ class CloudBackupUiTest {
         val saved = mutableListOf<Pair<String, String>>()
         compose.setContent {
             MaterialTheme {
-                CloudBackupSettings(account, configured, false, false, "", null, onSave = { email, password, server, _ ->
+                CloudAccountDialog(account, DEFAULT_WEBDAV_SERVER, configured, false, emptyList(), onSave = { email, password, server, _ ->
                     assertEquals(DEFAULT_WEBDAV_SERVER, server)
                     saved += email to password
                     account = email
                     configured = true
-                }, onTest = {}, onAutoBackup = {}, onRestore = {}, onDisconnect = {})
+                }, onTestDraft = null, onTestSaved = {}, initialName = "", onDismiss = {})
             }
         }
-        compose.onNodeWithTag("cloud_account").assertDoesNotExist()
-        compose.onNodeWithTag("cloud_open_account").performClick()
         compose.onNodeWithTag("cloud_save_account").assertIsNotEnabled()
         compose.onNodeWithTag("cloud_account").performTextInput("reader@example.com")
         compose.onNodeWithTag("cloud_save_account").assertIsNotEnabled()
@@ -271,20 +269,15 @@ class CloudBackupUiTest {
         compose.onNodeWithTag("cloud_auto_backup").assertIsNotEnabled()
     }
 
-    @Test fun serverChangesRequirePasswordAndMeteredBackupRemainsAnExplicitOptIn() {
-        var metered by mutableStateOf(false)
+    @Test fun serverChangesRequirePasswordAndRejectEmbeddedCredentials() {
         val saved = mutableListOf<Triple<String, String, String>>()
         compose.setContent {
             MaterialTheme {
-                CloudBackupSettings("reader@example.com", true, true, false, "", null,
+                CloudAccountDialog("reader@example.com", DEFAULT_WEBDAV_SERVER, true, false, emptyList(),
                     onSave = { account, password, server, _ -> saved += Triple(account, password, server) },
-                    onTest = {}, onAutoBackup = {}, onRestore = {}, onDisconnect = {},
-                    autoBackupMetered = metered, onAutoBackupMetered = { metered = it })
+                    onTestDraft = null, onTestSaved = {}, initialName = "", onDismiss = {})
             }
         }
-        compose.onNodeWithTag("cloud_auto_backup_metered").assertIsOff().performClick()
-        compose.runOnIdle { assertEquals(true, metered) }
-        compose.onNodeWithTag("cloud_open_account").performClick()
         compose.onNodeWithTag("cloud_save_account").assertIsEnabled()
         compose.onNodeWithTag("cloud_server").performTextReplacement("https://files.example.com/dav")
         compose.onNodeWithTag("cloud_save_account").assertIsNotEnabled()

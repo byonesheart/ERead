@@ -174,6 +174,8 @@ class SettingsPreferencesRobolectricTest {
         compose.onNodeWithTag("settings_cloud").performScrollTo().performClick()
         compose.onNodeWithTag("cloud_test_connection").assertDoesNotExist()
         compose.onNodeWithTag("cloud_open_account").performClick()
+        compose.onNodeWithTag("cloud_provider_WEBDAV").performClick()
+        compose.onNodeWithTag("cloud_create_profile").performClick()
         compose.onNodeWithTag("cloud_server").performScrollTo().performTextReplacement("https://dav.example.org/files/")
         compose.onNodeWithTag("cloud_account").performScrollTo().performTextReplacement("reader")
         compose.onNodeWithTag("cloud_password").performScrollTo().performTextReplacement("test-password")

@@ -9,6 +9,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class CosCloudTransportTest {
     private val credentials = CloudCredentials("access", "secret", "https://cos.example.invalid",
@@ -17,6 +18,8 @@ class CosCloudTransportTest {
     private class Store(val overwrite: Boolean = false) : Interceptor {
         val objects = ConcurrentHashMap<String, ByteArray>()
         var beforeCreate: ((String) -> Unit)? = null
+        var listedKeys: List<String>? = null
+        val hiddenReads = ConcurrentHashMap<String, AtomicInteger>()
         val listSizes = java.util.Collections.synchronizedList(mutableListOf<Int>())
         override fun intercept(chain: Interceptor.Chain): Response {
             val request = chain.request()
@@ -27,7 +30,7 @@ class CosCloudTransportTest {
                     val prefix = request.url.queryParameter("prefix").orEmpty()
                     val size = request.url.queryParameter("max-keys")!!.toInt()
                     listSizes += size
-                    val keys = objects.keys.filter { it.startsWith(prefix) }.sorted().take(size)
+                    val keys = (listedKeys ?: objects.keys.toList()).filter { it.startsWith(prefix) }.sorted().take(size)
                     ("<ListBucketResult><IsTruncated>false</IsTruncated>" + keys.joinToString("") {
                         "<Contents><Key>$it</Key></Contents>"
                     } + "</ListBucketResult>").toByteArray()
@@ -41,7 +44,8 @@ class CosCloudTransportTest {
                     byteArrayOf()
                 }
                 request.method == "DELETE" -> { objects.remove(key); byteArrayOf() }
-                else -> objects[key] ?: run { status = 404; byteArrayOf() }
+                else -> objects[key]?.takeUnless { (hiddenReads[key]?.getAndDecrement() ?: 0) > 0 }
+                    ?: run { status = 404; byteArrayOf() }
             }
             return Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(status).message("test")
                 .body(bytes.toResponseBody()).build()
@@ -51,8 +55,56 @@ class CosCloudTransportTest {
     private fun transport(store: Store): CosCloudTransport {
         val rawCredentials = CloudCredentials(credentials.account, credentials.password, credentials.serverUrl,
             credentials.s3!!.copy(prefix = "ERead/cos-v1"))
-        val raw = S3CloudTransport(rawCredentials, {}, OkHttpClient.Builder().addInterceptor(store).build())
-        return CosCloudTransport(credentials, {}, raw)
+        val raw = S3CloudTransport(rawCredentials, {}, OkHttpClient.Builder().addInterceptor(store).build(), uncachedReads = true)
+        return CosCloudTransport(credentials, {}, raw, pause = {})
+    }
+
+    @Test fun connectionTestSucceedsEvenWhenTheDirectoryListingRemainsEmpty() {
+        val store = Store().apply { listedKeys = emptyList() }
+        transport(store).testWriteAccess()
+        assertTrue("Both temporary generations must be deleted without relying on a fresh list", store.objects.isEmpty())
+    }
+
+    @Test fun knownWriteRetriesVisibilityAndFreshDeviceFindsNewGenerationBehindOldListing() {
+        val store = Store()
+        val client = transport(store)
+        assertTrue(client.putVersionedMetadata("catalog.json", "first".toByteArray(), null))
+        val first = client.versionedMetadata("catalog.json")!!
+        val firstKey = store.objects.keys.single()
+        assertTrue(client.putVersionedMetadata("catalog.json", "second".toByteArray(), first.etag))
+        val secondKey = store.objects.keys.single { it != firstKey }
+        store.listedKeys = listOf(firstKey)
+        store.hiddenReads[secondKey] = AtomicInteger(2)
+        assertEquals("second", client.metadata("catalog.json")!!.decodeToString())
+        val fresh = transport(store)
+        assertEquals("second", fresh.metadata("catalog.json")!!.decodeToString())
+        assertFalse(fresh.putVersionedMetadata("catalog.json", "stale".toByteArray(), first.etag))
+        assertEquals("second", store.objects[secondKey]!!.decodeToString())
+    }
+
+    @Test fun cachedVersionCannotRollBackWhenANewlyCommittedObjectIsTemporarilyMissing() {
+        val store = Store()
+        val client = transport(store)
+        client.putMetadata("catalog.json", "first".toByteArray())
+        val firstKey = store.objects.keys.single()
+        client.putMetadata("catalog.json", "second".toByteArray())
+        val current = client.versionedMetadata("catalog.json")!!
+        val secondKey = store.objects.keys.single { it != firstKey }
+        store.listedKeys = listOf(firstKey)
+        store.hiddenReads[secondKey] = AtomicInteger(10)
+        val failure = assertThrows(java.io.IOException::class.java) { transport(store).readMetadata("catalog.json", current.etag) }
+        assertTrue(failure.message!!.contains("第 2 版"))
+        assertEquals(2, store.objects.size)
+    }
+
+    @Test fun corruptedReadAfterSuccessfulWriteFailsWithoutReturningOldContent() {
+        val store = Store()
+        val client = transport(store)
+        client.putMetadata("catalog.json", "expected".toByteArray())
+        store.objects[store.objects.keys.single()] = "unexpected".toByteArray()
+        val failure = assertThrows(java.io.IOException::class.java) { client.metadata("catalog.json") }
+        assertTrue(failure.message!!.contains("内容摘要不一致"))
+        assertFalse(failure.message!!.contains("unexpected"))
     }
 
     @Test fun immutableVersionsRejectStaleWritersWithoutS3ConditionalHeaders() {

@@ -1349,12 +1349,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             val profiles = WebDavProfiles(getApplication())
             val credentials = resolveCloudConnectionDraft(account, password, serverUrl,
                 if (password.isBlank()) profiles.find(account, serverUrl) else null)
-            if (cloudIdentity != credentials.identity) CloudBackupAutomation.cancelUploads(getApplication())
-            profiles.save(credentials, name, activate = true)
+            profiles.save(credentials, name, activate = false)
         }
         refreshCloudConfiguration()
         persistNow()
-        message = "WebDAV 配置已保存，可测试连接或点击书籍云图标上传"
+        message = "WebDAV 配置已保存，可在切换配置中启用"
     }
 
     fun selectCloudProfile(id: String) = cloudOperation(label = "切换备份配置") {
@@ -1368,11 +1367,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         cloudOperation(label = "保存 S3 备份配置") {
             require(credentials.s3 != null)
             persistNow()
-            if (cloudIdentity != credentials.identity) CloudBackupAutomation.cancelUploads(getApplication())
-            withContext(Dispatchers.IO) { WebDavProfiles(getApplication()).save(credentials, name, activate = true) }
+            withContext(Dispatchers.IO) { WebDavProfiles(getApplication()).save(credentials, name, activate = false) }
             refreshCloudConfiguration()
             persistNow()
-            message = "备份配置已启用"
+            message = "备份配置已保存，可在列表中启用"
         }
 
     suspend fun testS3Connection(credentials: com.eyue.reader.data.cloud.CloudCredentials): String {

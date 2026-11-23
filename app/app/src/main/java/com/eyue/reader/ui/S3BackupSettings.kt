@@ -7,74 +7,26 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.eyue.reader.data.cloud.CloudCredentials
 import com.eyue.reader.data.cloud.S3Location
-import com.eyue.reader.data.cloud.WebDavProfile
-import com.eyue.reader.data.cloud.WebDavProfiles
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-
-@Composable
-internal fun S3BackupSettings(profiles: List<WebDavProfile>, busy: Boolean, open: Boolean, onOpen: (Boolean) -> Unit,
-    onSave: (CloudCredentials, String) -> Unit, onTest: (suspend (CloudCredentials) -> String)?,
-    onActivate: (String) -> Unit, onDisconnect: () -> Unit = {}, onRemove: (String) -> Unit = {}) {
-    val context = LocalContext.current.applicationContext
-    var editing by remember { mutableStateOf<CloudCredentials?>(null) }
-    var name by remember { mutableStateOf("S3 备份") }
-    val scope = rememberCoroutineScope()
-    var removing by remember { mutableStateOf<WebDavProfile?>(null) }
-    val saved = profiles
-    OutlinedButton(onClick = { editing = null; name = "S3 备份"; onOpen(true) }, enabled = !busy,
-        modifier = Modifier.fillMaxWidth().testTag("cloud_open_s3")) { Text("添加 S3 / 腾讯云 COS 配置") }
-    profiles.firstOrNull { it.active }?.let {
-        Text("当前备份 · ${if (it.cos) "COS" else if (it.s3) "S3" else "WebDAV"} · ${it.name}", style = MaterialTheme.typography.bodySmall)
-    }
-    Text("WebDAV、S3 与 COS 可切换使用，自动备份使用当前启用的配置。停用或删除配置不删除云端备份。",
-        style = MaterialTheme.typography.bodySmall)
-    saved.forEach { profile ->
-        Row(Modifier.fillMaxWidth()) {
-            TextButton(onClick = { onActivate(profile.id) }, enabled = !busy && !profile.active,
-                modifier = Modifier.weight(1f).testTag("cloud_activate_${profile.id}")) {
-                Text("${if (profile.cos) "COS" else if (profile.s3) "S3" else "WebDAV"} · ${profile.name}") }
-            if (profile.active) TextButton(enabled = !busy, onClick = onDisconnect,
-                modifier = Modifier.testTag("cloud_stop_${profile.id}")) { Text("停用") }
-            if (profile.s3) TextButton(enabled = !busy, onClick = {
-                scope.launch {
-                    editing = withContext(Dispatchers.IO) { WebDavProfiles(context).read(profile.id) }
-                    name = profile.name
-                    onOpen(true)
-                }
-            }) { Text("编辑") }
-            TextButton(enabled = !busy, onClick = { removing = profile },
-                modifier = Modifier.testTag("cloud_remove_${profile.id}")) { Text("删除") }
-        }
-    }
-    removing?.let { profile -> AlertDialog(onDismissRequest = { removing = null }, title = { Text("删除备份配置？") },
-        text = { Text("删除“${profile.name}”的本机连接配置；若正在启用，会同时停用。云端书籍与备份保留。") },
-        confirmButton = { TextButton(onClick = { onRemove(profile.id); removing = null },
-            modifier = Modifier.testTag("cloud_confirm_remove")) { Text("删除") } },
-        dismissButton = { TextButton(onClick = { removing = null }) { Text("取消") } }) }
-    if (open) S3AccountDialog(editing, name, onSave, onTest) { onOpen(false) }
-}
 
 @Composable
 internal fun S3AccountDialog(saved: CloudCredentials?, initialName: String, onSave: (CloudCredentials, String) -> Unit,
-    onTest: (suspend (CloudCredentials) -> String)?, onClose: () -> Unit) {
+    onTest: (suspend (CloudCredentials) -> String)?, onClose: () -> Unit, initialCos: Boolean = false) {
     var name by remember { mutableStateOf(initialName) }
     var endpoint by remember { mutableStateOf(saved?.serverUrl.orEmpty()) }
     var bucket by remember { mutableStateOf(saved?.s3?.bucket.orEmpty()) }
-    var region by remember { mutableStateOf(saved?.s3?.region ?: "us-east-1") }
+    var region by remember { mutableStateOf(saved?.s3?.region ?: if (initialCos) "" else "us-east-1") }
     var prefix by remember { mutableStateOf(saved?.s3?.prefix ?: "ERead") }
     var access by remember { mutableStateOf(saved?.account.orEmpty()) }
     var secret by remember { mutableStateOf("") }
     var pathStyle by remember { mutableStateOf(saved?.s3?.pathStyle ?: true) }
-    var cos by remember { mutableStateOf(saved?.s3?.cos ?: false) }
+    val cos = saved?.s3?.cos ?: initialCos
     var result by remember { mutableStateOf<String?>(null) }
     var testing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -94,11 +46,6 @@ internal fun S3AccountDialog(saved: CloudCredentials?, initialName: String, onSa
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 fun fieldModifier(tag: String) = Modifier.fillMaxWidth().testTag("s3_$tag")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(!cos, { cos = false }, enabled = !testing, label = { Text("标准 S3") })
-                    FilterChip(cos, { cos = true; pathStyle = false }, enabled = !testing, label = { Text("腾讯云 COS") },
-                        modifier = Modifier.testTag("s3_provider_cos"))
-                }
                 OutlinedTextField(name, { name = it }, label = { Text("配置名称") }, enabled = !testing, modifier = fieldModifier("name"))
                 OutlinedTextField(endpoint, { endpoint = it }, label = { Text("Endpoint") }, placeholder = { Text("https://s3.example.com") },
                     supportingText = { Text("填写服务地址，不要包含 Bucket 桶名") },
@@ -138,6 +85,6 @@ internal fun S3AccountDialog(saved: CloudCredentials?, initialName: String, onSa
         },
         confirmButton = { TextButton(enabled = draft.isSuccess && name.isNotBlank() && !testing,
             modifier = Modifier.testTag("s3_save"),
-            onClick = { onSave(draft.getOrThrow(), name.trim()); onClose() }) { Text("保存并启用") } },
+            onClick = { onSave(draft.getOrThrow(), name.trim()); onClose() }) { Text("保存配置") } },
         dismissButton = { TextButton(onClick = onClose, enabled = !testing) { Text("取消") } })
 }
