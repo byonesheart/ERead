@@ -1,9 +1,9 @@
 {
-  "versionCode": 113,
-  "versionName": "1.11.33-beta.1",
+  "versionCode": 114,
+  "versionName": "1.11.33-beta.2",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.33-beta.1",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.33-beta.1/ERead-1.11.33-beta.1-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.33-beta.2",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.33-beta.2/ERead-1.11.33-beta.2-release.apk",
   "mirrors": [],
-  "changelog": "- 新增腾讯云 COS 备份，支持独立版本记录与多设备冲突保护。\n- 备份配置可停用、确认删除，并在 WebDAV、S3、COS 之间切换。\n- 新增文件夹递归批量导入书籍，逐本并行处理并即时入库。\n- 漫画文件夹支持 EPUB、MOBI 图片，按单本漫画导入并忽略文本。\n\n更多功能请自行体验。"
+  "changelog": "- 改善 COS 新版本记录的读取确认，兼容目录延迟并加入有界重试。\n- 备份配置集中到切换配置弹窗，按方式管理；点击名称编辑，开关互斥启用。\n- 保存配置与启用分开，可保持全部停用。\n\n更多功能请自行体验。"
 }
