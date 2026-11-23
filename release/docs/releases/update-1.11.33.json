@@ -1,0 +1,24 @@
+{
+  "versionCode": 116,
+  "versionName": "1.11.33",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.33",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.33/ERead-1.11.33-release.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1SuZTQ8z6tfwyhUpXbZAO1w?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/8074d93877c3",
+      "extractionCode": "DUiR"
+    }
+  ],
+  "changelog": [
+    "新增 S3、腾讯云 COS 备用备份，支持多配置管理与快速切换。",
+    "文件夹可递归识别并批量导入书籍，漫画文件夹支持 EPUB、MOBI。",
+    "单行书架分行显示作者、当前章节和章节进度，隐藏图标时保留云端下载入口。",
+    "更多功能请自行体验。"
+  ]
+}
