@@ -1,24 +1,23 @@
 {
-  "versionCode": 116,
-  "versionName": "1.11.33",
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.33",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.33/ERead-1.11.33-release.apk",
+  "versionCode": 117,
+  "versionName": "1.11.34",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.34",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.34/ERead-1.11.34-release.apk",
   "mirrors": [
     {
       "name": "百度网盘",
-      "url": "https://pan.baidu.com/s/1SuZTQ8z6tfwyhUpXbZAO1w?pwd=READ",
+      "url": "https://pan.baidu.com/s/1ow9cNoLoCD_dUchTNbzkOg?pwd=READ",
       "extractionCode": "READ"
     },
     {
       "name": "夸克网盘",
-      "url": "https://pan.quark.cn/s/8074d93877c3",
-      "extractionCode": "DUiR"
+      "url": "https://pan.quark.cn/s/3a8bee507284",
+      "extractionCode": "szuJ"
     }
   ],
   "changelog": [
-    "新增 S3、腾讯云 COS 备用备份，支持多配置管理与快速切换。",
-    "文件夹可递归识别并批量导入书籍，漫画文件夹支持 EPUB、MOBI。",
-    "单行书架分行显示作者、当前章节和章节进度，隐藏图标时保留云端下载入口。",
+    "单行书架书名按内容自然占行，作者、章节与进度排列更紧凑。",
+    "单行书架封面与三列模式统一尺寸，进度字号和样式保持一致。",
     "更多功能请自行体验。"
   ]
 }

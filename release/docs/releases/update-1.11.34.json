@@ -1,0 +1,23 @@
+{
+  "versionCode": 117,
+  "versionName": "1.11.34",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.34",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.34/ERead-1.11.34-release.apk",
+  "mirrors": [
+    {
+      "name": "百度网盘",
+      "url": "https://pan.baidu.com/s/1ow9cNoLoCD_dUchTNbzkOg?pwd=READ",
+      "extractionCode": "READ"
+    },
+    {
+      "name": "夸克网盘",
+      "url": "https://pan.quark.cn/s/3a8bee507284",
+      "extractionCode": "szuJ"
+    }
+  ],
+  "changelog": [
+    "单行书架书名按内容自然占行，作者、章节与进度排列更紧凑。",
+    "单行书架封面与三列模式统一尺寸，进度字号和样式保持一致。",
+    "更多功能请自行体验。"
+  ]
+}
