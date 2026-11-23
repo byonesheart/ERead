@@ -1,9 +1,13 @@
 {
-  "versionCode": 114,
-  "versionName": "1.11.33-beta.2",
+  "versionCode": 115,
+  "versionName": "1.11.33-beta.3",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.33-beta.2",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.33-beta.2/ERead-1.11.33-beta.2-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.33-beta.3",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.33-beta.3/ERead-1.11.33-beta.3-release.apk",
   "mirrors": [],
-  "changelog": "- 改善 COS 新版本记录的读取确认，兼容目录延迟并加入有界重试。\n- 备份配置集中到切换配置弹窗，按方式管理；点击名称编辑，开关互斥启用。\n- 保存配置与启用分开，可保持全部停用。\n\n更多功能请自行体验。"
+  "changelog": [
+    "单行书架分行显示作者与当前章节，补充章节进度。",
+    "隐藏封面图标时，未下载书籍仍保留下载图标。",
+    "更多功能请自行体验。"
+  ]
 }
