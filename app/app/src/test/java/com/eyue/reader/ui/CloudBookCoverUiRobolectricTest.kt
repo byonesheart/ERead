@@ -62,7 +62,8 @@ class CloudBookCoverUiRobolectricTest {
             mode = LibraryMode.NOVEL, cloudOnly = true, chapters = emptyList()))
         var downloads = 0
         compose.setContent {
-            MaterialTheme { BookCover(book.value, Modifier.width(120.dp).height(180.dp), onCloud = { downloads++ }) }
+            MaterialTheme { BookCover(book.value, Modifier.width(120.dp).height(180.dp), onCloud = { downloads++ },
+                hideCloudSyncIcon = true) }
         }
         compose.onNodeWithTag("cloud_book_cover_remote").assertIsDisplayed()
         compose.onNodeWithTag("cloud_book_pending_remote").assertDoesNotExist()
@@ -73,6 +74,6 @@ class CloudBookCoverUiRobolectricTest {
         }
         compose.onNodeWithTag("cloud_book_cover_remote").assertDoesNotExist()
         compose.onNodeWithTag("cloud_book_pending_remote").assertDoesNotExist()
-        compose.onNodeWithTag("cloud_book_remote").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithTag("cloud_book_remote").assertDoesNotExist()
     }
 }

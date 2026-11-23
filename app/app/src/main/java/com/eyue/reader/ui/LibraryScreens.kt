@@ -184,12 +184,20 @@ private enum class ShelfCloudAction {
             onLongClick = longPress), verticalAlignment = Alignment.CenterVertically) {
         BookCover(book, Modifier.width(if (xingcai) 56.dp else 53.dp).height(if (xingcai) 78.dp else 74.dp), onCloud, cloudBusy, cloudInProgress, cloudTaskLabel, cloudFraction,
             onCancelCloud, cloudCanCancel, cloudDirty, hideCloudSyncIcon)
-        Column(Modifier.weight(1f).then(if (xingcai) Modifier.height(80.dp) else Modifier).padding(start = 15.dp)) {
+        Column(Modifier.weight(1f).then(if (shelfLayout) Modifier.heightIn(min = 112.dp) else if (xingcai) Modifier.height(80.dp) else Modifier).padding(start = 15.dp)) {
             Text(book.title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 2, minLines = if (shelfLayout) 2 else 1, softWrap = true, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.testTag("shelf_book_title_${book.id}").then(if (onRename == null && !shelfLayout) Modifier else
                     Modifier.combinedClickable(onClick = onOpen,
                         onLongClick = onRename ?: longPress)))
-            Text(listOf(book.displayAuthor, chapterLabel(book)).filter { it.isNotBlank() }.joinToString(" · "),
+            if (shelfLayout) {
+                Text(book.displayAuthor, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp).testTag("shelf_book_author_${book.id}"))
+                Text(chapterLabel(book), color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 3.dp).testTag("shelf_book_current_chapter_${book.id}"))
+                Text("第 ${book.chapterIndex + 1} / ${book.chapters.size} 章", color = Olive, fontSize = 10.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 3.dp).testTag("shelf_book_chapter_${book.id}"))
+            } else Text(listOf(book.displayAuthor, chapterLabel(book)).filter { it.isNotBlank() }.joinToString(" · "),
                 color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (xingcai) {
                 Spacer(Modifier.weight(1f))
@@ -900,7 +908,7 @@ internal val LocalSourceReimport = staticCompositionLocalOf<(Book) -> Unit> { {}
                 }
             }
         }
-        if (onCloud != null && !hideCloudSyncIcon) {
+        if (onCloud != null && (!hideCloudSyncIcon || book.cloudOnly)) {
             Surface(Modifier.align(Alignment.BottomEnd).padding(3.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .92f), shape = CircleShape) {
                 IconButton(onClick = onCloud, enabled = !cloudBusy, modifier = Modifier.size(32.dp).testTag("cloud_book_${book.id}")) {
                     val needsUpdate = book.cloudEnabled && !book.cloudOnly && cloudDirty

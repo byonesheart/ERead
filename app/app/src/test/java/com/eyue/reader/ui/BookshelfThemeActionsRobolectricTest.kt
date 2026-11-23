@@ -175,6 +175,21 @@ class BookshelfThemeActionsRobolectricTest {
         compose.onNodeWithTag("shelf_list_row_local").assertIsDisplayed()
     }
 
+    @Test fun listSeparatesAuthorAndChapterAndKeepsChapterProgressVisible() {
+        val current = book("list").copy(author = "测试作者", chapters = listOf(
+            Chapter(title = "第一章"), Chapter(title = "第二章")), chapterIndex = 1)
+        compose.setContent { MaterialTheme {
+            Bookshelf(listOf(current), "", {}, {}, {}, {}, onCloud = {}, hideCoverIcons = true)
+        } }
+        compose.onNodeWithContentDescription("切换书架布局").performClick()
+        val author = compose.onNodeWithTag("shelf_book_author_list", useUnmergedTree = true).assertTextEquals("测试作者")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val chapter = compose.onNodeWithTag("shelf_book_current_chapter_list", useUnmergedTree = true).assertTextEquals("第二章")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue(author.bottom <= chapter.top)
+        compose.onNodeWithTag("shelf_book_chapter_list", useUnmergedTree = true).assertTextEquals("第 2 / 2 章").assertIsDisplayed()
+    }
+
     @Test fun hiddenCoverIconsReturnInBatchMode() {
         compose.setContent { MaterialTheme {
             Bookshelf(listOf(book("local")), "", {}, {}, {}, {}, onCloud = {}, onCloudBatch = {},
