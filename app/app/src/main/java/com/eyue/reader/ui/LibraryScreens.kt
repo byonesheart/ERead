@@ -179,27 +179,36 @@ private enum class ShelfCloudAction {
     selection: Pair<Boolean, () -> Unit>? = null, hideCloudSyncIcon: Boolean = false) {
     val xingcai = shelfLayout || LocalAppThemeStyle.current == AppThemeStyle.XINGCAI
     val longPress: (() -> Unit)? = if (shelfLayout) ({ onMore?.invoke() }) else onRename
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    val coverWidth = if (shelfLayout) ((maxWidth - 40.dp) / 3f).coerceAtLeast(1.dp) else if (xingcai) 56.dp else 53.dp
     Row(Modifier.fillMaxWidth().testTag(if (shelfLayout) "shelf_list_row_${book.id}" else "history_row_${book.id}")
         .combinedClickable(onClick = onOpen,
             onLongClick = longPress), verticalAlignment = Alignment.CenterVertically) {
-        BookCover(book, Modifier.width(if (xingcai) 56.dp else 53.dp).height(if (xingcai) 78.dp else 74.dp), onCloud, cloudBusy, cloudInProgress, cloudTaskLabel, cloudFraction,
+        BookCover(book, Modifier.width(coverWidth).height(if (shelfLayout) coverWidth / .8f else if (xingcai) 78.dp else 74.dp)
+            .testTag("shelf_book_cover_${book.id}"), onCloud, cloudBusy, cloudInProgress, cloudTaskLabel, cloudFraction,
             onCancelCloud, cloudCanCancel, cloudDirty, hideCloudSyncIcon)
-        Column(Modifier.weight(1f).then(if (shelfLayout) Modifier.heightIn(min = 112.dp) else if (xingcai) Modifier.height(80.dp) else Modifier).padding(start = 15.dp)) {
-            Text(book.title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 2, minLines = if (shelfLayout) 2 else 1, softWrap = true, overflow = TextOverflow.Ellipsis,
+        Column(Modifier.weight(1f).then(if (xingcai && !shelfLayout) Modifier.height(80.dp) else Modifier).padding(start = 15.dp)) {
+            Text(book.title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 2,
+                lineHeight = if (shelfLayout) 20.sp else LocalTextStyle.current.lineHeight, softWrap = true, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.testTag("shelf_book_title_${book.id}").then(if (onRename == null && !shelfLayout) Modifier else
                     Modifier.combinedClickable(onClick = onOpen,
                         onLongClick = onRename ?: longPress)))
             if (shelfLayout) {
-                Text(book.displayAuthor, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 4.dp).testTag("shelf_book_author_${book.id}"))
-                Text(chapterLabel(book), color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 3.dp).testTag("shelf_book_current_chapter_${book.id}"))
-                Text("第 ${book.chapterIndex + 1} / ${book.chapters.size} 章", color = Olive, fontSize = 10.sp,
+                Text(book.displayAuthor, color = Muted, fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp).testTag("shelf_book_author_${book.id}"))
+                Text(chapterLabel(book), color = Muted, fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp).testTag("shelf_book_current_chapter_${book.id}"))
+                Text("第 ${book.chapterIndex + 1} / ${book.chapters.size} 章", color = Olive, fontSize = 10.sp, lineHeight = 14.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 3.dp).testTag("shelf_book_chapter_${book.id}"))
+                    modifier = Modifier.padding(top = 2.dp).testTag("shelf_book_chapter_${book.id}"))
             } else Text(listOf(book.displayAuthor, chapterLabel(book)).filter { it.isNotBlank() }.joinToString(" · "),
                 color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (xingcai) {
+            if (shelfLayout) {
+                Text("${(book.progress * 100).toInt()}%", color = Olive, fontSize = 10.sp, lineHeight = 14.sp,
+                    modifier = Modifier.padding(top = 2.dp).testTag("shelf_book_percent_${book.id}"))
+                LinearProgressIndicator(progress = { book.progress }, color = Olive, trackColor = Line,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(2.dp))
+            } else if (xingcai) {
                 Spacer(Modifier.weight(1f))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
                     XingcaiProgressTrack(book.progress, Modifier.weight(1f))
@@ -213,6 +222,7 @@ private enum class ShelfCloudAction {
             if (selection != null) ShelfBookCheckbox(book, selection.first, selection.second)
             else if (onMore != null && !hideCloudSyncIcon) ShelfMoreButton(book, onClick = onMore)
         } else Icon(Icons.Outlined.ChevronRight, "打开书籍", tint = Muted, modifier = Modifier.size(20.dp))
+    }
     }
 }
 

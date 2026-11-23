@@ -176,18 +176,35 @@ class BookshelfThemeActionsRobolectricTest {
     }
 
     @Test fun listSeparatesAuthorAndChapterAndKeepsChapterProgressVisible() {
-        val current = book("list").copy(author = "测试作者", chapters = listOf(
+        val current = book("list").copy(title = "短书名", author = "测试作者", chapters = listOf(
             Chapter(title = "第一章"), Chapter(title = "第二章")), chapterIndex = 1)
-        compose.setContent { MaterialTheme {
-            Bookshelf(listOf(current), "", {}, {}, {}, {}, onCloud = {}, hideCoverIcons = true)
+        val long = current.copy(id = "long-list", title = "这是一本名称很长需要自然换行的书籍用来检查书名自适应显示")
+        compose.setContent { EReadTheme(false, false, AppThemeStyle.CLASSIC) {
+            host.set(LocalView.current)
+            Surface(Modifier.fillMaxSize()) {
+                Bookshelf(listOf(current, long), "", {}, {}, {}, {}, onCloud = {}, hideCoverIcons = true)
+            }
         } }
+        val gridCover = compose.onNodeWithTag("shelf_book_cover_list", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val gridPercent = compose.onNodeWithTag("shelf_book_percent_list").fetchSemanticsNode().boundsInRoot
         compose.onNodeWithContentDescription("切换书架布局").performClick()
+        val listCover = compose.onNodeWithTag("shelf_book_cover_list", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        assertEquals(gridCover.width, listCover.width, 1f)
+        assertEquals(gridCover.height, listCover.height, 1f)
+        val title = compose.onNodeWithTag("shelf_book_title_list", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val longTitle = compose.onNodeWithTag("shelf_book_title_long-list", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        assertTrue("Short titles must not reserve a second line", title.height < longTitle.height)
         val author = compose.onNodeWithTag("shelf_book_author_list", useUnmergedTree = true).assertTextEquals("测试作者")
             .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         val chapter = compose.onNodeWithTag("shelf_book_current_chapter_list", useUnmergedTree = true).assertTextEquals("第二章")
             .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         assertTrue(author.bottom <= chapter.top)
+        assertTrue("Author and chapter should stay compact", chapter.top - author.bottom <= 2f)
         compose.onNodeWithTag("shelf_book_chapter_list", useUnmergedTree = true).assertTextEquals("第 2 / 2 章").assertIsDisplayed()
+        val percent = compose.onNodeWithTag("shelf_book_percent_list", useUnmergedTree = true)
+            .assertTextEquals("25%").fetchSemanticsNode().boundsInRoot
+        assertTrue("List progress must not be larger than grid progress", percent.height <= gridPercent.height)
+        capture("shelf-list-compact")
     }
 
     @Test fun hiddenCoverIconsReturnInBatchMode() {
