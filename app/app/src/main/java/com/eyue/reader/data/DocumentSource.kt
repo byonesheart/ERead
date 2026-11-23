@@ -107,16 +107,18 @@ fun retainDocumentReadPermission(context: Context, uri: Uri): Boolean {
     val permissionUri = if (DocumentsContract.isTreeUri(uri)) {
         DocumentsContract.buildTreeDocumentUri(requireNotNull(uri.authority), DocumentsContract.getTreeDocumentId(uri))
     } else uri
+    fun retained() = context.contentResolver.persistedUriPermissions.any { grant ->
+        grant.isReadPermission && (grant.uri == permissionUri || (DocumentsContract.isTreeUri(grant.uri) &&
+            DocumentsContract.isTreeUri(uri) && grant.uri.authority == uri.authority &&
+            DocumentsContract.getTreeDocumentId(grant.uri) == DocumentsContract.getTreeDocumentId(uri)))
+    }
+    if (retained()) return true
     try {
         context.contentResolver.takePersistableUriPermission(permissionUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
     } catch (_: SecurityException) {
         // ACTION_SEND and many ACTION_VIEW providers offer only a temporary grant.
     } catch (_: IllegalArgumentException) { }
-    return context.contentResolver.persistedUriPermissions.any { grant ->
-        grant.isReadPermission && (grant.uri == permissionUri || (DocumentsContract.isTreeUri(grant.uri) &&
-            DocumentsContract.isTreeUri(uri) && grant.uri.authority == uri.authority &&
-            DocumentsContract.getTreeDocumentId(grant.uri) == DocumentsContract.getTreeDocumentId(uri)))
-    }
+    return retained()
 }
 
 fun requireDocumentAvailable(context: Context, pathOrUri: String) {

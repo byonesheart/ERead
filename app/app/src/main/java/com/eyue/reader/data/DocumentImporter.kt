@@ -18,6 +18,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,7 +38,7 @@ class DocumentImporter(private val context: Context) {
     private var lastReportAt = 0L
     val progress = currentProgress.asStateFlow()
 
-    private fun report(stage: String, item: String = "", done: Int = 0, total: Int = 0,
+    @Synchronized private fun report(stage: String, item: String = "", done: Int = 0, total: Int = 0,
                        fraction: Float? = if (total > 0) done.toFloat() / total else null) {
         if (!progressActive) return
         val now = System.nanoTime()
@@ -93,7 +98,7 @@ class DocumentImporter(private val context: Context) {
             sources.filterNot { it in imageSources }.forEach { item ->
                 work.ensureActive()
                 val imported = runCatching {
-                    if (item.isDirectory) return@runCatching importComicFolder(item, reloadBook)
+                    if (item.isDirectory) return@runCatching importComicFolder(item, reloadBook) { work.ensureActive() }
                     val format = kind(item) ?: throw IllegalArgumentException("不支持的文件格式")
                     val id = reloadBook?.id ?: UUID.randomUUID().toString()
                     val directory = importDirectory(id, reloadBook != null)
@@ -145,11 +150,73 @@ class DocumentImporter(private val context: Context) {
     }
 
     suspend fun importFolder(uri: Uri, rule: String): Book = withContext(Dispatchers.IO) {
+        val work = currentCoroutineContext()
         importTask {
             report("扫描漫画文件夹")
             lastImportErrors = emptyList()
             lastImportWarnings = emptyList()
-            importComicFolder(sourceInfo(uri)).also { LocalSourceChanges(context).imported(it) }
+            importComicFolder(sourceInfo(uri), checkActive = { work.ensureActive() }).also { LocalSourceChanges(context).imported(it) }
+        }
+    }
+
+    suspend fun importFolderBooks(uri: Uri, mode: LibraryMode, rule: String,
+        onBookImported: suspend (Book) -> Unit = {}): List<Book> = withContext(Dispatchers.IO) {
+        val work = currentCoroutineContext()
+        importTask {
+            retainDocumentReadPermission(context, uri)
+            lastImportErrors = emptyList()
+            lastImportWarnings = emptyList()
+            val root = sourceInfo(uri)
+            require(root.isDirectory) { "请选择书籍文件夹" }
+            val queue = java.util.ArrayDeque<SourceItem>().apply { add(root) }
+            val visited = mutableSetOf<String>()
+            val files = linkedMapOf<String, SourceItem>()
+            val failures = mutableListOf<String>()
+            while (queue.isNotEmpty()) {
+                work.ensureActive()
+                val folder = queue.removeFirst()
+                if (!visited.add(folder.id ?: folder.uri.toString())) continue
+                report("扫描书籍文件夹", folder.name, files.size)
+                val entries = try { children(folder) } catch (error: Exception) {
+                    rethrowCancellation(error)
+                    failures += "${folder.name}：${error.message ?: "无法读取目录"}"
+                    emptyList()
+                }
+                entries.forEach {
+                    if (it.isDirectory) queue.add(it)
+                    else if (kind(it) in setOf(BookFormat.TXT, BookFormat.MOBI, BookFormat.EPUB, BookFormat.PDF))
+                        files.putIfAbsent(it.id ?: it.uri.toString(), it)
+                }
+            }
+            require(files.isNotEmpty()) { failures.joinToString("\n").ifEmpty { "文件夹内未找到 TXT、MOBI、EPUB 或 PDF" } }
+            val accepted = Mutex()
+            val completed = java.util.concurrent.atomic.AtomicInteger()
+            val books = mutableListOf<Book>()
+            // Each worker owns an importer; progress, diagnostics and errors cannot leak between books.
+            // Two books bound peak memory even when each EPUB also prepares chapters concurrently.
+            files.values.toList().chunked(2).forEach { batch ->
+                val results = coroutineScope { batch.map { item -> async {
+                    val child = DocumentImporter(context)
+                    var error: String? = null
+                    val imported = try {
+                        report("并行导入书籍", item.name, completed.get(), files.size)
+                        child.importFiles(listOf(item.uri), mode, rule, onBookImported = { book ->
+                            accepted.withLock { onBookImported(book) }
+                        })
+                    } catch (failure: Exception) {
+                        rethrowCancellation(failure)
+                        error = "${item.name}：${failure.message ?: "导入失败"}"
+                        emptyList()
+                    } finally { report("并行导入书籍", item.name, completed.incrementAndGet(), files.size) }
+                    Triple(imported, error?.let(::listOf) ?: child.lastImportErrors, child.lastImportWarnings)
+                } }.awaitAll() }
+                results.forEach { (imported, errors, warnings) ->
+                    books += imported; failures += errors; lastImportWarnings += warnings
+                }
+            }
+            lastImportErrors = failures
+            if (books.isEmpty() && failures.isNotEmpty()) throw IllegalArgumentException(failures.joinToString("\n"))
+            books
         }
     }
 
@@ -158,8 +225,8 @@ class DocumentImporter(private val context: Context) {
         return (if (reload) File(root, "source-${UUID.randomUUID()}") else root).apply { mkdirs() }
     }
 
-    private fun importComicFolder(root: SourceItem, reloadBook: Book? = null): Book {
-        require(root.isDirectory) { "请选择包含图片或 PDF 的漫画文件夹" }
+    private fun importComicFolder(root: SourceItem, reloadBook: Book? = null, checkActive: () -> Unit = {}): Book {
+        require(root.isDirectory) { "请选择包含图片、PDF、EPUB 或 MOBI 的漫画文件夹" }
         val id = reloadBook?.id ?: UUID.randomUUID().toString()
         val directory = importDirectory(id, reloadBook != null)
         try {
@@ -169,11 +236,12 @@ class DocumentImporter(private val context: Context) {
             val tree = mutableMapOf<String, List<SourceItem>>()
             var discovered = 0
             fun scan(folder: SourceItem) {
+                checkActive()
                 if (folder.uri.toString() in tree) return
                 val entries = children(folder)
                 tree[folder.uri.toString()] = entries
                 entries.forEach { item ->
-                    if (item.isDirectory) scan(item) else if (isImage(item.name, item.mime) || isPdf(item.name, item.mime)) {
+                    if (item.isDirectory) scan(item) else if (isImage(item.name, item.mime) || isPdf(item.name, item.mime) || kind(item) in setOf(BookFormat.EPUB, BookFormat.MOBI)) {
                         discovered++
                         report("扫描漫画文件夹", item.name, discovered)
                     }
@@ -201,18 +269,40 @@ class DocumentImporter(private val context: Context) {
                 report("整理漫画页面", item.name, ++completed, discovered)
                 return pages
             }
+            fun importEbookPages(item: SourceItem): List<PageSource> {
+                report("整理漫画电子书图片", item.name, completed, discovered)
+                val nested = File(directory, "ebook-${fileIndex++}").apply { mkdirs() }
+                val format = requireNotNull(kind(item))
+                val original = File(nested, "source.${format.name.lowercase()}")
+                copy(item.uri, original, checkActive)
+                val check = { ImportWorkPriority.checkpoint(checkActive) }
+                val chapters = if (format == BookFormat.EPUB) epubLazyChapters(original, nested, item.name, check).second else {
+                    var html = ""
+                    val parsed = MobiArchive.readSlices(original, item.name, check, { html = it }) {}
+                    val body = sourceBodyTag(html)
+                    mobiLazyChapters(original, parsed, nested, check) {
+                        it.copy(html = sourceBodyFragment(html.substring(it.sourceStart, it.sourceEnd), body))
+                    }
+                }
+                val pages = chapters.flatMap { it.inlineImages }.map { PageSource(it.path) }
+                if (pages.isEmpty()) warn("${item.name}：未找到图片，已跳过；此入口按单本漫画导入，不保留正文")
+                report("整理漫画页面", item.name, ++completed, discovered)
+                return pages
+            }
             fun collect(folder: SourceItem): ComicHierarchyNode {
+                checkActive()
                 if (!visited.add(folder.uri.toString())) return ComicHierarchyNode(folder.name)
                 val entries = tree[folder.uri.toString()].orEmpty()
                 val pages = entries.filter { !it.isDirectory && isImage(it.name, it.mime) }.map(::importImage)
-                val branches = entries.filter { it.isDirectory || isPdf(it.name, it.mime) }.map { item ->
+                val branches = entries.filter { it.isDirectory || isPdf(it.name, it.mime) || kind(it) in setOf(BookFormat.EPUB, BookFormat.MOBI) }.map { item ->
                     if (item.isDirectory) collect(item)
-                    else ComicHierarchyNode(item.name.substringBeforeLast('.', item.name), importPdfPages(item))
+                    else ComicHierarchyNode(item.name.substringBeforeLast('.', item.name),
+                        if (isPdf(item.name, item.mime)) importPdfPages(item) else importEbookPages(item))
                 }
                 return ComicHierarchyNode(folder.name, pages, branches)
             }
             val chapters = ComicHierarchyPlanner.chapters(collect(root))
-            require(chapters.isNotEmpty()) { "文件夹中没有可阅读的图片或 PDF" }
+            require(chapters.isNotEmpty()) { "文件夹中没有可阅读的图片，或 PDF / EPUB / MOBI 中未找到漫画页面" }
             val first = chapters.first().pages.first()
             report("生成第一页封面", root.name)
             val cover = cover(first, directory)

@@ -103,6 +103,37 @@ internal class S3CloudTransport(
         return result.toList()
     }
 
+    internal fun objectKeys(path: String, limit: Int = 1000): List<String> = list(path, limit = limit).keys.map {
+        require(it.startsWith(key(path))) { "云端对象超出备份路径" }
+        it.removePrefix(prefix)
+    }
+
+    internal fun createCosObject(path: String, bytes: ByteArray): Boolean =
+        execute(signed("PUT", url(path), bytes.toRequestBody(), sha256(bytes),
+            mapOf("x-cos-forbid-overwrite" to "true"))).use {
+            if (it.code == 409) false else { requireSuccess(it); true }
+        }
+
+    internal fun testCosCreateOnly() {
+        val path = ".connection-test-${UUID.randomUUID()}"
+        val bytes = UUID.randomUUID().toString().toByteArray()
+        var created = false
+        var failure: Throwable? = null
+        try {
+            require(createCosObject(path, bytes)) { "COS 测试文件创建失败" }
+            created = true
+            require(!createCosObject(path, "changed".toByteArray())) {
+                "COS 防覆盖未生效：请使用从未开启版本控制的专用存储桶，且不要给备份目录设置自动删除规则"
+            }
+            require(metadata(path, bytes.size)?.contentEquals(bytes) == true) { "COS 读写测试不一致" }
+        } catch (error: Throwable) { failure = error; throw error }
+        finally {
+            if (created) try { deleteObject(path) } catch (cleanup: Throwable) {
+                if (failure != null) failure.addSuppressed(cleanup) else throw cleanup
+            }
+        }
+    }
+
     override fun metadata(path: String, maximum: Int): ByteArray? =
         execute(signed("GET", url(path))).use {
             if (it.code == 404) null else { requireSuccess(it); readBounded(it, maximum) }
@@ -150,7 +181,9 @@ internal class S3CloudTransport(
         } while (token != null)
     }
 
-    private fun delete(path: String) {
+    private fun delete(path: String) = deleteObject(path)
+
+    internal fun deleteObject(path: String) {
         execute(signed("DELETE", url(path))).use { if (it.code != 404) requireSuccess(it) }
     }
 

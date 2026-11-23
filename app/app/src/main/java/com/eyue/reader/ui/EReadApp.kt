@@ -181,6 +181,9 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
             }
         }
         val folder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { it?.let(vm::importFolder) }
+        val bookFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
+            it?.let { uri -> vm.importBookFolder(uri, selectedImportMode) }
+        }
         val font = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { uri -> vm.importFont(uri, selectedFontMode) } }
         fun importFont() { selectedFontMode = vm.mode; font.launch(arrayOf("*/*")) }
         val backgroundImage = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
@@ -369,6 +372,7 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                                     cloudConfigured = vm.cloudConfigured, cloudBusy = vm.cloudBusy, cloudTaskLabel = vm.cloudTaskLabel,
                                     cloudFraction = vm.cloudFraction, onSaveCloudAccount = vm::saveCloudAccount,
                                     onSelectCloudProfile = vm::selectCloudProfile,
+                                    onRemoveCloudProfile = vm::removeCloudProfile,
                                     onTestCloudConnection = vm::testCloudConnection, onCloudAutoBackup = vm::setCloudAutoBackup,
                                     onRestoreCloudBookInfo = vm::restoreCloudBookInfo, onDisconnectCloud = vm::disconnectCloud,
                                     onCloudAutoBackupMetered = vm::setCloudAutoBackupMetered,
@@ -430,7 +434,10 @@ fun EReadApp(vm: ReaderViewModel, volumeEvents: Flow<Int>, updateSession: AppUpd
                         selectedImportMode = vm.mode; showImport = false; tab = 1
                         files.launch(arrayOf("*/*"))
                     }
-                    ImportOption(Icons.Outlined.FolderOpen, "导入漫画文件夹", "多分支分章分节，单一子目录递归合并") {
+                    ImportOption(Icons.Outlined.FolderOpen, "从文件夹批量导入书籍", "递归扫描子文件夹中的 TXT、MOBI、EPUB、PDF，逐本并行导入") {
+                        selectedImportMode = vm.mode; showImport = false; tab = 1; bookFolder.launch(null)
+                    }
+                    ImportOption(Icons.Outlined.FolderOpen, "导入漫画文件夹", "图片、PDF、EPUB、MOBI 合并为单本漫画；不判断是否包含文本，正文不导入") {
                         showImport = false; tab = 1; vm.mode = LibraryMode.COMIC; folder.launch(null)
                     }
                     ImportOption(Icons.Outlined.Cloud, "从 WebDAV 导入", "浏览网盘，多选图书并在后台下载") {

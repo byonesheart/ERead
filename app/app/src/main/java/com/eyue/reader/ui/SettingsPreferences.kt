@@ -88,7 +88,8 @@ private enum class SettingsPage(val title: String) {
     automaticUpdateChecks: Boolean = true, onAutomaticUpdateChecks: (Boolean) -> Unit = {},
     onHideCoverIcons: (Boolean) -> Unit = {},
     onSaveS3: (com.eyue.reader.data.cloud.CloudCredentials, String) -> Unit = { _, _ -> },
-    onTestS3: (suspend (com.eyue.reader.data.cloud.CloudCredentials) -> String)? = null) {
+    onTestS3: (suspend (com.eyue.reader.data.cloud.CloudCredentials) -> String)? = null,
+    onRemoveCloudProfile: (String) -> Unit = {}) {
     var pages by remember { mutableStateOf(emptyList<SettingsPage>()) }
     var cleanup by remember { mutableStateOf<LibraryCleanupKind?>(null) }
     val page = pages.lastOrNull()
@@ -210,7 +211,7 @@ private enum class SettingsPage(val title: String) {
                 SettingsPage.CLOUD -> CloudBackupSettings(cloudAccount, cloudConfigured, state.cloudAutoBackup, cloudBusy,
                     cloudTaskLabel, cloudFraction, onSaveCloudAccount, onTestCloudConnection, onCloudAutoBackup,
                     onRestoreCloudBookInfo, onDisconnectCloud, cloudServerUrl, state.cloudAutoBackupMetered,
-                    onCloudAutoBackupMetered, onTestCloudDraftConnection, restoreProgress, onSelectCloudProfile, onSaveS3, onTestS3)
+                    onCloudAutoBackupMetered, onTestCloudDraftConnection, restoreProgress, onSelectCloudProfile, onSaveS3, onTestS3, onRemoveCloudProfile)
                 SettingsPage.CACHE -> {
                     SettingsCard {
                         LibraryCleanupKind.entries.forEachIndexed { index, kind ->
@@ -340,7 +341,8 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
     onTestDraftConnection: (suspend (account: String, password: String, server: String) -> String)? = null,
     restoreProgress: CloudOperationProgress? = null, onSelectProfile: (String) -> Unit = {},
     onSaveS3: (com.eyue.reader.data.cloud.CloudCredentials, String) -> Unit = { _, _ -> },
-    onTestS3: (suspend (com.eyue.reader.data.cloud.CloudCredentials) -> String)? = null) {
+    onTestS3: (suspend (com.eyue.reader.data.cloud.CloudCredentials) -> String)? = null,
+    onRemoveCloudProfile: (String) -> Unit = {}) {
     var accountDialog by remember { mutableStateOf(false) }
     var s3Dialog by remember { mutableStateOf(false) }
     val context = LocalContext.current.applicationContext
@@ -364,7 +366,8 @@ private fun cleanupTag(kind: LibraryCleanupKind) = "settings_clear_" + when (kin
                 Text(if (configured && profiles.any { it.active && !it.s3 }) "WebDAV 配置 · $name" else "WebDAV 配置",
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            S3BackupSettings(profiles, busy, s3Dialog, { s3Dialog = it }, onSaveS3, onTestS3, onSelectProfile)
+            S3BackupSettings(profiles, busy, s3Dialog, { s3Dialog = it }, onSaveS3, onTestS3, onSelectProfile,
+                onDisconnect, onRemoveCloudProfile)
             if (busy) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(17.dp), color = Olive, strokeWidth = 2.dp)
                 Text(taskLabel, fontSize = 12.sp, modifier = Modifier.weight(1f).padding(start = 8.dp))

@@ -93,7 +93,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         onError = { message = "阅读记录保存失败：${it.message ?: "请重试"}" })
     private data class ImportRequest(val id: String, val uris: List<Uri>, val mode: LibraryMode,
         val folder: Boolean = false, val external: Boolean = false, val mimeType: String? = null,
-        val requestId: String? = null, val webDavId: java.util.UUID? = null)
+        val requestId: String? = null, val webDavId: java.util.UUID? = null, val bookFolder: Boolean = false)
     private val importRequests = Channel<ImportRequest>(Channel.UNLIMITED)
     private var activeImportId: String? = null
     private val externalRequestIds = mutableSetOf<String>()
@@ -412,7 +412,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun enqueueImport(uris: List<Uri>, selectedMode: LibraryMode, folder: Boolean = false,
                               external: Boolean = false, mimeType: String? = null, requestId: String? = null,
-                              webDavId: java.util.UUID? = null) {
+                              webDavId: java.util.UUID? = null, bookFolder: Boolean = false) {
         if (uris.isEmpty()) return
         val id = java.util.UUID.randomUUID().toString()
         val sources = uris.distinct()
@@ -420,7 +420,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             ?.substringAfterLast(':')?.substringBeforeLast('.')?.ifBlank { null } ?: "正在读取文件"
             else "导入 ${sources.size} 个文件"
         pendingImports = pendingImports + PendingImport(title, selectedMode, id = id, queued = true, total = sources.size, external = external)
-        if (importRequests.trySend(ImportRequest(id, sources, selectedMode, folder, external, mimeType, requestId, webDavId)).isFailure)
+        if (importRequests.trySend(ImportRequest(id, sources, selectedMode, folder, external, mimeType, requestId, webDavId, bookFolder)).isFailure)
             pendingImports = pendingImports.filterNot { it.id == id }
     }
 
@@ -473,7 +473,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             val book = acceptImportedBook(incoming, notices, prepareLayout = !request.external && request.webDavId == null,
                 compareContents = request.external || request.webDavId != null)
             completed++
-            pendingImports = pendingImports.map { if (it.id == request.id) it.copy(mode = book?.mode ?: incoming.mode, completed = completed) else it }
+            pendingImports = pendingImports.map { if (it.id == request.id) it.copy(mode = book?.mode ?: incoming.mode, completed = completed,
+                total = if (request.bookFolder) maxOf(completed, taskImporter.progress.value?.total ?: it.total) else it.total) else it }
             if (completed == 1 && book != null) {
                 if (activeBookId == null && mode == request.mode) mode = book.mode
                 if (request.external && request.id !in dismissedExternalOpens) {
@@ -486,7 +487,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         try {
-            if (request.folder) acceptBook(taskImporter.importFolder(request.uris.single(), state.settings.chapterRule))
+            if (request.bookFolder) taskImporter.importFolderBooks(request.uris.single(), request.mode, state.settings.chapterRule, ::acceptBook)
+            else if (request.folder) acceptBook(taskImporter.importFolder(request.uris.single(), state.settings.chapterRule))
             else {
                 // Preserve multi-file ordering and the importer's image grouping.
                 val info = request.uris.singleOrNull()?.let { uri -> withContext(Dispatchers.IO) {
@@ -1370,13 +1372,29 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             withContext(Dispatchers.IO) { WebDavProfiles(getApplication()).save(credentials, name, activate = true) }
             refreshCloudConfiguration()
             persistNow()
-            message = "S3 备份配置已启用"
+            message = "备份配置已启用"
         }
 
     suspend fun testS3Connection(credentials: com.eyue.reader.data.cloud.CloudCredentials): String {
         require(credentials.s3 != null)
         CloudBackupService(getApplication()).testConnection(credentials)
-        return "S3 连接成功，已验证列举、上传、读取和删除权限"
+        return "${if (credentials.s3?.cos == true) "COS" else "S3"} 连接成功，已验证列举、上传、读取、删除和版本保护"
+    }
+
+    fun removeCloudProfile(id: String) = cloudOperation(label = "删除备份配置") {
+        persistNow()
+        val active = withContext(Dispatchers.IO) { WebDavProfiles(getApplication()).list().firstOrNull { it.id == id }?.active == true }
+        if (active) CloudBackupAutomation.cancelUploads(getApplication())
+        withContext(Dispatchers.IO) {
+            val profiles = WebDavProfiles(getApplication())
+            val profile = requireNotNull(profiles.list().firstOrNull { it.id == id }) { "配置已不存在" }
+            if (profile.active) profiles.disconnect()
+            profiles.remove(profile)
+        }
+        if (active) changed(state.copy(cloudAutoBackup = false))
+        refreshCloudConfiguration()
+        persistNow()
+        message = "已删除本机配置，云端备份保留"
     }
 
     fun disconnectCloud() = cloudOperation(label = "解除备份连接") {
@@ -2133,6 +2151,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun importFolder(uri: Uri) {
         enqueueImport(listOf(uri), LibraryMode.COMIC, folder = true)
+    }
+
+    fun importBookFolder(uri: Uri, selectedMode: LibraryMode) {
+        enqueueImport(listOf(uri), selectedMode, bookFolder = true)
     }
 
     fun importBackground(uri: Uri, selectedMode: LibraryMode = mode) {

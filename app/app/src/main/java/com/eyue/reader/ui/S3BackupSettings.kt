@@ -23,32 +23,43 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun S3BackupSettings(profiles: List<WebDavProfile>, busy: Boolean, open: Boolean, onOpen: (Boolean) -> Unit,
     onSave: (CloudCredentials, String) -> Unit, onTest: (suspend (CloudCredentials) -> String)?,
-    onActivate: (String) -> Unit) {
+    onActivate: (String) -> Unit, onDisconnect: () -> Unit = {}, onRemove: (String) -> Unit = {}) {
     val context = LocalContext.current.applicationContext
     var editing by remember { mutableStateOf<CloudCredentials?>(null) }
     var name by remember { mutableStateOf("S3 备份") }
     val scope = rememberCoroutineScope()
-    val saved = profiles.filter { it.s3 }
+    var removing by remember { mutableStateOf<WebDavProfile?>(null) }
+    val saved = profiles
     OutlinedButton(onClick = { editing = null; name = "S3 备份"; onOpen(true) }, enabled = !busy,
-        modifier = Modifier.fillMaxWidth().testTag("cloud_open_s3")) { Text("添加 S3 备份配置") }
+        modifier = Modifier.fillMaxWidth().testTag("cloud_open_s3")) { Text("添加 S3 / 腾讯云 COS 配置") }
     profiles.firstOrNull { it.active }?.let {
-        Text("当前备份 · ${if (it.s3) "S3" else "WebDAV"} · ${it.name}", style = MaterialTheme.typography.bodySmall)
+        Text("当前备份 · ${if (it.cos) "COS" else if (it.s3) "S3" else "WebDAV"} · ${it.name}", style = MaterialTheme.typography.bodySmall)
     }
-    Text("WebDAV 与 S3 可切换使用，自动备份使用当前启用的配置。切换后可手动还原该配置的书架。",
+    Text("WebDAV、S3 与 COS 可切换使用，自动备份使用当前启用的配置。停用或删除配置不删除云端备份。",
         style = MaterialTheme.typography.bodySmall)
     saved.forEach { profile ->
         Row(Modifier.fillMaxWidth()) {
             TextButton(onClick = { onActivate(profile.id) }, enabled = !busy && !profile.active,
-                modifier = Modifier.weight(1f)) { Text(if (profile.active) "已启用 · ${profile.name}" else "启用 · ${profile.name}") }
-            TextButton(enabled = !busy, onClick = {
+                modifier = Modifier.weight(1f).testTag("cloud_activate_${profile.id}")) {
+                Text("${if (profile.cos) "COS" else if (profile.s3) "S3" else "WebDAV"} · ${profile.name}") }
+            if (profile.active) TextButton(enabled = !busy, onClick = onDisconnect,
+                modifier = Modifier.testTag("cloud_stop_${profile.id}")) { Text("停用") }
+            if (profile.s3) TextButton(enabled = !busy, onClick = {
                 scope.launch {
                     editing = withContext(Dispatchers.IO) { WebDavProfiles(context).read(profile.id) }
                     name = profile.name
                     onOpen(true)
                 }
             }) { Text("编辑") }
+            TextButton(enabled = !busy, onClick = { removing = profile },
+                modifier = Modifier.testTag("cloud_remove_${profile.id}")) { Text("删除") }
         }
     }
+    removing?.let { profile -> AlertDialog(onDismissRequest = { removing = null }, title = { Text("删除备份配置？") },
+        text = { Text("删除“${profile.name}”的本机连接配置；若正在启用，会同时停用。云端书籍与备份保留。") },
+        confirmButton = { TextButton(onClick = { onRemove(profile.id); removing = null },
+            modifier = Modifier.testTag("cloud_confirm_remove")) { Text("删除") } },
+        dismissButton = { TextButton(onClick = { removing = null }) { Text("取消") } }) }
     if (open) S3AccountDialog(editing, name, onSave, onTest) { onOpen(false) }
 }
 
@@ -63,11 +74,12 @@ internal fun S3AccountDialog(saved: CloudCredentials?, initialName: String, onSa
     var access by remember { mutableStateOf(saved?.account.orEmpty()) }
     var secret by remember { mutableStateOf("") }
     var pathStyle by remember { mutableStateOf(saved?.s3?.pathStyle ?: true) }
+    var cos by remember { mutableStateOf(saved?.s3?.cos ?: false) }
     var result by remember { mutableStateOf<String?>(null) }
     var testing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val draft = runCatching {
-        val location = S3Location(bucket.trim(), region.trim(), prefix.trim().trim('/'), pathStyle)
+        val location = S3Location(bucket.trim(), region.trim(), prefix.trim().trim('/'), if (cos) false else pathStyle, cos)
         val password = secret.ifBlank {
             require(saved != null && saved.account == access.trim() && saved.serverUrl ==
                 com.eyue.reader.data.cloud.normalizeWebDavServer(endpoint)) {
@@ -77,11 +89,16 @@ internal fun S3AccountDialog(saved: CloudCredentials?, initialName: String, onSa
         }
         CloudCredentials(access.trim(), password, endpoint, location)
     }
-    LaunchedEffect(endpoint, bucket, region, prefix, access, secret, pathStyle) { result = null }
-    AlertDialog(onDismissRequest = { if (!testing) onClose() }, title = { Text("S3 备份配置") },
+    LaunchedEffect(endpoint, bucket, region, prefix, access, secret, pathStyle, cos) { result = null }
+    AlertDialog(onDismissRequest = { if (!testing) onClose() }, title = { Text(if (cos) "腾讯云 COS 备份配置" else "S3 备份配置") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 fun fieldModifier(tag: String) = Modifier.fillMaxWidth().testTag("s3_$tag")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(!cos, { cos = false }, enabled = !testing, label = { Text("标准 S3") })
+                    FilterChip(cos, { cos = true; pathStyle = false }, enabled = !testing, label = { Text("腾讯云 COS") },
+                        modifier = Modifier.testTag("s3_provider_cos"))
+                }
                 OutlinedTextField(name, { name = it }, label = { Text("配置名称") }, enabled = !testing, modifier = fieldModifier("name"))
                 OutlinedTextField(endpoint, { endpoint = it }, label = { Text("Endpoint") }, placeholder = { Text("https://s3.example.com") },
                     supportingText = { Text("填写服务地址，不要包含 Bucket 桶名") },
@@ -98,8 +115,10 @@ internal fun S3AccountDialog(saved: CloudCredentials?, initialName: String, onSa
                         Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("s3_validation_error"))
                     }
                 }
-                Row { Checkbox(pathStyle, { pathStyle = it }, enabled = !testing, modifier = Modifier.testTag("s3_path_style"))
+                if (!cos) Row { Checkbox(pathStyle, { pathStyle = it }, enabled = !testing, modifier = Modifier.testTag("s3_path_style"))
                     Text("路径式地址（MinIO 等兼容服务）") }
+                if (cos) Text("Endpoint 示例：https://cos.ap-nanjing.myqcloud.com。使用从未开启版本控制的专用桶，不要对备份目录设置自动删除规则。COS 使用前缀内的 cos-v1 独立目录，保留记录版本以保护多设备同步。",
+                    style = MaterialTheme.typography.bodySmall)
                 Text("需要列举、读取、写入和删除权限。连接测试会创建并清理临时文件。使用现有存储桶，区域按服务商填写。",
                     style = MaterialTheme.typography.bodySmall)
                 if (endpoint.startsWith("http://")) Text("HTTP 会明文传输书籍和记录，建议使用 HTTPS。", color = MaterialTheme.colorScheme.error)

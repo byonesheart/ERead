@@ -48,7 +48,8 @@ internal fun normalizeWebDavServer(value: String): String {
     }
 }
 
-data class S3Location(val bucket: String, val region: String, val prefix: String = "ERead", val pathStyle: Boolean = true) {
+data class S3Location(val bucket: String, val region: String, val prefix: String = "ERead", val pathStyle: Boolean = true,
+    val cos: Boolean = false) {
     init {
         require(bucket.matches(Regex("[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]"))) { "存储桶名称无效" }
         require(region.matches(Regex("[a-z0-9-]{1,64}"))) { "区域名称无效" }
@@ -61,7 +62,7 @@ class CloudCredentials(val account: String, val password: String, serverUrl: Str
     val s3: S3Location? = null) {
     val serverUrl: String = normalizeWebDavServer(serverUrl)
     // Keep the original provider's history and resumable parts without migrating sensitive files.
-    val identity: String get() = s3?.let { "s3\n$serverUrl\n$account\n${it.bucket}\n${it.prefix.trim('/')}" }
+    val identity: String get() = s3?.let { "${if (it.cos) "cos" else "s3"}\n$serverUrl\n$account\n${it.bucket}\n${it.prefix.trim('/')}" }
         ?: if (serverUrl == DEFAULT_WEBDAV_SERVER) account else "$serverUrl\n$account"
     val rootUrl: String get() = serverUrl + "ERead/"
     init {

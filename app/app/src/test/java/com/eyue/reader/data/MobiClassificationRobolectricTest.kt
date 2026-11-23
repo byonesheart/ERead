@@ -28,6 +28,27 @@ import java.util.UUID
 @Config(sdk = [28], manifest = Config.NONE, shadows = [MobiBitmapRegionDecoderShadow::class])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class MobiClassificationRobolectricTest {
+    @Test fun comicFolderCombinesTextBearingMobiAndEpubAsOneImageBook() = runBlocking {
+        File(fixtures, "01.mobi").writeBytes(mobiFixture("<body><p>Readable text stays out of the comic.</p><img recindex='2'/></body>",
+            listOf(imageBytes(Color.RED))))
+        val epub = File(fixtures, "02.epub")
+        java.util.zip.ZipOutputStream(epub.outputStream()).use { zip ->
+            val files = mapOf("META-INF/container.xml" to "<container><rootfile full-path='book.opf'/></container>".toByteArray(),
+                "book.opf" to ("<package><metadata><title>Comic EPUB</title></metadata><manifest>" +
+                    "<item id='c' href='chapter.xhtml' media-type='application/xhtml+xml'/><item id='i' href='image.png' media-type='image/png'/>" +
+                    "</manifest><spine><itemref idref='c'/></spine></package>").toByteArray(),
+                "chapter.xhtml" to "<html><body><p>Also readable text.</p><img src='image.png'/></body></html>".toByteArray(),
+                "image.png" to imageBytes(Color.GREEN))
+            files.forEach { (path, bytes) -> zip.putNextEntry(java.util.zip.ZipEntry(path)); zip.write(bytes); zip.closeEntry() }
+        }
+        val provider = BookFolderTestProvider(fixtures).register(context)
+        val book = importer.importFolder(provider.tree, DEFAULT_CHAPTER_RULE)
+        assertEquals(BookFormat.IMAGES, book.format)
+        assertEquals(LibraryMode.COMIC, book.mode)
+        assertEquals(listOf(Color.RED, Color.GREEN), book.chapters.flatMap { it.pages }.map { pixel(it.path) })
+        assertTrue(book.chapters.all { it.textPath == null && it.characterCount <= 0 })
+    }
+
     private lateinit var context: Context
     private lateinit var root: File
     private lateinit var fixtures: File

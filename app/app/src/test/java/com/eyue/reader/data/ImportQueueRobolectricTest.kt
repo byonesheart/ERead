@@ -148,11 +148,11 @@ class ImportQueueRobolectricTest {
         await { "held.txt" in opened }
         assertTrue(vm.importing)
         vm.uploadCloudBook(book)
-        assertEquals("请先配置 WebDAV 网盘", vm.message)
+        assertEquals("请先配置云端备份", vm.message)
         vm.message = null
         vm.deleteCloudBook(book.copy(cloudEnabled = true))
         await { vm.cloudTransfers.isEmpty() && vm.message != null }
-        assertEquals("请先配置 WebDAV 网盘", vm.message)
+        assertEquals("请先配置云端备份", vm.message)
         assertTrue(vm.importing)
         assertEquals(listOf(book), vm.state.books)
         gates.getValue("held.txt").countDown()

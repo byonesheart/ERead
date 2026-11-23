@@ -79,7 +79,11 @@ class CloudBackupService(
     private val context: Context,
     private val credentialStore: CloudCredentialStore = EncryptedCloudCredentialStore(context),
     private val transportFactory: (CloudCredentials, () -> Unit) -> CloudTransport = { credentials, check ->
-        if (credentials.s3 != null) S3CloudTransport(credentials, check) else WebDavCloudTransport(credentials, check)
+        when {
+            credentials.s3?.cos == true -> CosCloudTransport(credentials, check)
+            credentials.s3 != null -> S3CloudTransport(credentials, check)
+            else -> WebDavCloudTransport(credentials, check)
+        }
     },
     private val onProgress: (CloudOperationProgress) -> Unit = {}
 ) {
@@ -145,6 +149,7 @@ class CloudBackupService(
             transport.ensureCollection("books/")
             transport.metadata("catalog.json")
             if (transport is S3CloudTransport) transport.testWriteAccess()
+            if (transport is CosCloudTransport) transport.testWriteAccess()
             Unit
         } finally { cancellation.cancel(); transport.cancel() }
     }

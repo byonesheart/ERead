@@ -1,11 +1,13 @@
 package com.eyue.reader.ui
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import com.eyue.reader.data.cloud.CloudCredentials
 import com.eyue.reader.data.cloud.S3Location
+import com.eyue.reader.data.cloud.WebDavProfile
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -21,6 +23,41 @@ import org.robolectric.annotation.LooperMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class S3BackupSettingsRobolectricTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun activeS3CanBeStoppedDeletedWithConfirmationAndSwitchedToWebDav() {
+        var stopped = false
+        var removed: String? = null
+        var activated: String? = null
+        val profiles = listOf(WebDavProfile("s3", "access", "https://s3.example.com", "备用", true, true),
+            WebDavProfile("dav", "reader", "https://dav.example.com", "网盘", false))
+        compose.setContent { MaterialTheme { Column {
+            S3BackupSettings(profiles, false, false, {}, { _, _ -> }, null, { activated = it },
+                { stopped = true }, { removed = it })
+        } } }
+        compose.onNodeWithTag("cloud_stop_s3").performClick()
+        compose.runOnIdle { assertTrue(stopped) }
+        compose.onNodeWithTag("cloud_activate_dav").performClick()
+        compose.runOnIdle { assertEquals("dav", activated) }
+        compose.onNodeWithTag("cloud_remove_s3").performClick()
+        compose.runOnIdle { assertNull(removed) }
+        compose.onNodeWithTag("cloud_confirm_remove").performClick()
+        compose.runOnIdle { assertEquals("s3", removed) }
+    }
+
+    @Test fun cosCanBeSelectedAndSavedWithoutPathStyle() {
+        var selected: CloudCredentials? = null
+        compose.setContent { MaterialTheme {
+            S3AccountDialog(null, "腾讯云", { credentials, _ -> selected = credentials }, null, {})
+        } }
+        compose.onNodeWithTag("s3_provider_cos").performClick()
+        for ((tag, value) in listOf("endpoint" to "https://cos.ap-nanjing.myqcloud.com", "region" to "ap-nanjing",
+            "bucket" to "reader-1250000000", "access" to "example-access", "secret" to "example-secret")) {
+            compose.onNodeWithTag("s3_$tag").performScrollTo().performTextReplacement(value)
+        }
+        compose.onNodeWithTag("s3_path_style").assertDoesNotExist()
+        compose.onNodeWithTag("s3_save").performClick()
+        compose.runOnIdle { assertTrue(selected!!.s3!!.cos); assertFalse(selected!!.s3!!.pathStyle) }
+    }
 
     @Test fun changingSavedEndpointExplainsWhySecretMustBeEnteredAgain() {
         val saved = CloudCredentials("access", "saved-secret", "https://bucket.cos.ap-nanjing.myqcloud.com",
