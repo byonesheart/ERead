@@ -66,6 +66,7 @@ internal class EbookReaderController {
     private var ready = false
     private var acceptsChapterChanges = false
     private var autoScrollSpeed = 0f
+    private var foreground = true
     private var dispatch: ((JSONObject) -> Unit)? = null
     private var pending: Pair<Int?, JSONObject>? = null
     private var bindingOwner: Any? = null
@@ -98,6 +99,11 @@ internal class EbookReaderController {
         }
     }
 
+    fun foreground(visible: Boolean) {
+        foreground = visible
+        dispatch?.invoke(JSONObject().put("type", "visibility").put("visible", visible))
+    }
+
     fun clearSelection() { dispatch?.invoke(JSONObject().put("type", "clearSelection")) }
     fun closeImageViewer() { dispatch?.invoke(JSONObject().put("type", "closeImageViewer")) }
     fun cancelTouch() { dispatch?.invoke(JSONObject().put("type", "cancelTouch")) }
@@ -115,6 +121,7 @@ internal class EbookReaderController {
     internal fun loaded(applied: JSONObject? = null, owner: Any? = null) {
         if (owner != null && bindingOwner !== owner) return
         ready = true
+        if (!foreground) foreground(false)
         if (applied != null && pending?.second === applied) pending = null
         // Both surfaces send the restored viewport after their ready event.
         consumePending()

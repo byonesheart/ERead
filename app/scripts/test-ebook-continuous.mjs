@@ -128,6 +128,29 @@ try{
    assert.deepEqual(await page.evaluate(()=>Array.from(document.querySelectorAll('iframe')).map(f=>Number(f.dataset.chapter)).sort()),[5,6,7]);
    assert.equal(await page.evaluate(()=>window.original.isConnected),false);return state;
  });
+ await test('foreground-return-keeps-chapter-and-exact-scroll-position',async()=>{
+   const offset=chapters[6].canonical.indexOf(chapters[6].paragraphs[10]);await jump(6,offset);
+   await page.evaluate(()=>scrollBy(0,37));await page.waitForTimeout(120);
+   const before=await page.evaluate(()=>({state:window.events.filter(e=>e.type==='viewport').at(-1),y:scrollY}));
+   await page.evaluate(()=>ERead.command({type:'visibility',visible:false}));
+   const count=await page.evaluate(()=>window.events.filter(e=>e.type==='viewport').length);
+   await page.setViewportSize({width:300,height:400});await page.waitForTimeout(150);
+   assert.equal(await page.evaluate(()=>window.events.filter(e=>e.type==='viewport').length),count);
+   await page.setViewportSize({width:392,height:760});
+   await page.evaluate(()=>ERead.command({type:'visibility',visible:true}));await page.waitForTimeout(200);
+   const after=await page.evaluate(()=>({state:window.events.filter(e=>e.type==='viewport').at(-1),y:scrollY}));
+   assert.equal(after.state.chapter,before.state.chapter);assert.equal(after.state.offset,before.state.offset);
+   assert.ok(Math.abs(after.y-before.y)<=1);return {before,after};
+ });
+ await test('background-speech-navigation-takes-priority-over-the-saved-viewport',async()=>{
+   await jump(2,chapters[2].canonical.indexOf(chapters[2].paragraphs[8]));
+   await page.evaluate(()=>ERead.command({type:'visibility',visible:false}));
+   const offset=chapters[6].canonical.indexOf(chapters[6].paragraphs[10]);
+   await page.evaluate(offset=>ERead.command({type:'navigate',chapter:6,offset}),offset);
+   await page.evaluate(()=>{window.events=[];ERead.command({type:'visibility',visible:true});});await ready(6);
+   const after=await page.evaluate(()=>window.events.filter(e=>e.type==='viewport').at(-1));
+   assert.ok(after.offset<=offset+2&&after.endOffset>offset);return after;
+ });
  await test('child-note-and-selection-keep-chapter-and-window-coordinates',async()=>{
    const offset=chapters[6].canonical.indexOf('原书注释');await jump(6,offset);
    const child=page.frames().find(f=>/\/6\.html/.test(f.url()));

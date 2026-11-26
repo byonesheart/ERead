@@ -40,6 +40,12 @@ internal class EbookSourceStore(private val context: Context, private val book: 
     private val source: String = (if (book.sourceLinked) book.sourceUri ?: book.sourcePath else book.sourcePath ?: book.sourceUri)
         ?: if (book.format == BookFormat.TXT) "" else throw IOException("原文件不存在，请重新选择这本书")
     private val bookKey = digest(book.id).take(24)
+    private val preparedRoot by lazy {
+        val books = File(context.filesDir, "books").canonicalFile
+        val directory = File(books, book.id).canonicalFile
+        require(directory.parentFile == books) { "图书目录越界" }
+        File(directory, "source-dom")
+    }
     private val origin = "https://eread.local/$bookKey/"
     private val displayRevision = digest(preview.toString() + ":" + book.chapters.joinToString("|") { "${it.textPath}:${it.lazySourcePath}" }).take(16)
     val continuousKey: String get() = "$bookKey:${book.contentVersion}:$displayRevision:continuous"
@@ -79,7 +85,7 @@ internal class EbookSourceStore(private val context: Context, private val book: 
                 if (book.format == BookFormat.MOBI && file.parentFile == File(requireNotNull(content.textPath)).canonicalFile.parentFile &&
                     file.name.startsWith("mobi-inline-")) deferredImages["images/" + file.name.removePrefix("mobi-inline-")] = file.path
             }
-            val catalog = index ?: prepare { worker.ensureActive() }.also { index = it }
+            val catalog = index ?: prepare(chapterIndex) { worker.ensureActive() }.also { index = it }
             synchronized(documents) { documents.remove(chapterIndex)?.also { documents[chapterIndex] = it } }?.takeIf { it.canonicalText == canonicalText }
                 ?.let { return@withLock it }
             val rows = catalog.getJSONArray("chapters")
@@ -193,13 +199,13 @@ internal class EbookSourceStore(private val context: Context, private val book: 
         return EbookSourceResource(mime(path), stream = stream)
     }
 
-    private fun prepare(checkActive: () -> Unit): JSONObject {
+    private fun prepare(chapterIndex: Int, checkActive: () -> Unit): JSONObject {
         require(book.format in setOf(BookFormat.EPUB, BookFormat.MOBI)) { "此格式不使用原书排版" }
-        if ((book.format == BookFormat.MOBI || book.format == BookFormat.EPUB && book.contentVersion >= 9) && book.chapters.all {
-                it.lazySourcePath?.let { path -> File(path).isFile } == true }) {
+        if ((book.format == BookFormat.MOBI || book.format == BookFormat.EPUB && book.contentVersion >= 9) &&
+            book.chapters[chapterIndex].lazySourcePath?.let { File(it).isFile } == true) {
             // New imports already saved the exact chapter DOM. Only the requested
             // chapter manifest is read; EPUB resources stay in the original archive.
-            directory = File(context.cacheDir, "ebook-source/$bookKey").apply { mkdirs() }
+            directory = preparedRoot.apply { mkdirs() }
             val resources = JSONObject()
             book.chapters.flatMap { it.inlineImages }.distinctBy { it.path }.forEach { image ->
                 val file = File(image.path)
@@ -214,12 +220,17 @@ internal class EbookSourceStore(private val context: Context, private val book: 
         requireBookSourceAvailable(context, book)
         val identity = documentSourceIdentity(context, source) + ":source-dom-${if (book.format == BookFormat.MOBI) 2 else 1}:" + book.format + ":" +
             book.chapters.joinToString("|") { "${it.id}:${it.title}" }
-        val folder = File(context.cacheDir, "ebook-source/$bookKey/${digest(identity)}").apply { mkdirs() }
+        val folder = File(preparedRoot, digest(identity))
+        if (!folder.exists()) {
+            val previous = File(context.cacheDir, "ebook-source/$bookKey/${digest(identity)}")
+            if (previous.isDirectory) { folder.parentFile?.mkdirs(); previous.renameTo(folder) }
+        }
+        folder.mkdirs()
         directory = folder
         val manifest = AtomicFile(File(folder, "index.json"))
         val cached = runCatching { JSONObject(manifest.readFully().toString(Charsets.UTF_8)) }.getOrNull()
         if (cached?.optString("identity") == identity && cached.optJSONArray("chapters")?.length() == book.chapters.size &&
-            (0 until book.chapters.size).all { i -> val row = cached.getJSONArray("chapters").getJSONObject(i)
+            cached.getJSONArray("chapters").getJSONObject(chapterIndex).let { row ->
                 row.optBoolean("dynamic") || (row.optBoolean("deferred") && File(folder, "mobi-expanded.html").isFile ||
                     File(folder, row.getString("html")).isFile) && File(folder, row.getString("notes")).isFile }) return cached
         val result = sourceDocument { file ->

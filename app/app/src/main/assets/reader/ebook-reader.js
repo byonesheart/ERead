@@ -30,6 +30,9 @@
         autoScrollFrame = requestAnimationFrame(tick);
     }
     let configurationGeneration = 0, resumeGeneration = 0, activeFont = null;
+    let inBackground = false, visibilityRestoring = false, visibilityTimer = 0;
+    let stableViewport = null, backgroundViewport = null;
+    let foregroundNavigation = null;
     let dialogueMarked = false, dialogueMapping = null;
     const loadedFonts = new Map(), sourceMappings = [];
     const imageCrops = new Map();
@@ -550,7 +553,7 @@
             atStart: position <= 1, atEnd: position + (horizontal ? innerWidth : view.height) >= extent - 1};
     }
     function report(force) {
-        if (!started || pageAnimation || pageTransition || touch?.dragging) return;
+        if (!started || inBackground || visibilityRestoring || document.hidden || pageAnimation || pageTransition || touch?.dragging) return;
         if (resourceLayoutPending) {
             resourceLayoutPending = false;
             refreshResourceLayout();
@@ -561,6 +564,8 @@
         if (!force && now - lastBridgeReport < 80) { drawDecorations(); return; }
         lastBridgeReport = now;
         const state = viewport(), signature = JSON.stringify(state);
+        stableViewport = {anchor:readingAnchor(state), x:scrollX, y:scrollY, page:state.page,
+            width:innerWidth, height:innerHeight, config:JSON.stringify(config)};
         if (force || signature !== lastViewport) { lastViewport = signature; send('viewport', state); }
         drawDecorations();
     }
@@ -575,9 +580,9 @@
         else if (anchor) navigate(anchor, true);
         else report(true);
     }
-    function readingAnchor() {
+    function readingAnchor(current = viewport()) {
         if (reflowAnchor) return reflowAnchor;
-        const current = viewport(), anchor = navigationAnchor;
+        const anchor = navigationAnchor;
         const fallback = config.mode === 'SCROLL' ? current : {...current, offset:current.anchorOffset};
         if (!anchor) return fallback;
         if (anchor.lastPage) return current.atEnd ? anchor : fallback;
@@ -779,6 +784,7 @@
         state.frame = requestAnimationFrame(frame);
     }
     async function configure(next, preserve, force) {
+        if (started && (inBackground || document.hidden)) { config = next; return; }
         if (!force && started && !dialogueMapping && JSON.stringify(next) === JSON.stringify(config)) return;
         const generation = ++configurationGeneration;
         if (!force && started && !dialogueMapping && (!next.dialogueColor || dialogueMarked)) {
@@ -801,7 +807,7 @@
         finishPageAnimation();
         keepPagedViewport();
         const anchor = preserve && started && (!continuousHost || continuousHost.isActive(frameChapter))
-            ? (dialogueMapping ? reflowAnchor : readingAnchor()) : null;
+            ? (backgroundViewport?.anchor || (dialogueMapping ? reflowAnchor : readingAnchor())) : null;
         if (anchor && !reflowAnchor) reflowAnchor = {...anchor};
         if (started && next.dialogueColor && !dialogueMarked && !dialogueMapping) {
             entries.forEach(entry => { entry.node.data = entry.original; nodeEntries.delete(entry.node); });
@@ -1228,10 +1234,45 @@
             const startupTimer = setTimeout(finishStartup, 120);
         } catch (error) { fail(error); }
     }
+    function restoreForeground() {
+        clearTimeout(visibilityTimer);
+        visibilityTimer = setTimeout(async function () {
+            if (inBackground || document.hidden) return;
+            const saved = backgroundViewport;
+            try {
+                const unchanged = saved && saved.width === innerWidth && saved.height === innerHeight && saved.config === JSON.stringify(config);
+                if (unchanged && !foregroundNavigation) {
+                    if (config.mode === 'SCROLL') scrollTo(saved.x, saved.y);
+                    else moveToPage(saved.page);
+                } else {
+                    await configure(config, true, true);
+                    if (inBackground || backgroundViewport !== saved) return;
+                    if (foregroundNavigation || saved) navigate(foregroundNavigation || saved.anchor, true);
+                }
+                foregroundNavigation = null; backgroundViewport = null; visibilityRestoring = false; report(true);
+            } catch (error) { fail(error); }
+        }, 80);
+    }
+    function setForeground(visible) {
+        if (!visible) {
+            if (!inBackground) backgroundViewport = stableViewport;
+            inBackground = true;
+            clearTimeout(resizeTimer); clearTimeout(visibilityTimer);
+        } else if (inBackground || visibilityRestoring) {
+            inBackground = false;
+            if (continuousHost) { backgroundViewport = null; visibilityRestoring = false; return; }
+            visibilityRestoring = true; restoreForeground();
+        }
+    }
+    document.addEventListener('visibilitychange', () => setForeground(!document.hidden));
     async function command(value) {
         if (!started) return;
         try {
-            if (value.type === 'navigate') navigate(value);
+            if (value.type === 'visibility') setForeground(value.visible);
+            else if (value.type === 'navigate') {
+                if (inBackground || visibilityRestoring) foregroundNavigation = value;
+                else navigate(value);
+            }
             else if (value.type === 'resume') {
                 const generation = ++resumeGeneration;
                 const options = value.options;
@@ -1280,6 +1321,8 @@
     }, {passive:true});
     window.addEventListener('resize', function () {
         if (continuousHost) return;
+        if (inBackground || document.hidden) return;
+        if (visibilityRestoring) { restoreForeground(); return; }
         clearTimeout(resizeTimer); resizeTimer = setTimeout(function () { configure(config, true, true).catch(fail); }, 80);
     });
     document.addEventListener('touchstart', function (event) {

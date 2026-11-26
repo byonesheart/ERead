@@ -947,9 +947,11 @@ internal fun ReaderScreen(
             }
         }
     }
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, ebookController) {
         val observer = LifecycleEventObserver { _, event ->
             readerForeground = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_RESUME)
+                ebookController.foreground(readerForeground)
             if (event == Lifecycle.Event.ON_RESUME && speechSession.active && speechDetached && !latestTtsFollowPage) {
                 promptOnReturn = true
                 followPagePrompt = true

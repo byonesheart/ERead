@@ -284,22 +284,58 @@ class EbookSourceDocumentRobolectricTest {
         assertTrue("Cold preparation must actually read the archive", probe.opens.get() > 0)
         first.close()
         val archiveDigest = sha256(source)
-        val cached = File(context.cacheDir, "ebook-source").walkTopDown().filter(File::isFile).toList()
+        val cached = File(context.filesDir, "books/${book.id}/source-dom").walkTopDown().filter(File::isFile).toList()
         assertTrue(cached.any { it.name == "index.json" })
         val stamp = 1_650_000_000_000L
         cached.forEach { assertTrue(it.setLastModified(stamp)) }
-        val before = cached.associate { it.relativeTo(context.cacheDir).path to (it.lastModified() to it.readBytes()) }
+        val before = cached.associate { it.relativeTo(context.filesDir).path to (it.lastModified() to it.readBytes()) }
         val sourceOpens = probe.opens.get()
         val secondDocument = store(book).load(1, text(book, 1))
         assertEquals(firstDocument.html, secondDocument.html)
         assertEquals(firstDocument.key, secondDocument.key)
         assertEquals("A warm chapter must not reopen and scan the source", sourceOpens, probe.opens.get())
         before.forEach { (relative, snapshot) ->
-            val file = File(context.cacheDir, relative)
+            val file = File(context.filesDir, relative)
             assertEquals("Warm open rewrote $relative", snapshot.first, file.lastModified())
             assertArrayEquals(snapshot.second, file.readBytes())
         }
         assertArrayEquals(archiveDigest, sha256(source))
+    }
+
+    @Test fun clearingDisposableCacheDoesNotRebuildAnUnchangedBooksPreparedDom() = runBlocking {
+        val source = epubFixture()
+        val probe = sourceProvider(source)
+        val book = epubBook(source).copy(sourcePath = null, sourceUri = probe.uri.toString())
+        val first = store(book)
+        val document = first.load(1, text(book, 1))
+        first.close()
+        val opens = probe.opens.get()
+        assertEquals(File(root, "cache").canonicalFile, context.cacheDir.canonicalFile)
+        context.cacheDir.deleteRecursively()
+        val reopened = store(book).load(1, text(book, 1))
+        assertEquals(document.html, reopened.html)
+        assertEquals("Evicting disposable cache must not trigger a full archive read", opens, probe.opens.get())
+        LibraryRepository(context).removeBookFiles(book)
+        assertFalse(File(context.filesDir, "books/${book.id}/source-dom").exists())
+    }
+
+    @Test fun oldDisposableDomIsAdoptedWithoutReadingTheArchiveAgain() = runBlocking {
+        val source = epubFixture()
+        val probe = sourceProvider(source)
+        val book = epubBook(source).copy(sourcePath = null, sourceUri = probe.uri.toString())
+        val first = store(book)
+        val document = first.load(1, text(book, 1))
+        first.close()
+        val prepared = File(context.filesDir, "books/${book.id}/source-dom").listFiles()!!.single()
+        val key = MessageDigest.getInstance("SHA-256").digest(book.id.toByteArray()).joinToString("") { "%02x".format(it) }.take(24)
+        val legacy = File(context.cacheDir, "ebook-source/$key/${prepared.name}")
+        legacy.parentFile.mkdirs()
+        assertTrue(prepared.renameTo(legacy))
+        val opens = probe.opens.get()
+        assertEquals(document.html, store(book).load(1, text(book, 1)).html)
+        assertEquals(opens, probe.opens.get())
+        assertFalse(legacy.exists())
+        assertTrue(prepared.isDirectory)
     }
 
     @Test fun nonSeekableProviderIsCopiedOnceForConcurrentResourcesAndRemovedOnClose() = runBlocking {

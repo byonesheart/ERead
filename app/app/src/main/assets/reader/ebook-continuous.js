@@ -3,6 +3,9 @@
     const bridge = window.__ERead;
     let options, active = -1, serial = 0, ready = false, frame = 0, manual = false, endTimer;
     let pending = null, automatic = 0, last = null, imageViewerChapter = null, loadingChapter = -1;
+    let inBackground = false, visibilityRestoring = false, visibilityTimer = 0;
+    let stableViewport = null, backgroundViewport = null;
+    let foregroundNavigation = null;
     let autoScrollFrame = 0, autoScrollSpeed = 0, autoScrollTime = 0, autoScrollRemainder = 0;
     function setAutoScroll(speed) {
         cancelAnimationFrame(autoScrollFrame); autoScrollFrame = 0; autoScrollTime = 0;
@@ -55,7 +58,7 @@
         loadingChapter = next;
         send('chapterLoading', {chapter:active, loading:next >= 0});
     }
-    function commandChild(index, command) { loaded.get(index)?.frame?.contentWindow?.ERead?.command(command); }
+    function commandChild(index, command) { return loaded.get(index)?.frame?.contentWindow?.ERead?.command(command); }
     function request(index) {
         if (index < 0 || index >= rows.length || loaded.has(index)) return;
         const token = ++serial;
@@ -95,6 +98,7 @@
     }
     function report() {
         frame = 0;
+        if (inBackground || visibilityRestoring || document.hidden) return;
         let low = 0, high = rows.length;
         while (low < high) { const mid = (low + high) >>> 1; if (rows[mid].getBoundingClientRect().bottom <= 1) low = mid + 1; else high = mid; }
         let index = Math.min(rows.length - 1, low);
@@ -138,10 +142,12 @@
             schedule(); return;
         }
         if (value.type === 'viewport') {
-            if (!ready || index !== active || pending) return;
+            if (!ready || inBackground || visibilityRestoring || document.hidden || index !== active || pending) return;
             const rect = rows[index].getBoundingClientRect();
             if (rect.bottom <= 1 || rect.top > 1) { schedule(); return; }
             last = Object.assign({}, value, {chapter:index, scrolling:manual || value.scrolling});
+            stableViewport = {chapter:index, offset:value.offset, top:-rect.top, width:innerWidth, height:innerHeight,
+                config:JSON.stringify(options.config)};
             bridge.event(JSON.stringify(last)); return;
         }
         if (value.type === 'manualStart') {
@@ -184,8 +190,40 @@
         });
         navigate(value.initialNavigation);
     }
+    function restoreForeground() {
+        clearTimeout(visibilityTimer);
+        visibilityTimer = setTimeout(async () => {
+            if (inBackground || document.hidden) return;
+            const saved = backgroundViewport;
+            const unchanged = saved && saved.width === innerWidth && saved.height === innerHeight && saved.config === JSON.stringify(options.config);
+            if (!unchanged) await Promise.all(Array.from(loaded.keys(), index => commandChild(index, {type:'hostResize'})));
+            if (inBackground || backgroundViewport !== saved) return;
+            backgroundViewport = null; visibilityRestoring = false;
+            const navigation = foregroundNavigation; foregroundNavigation = null;
+            if (saved && unchanged && !navigation) {
+                retain(saved.chapter);
+                automatic++; scrollTo(0, rows[saved.chapter].getBoundingClientRect().top + scrollY + saved.top);
+                requestAnimationFrame(() => { automatic--; schedule(); });
+            } else if (navigation || saved) navigate(navigation || saved);
+            schedule();
+        }, 80);
+    }
+    function setForeground(visible) {
+        loaded.forEach((item, index) => commandChild(index, {type:'visibility', visible:visible}));
+        if (!visible) {
+            if (!inBackground) backgroundViewport = stableViewport;
+            inBackground = true; clearTimeout(visibilityTimer);
+        } else if (inBackground || visibilityRestoring) {
+            inBackground = false; visibilityRestoring = true; restoreForeground();
+        }
+    }
+    document.addEventListener('visibilitychange', () => setForeground(!document.hidden));
     function command(value) {
-        if (value.type === 'navigate') navigate(value);
+        if (value.type === 'visibility') setForeground(value.visible);
+        else if (value.type === 'navigate') {
+            if (inBackground || visibilityRestoring) foregroundNavigation = value;
+            else navigate(value);
+        }
         else if (value.type === 'report') schedule();
         else if (value.type === 'clearSelection') loaded.forEach(item => item.frame?.contentWindow?.getSelection()?.removeAllRanges());
         else if (value.type === 'closeImageViewer' && imageViewerChapter !== null) commandChild(imageViewerChapter, value);
@@ -216,7 +254,11 @@
         }
         schedule();
     }, {passive:true});
-    addEventListener('resize', () => { loaded.forEach((item, index) => commandChild(index, {type:'hostResize'})); schedule(); });
+    addEventListener('resize', () => {
+        if (inBackground || document.hidden) return;
+        if (visibilityRestoring) { restoreForeground(); return; }
+        loaded.forEach((item, index) => commandChild(index, {type:'hostResize'})); schedule();
+    });
     addEventListener('touchmove', beginManual, {passive:true});
     addEventListener('wheel', beginManual, {passive:true});
     addEventListener('pagehide', () => setAutoScroll(0));

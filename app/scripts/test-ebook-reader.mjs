@@ -284,6 +284,38 @@ try {
     assert.equal(await page.evaluate(() => events.filter(e => e.type === 'chapterStep' && e.direction === 1).length), 1);
     return { slow, stopped, fast, touched };
   });
+  for (const mode of ['SCROLL', 'PAGED', 'VERTICAL_PAGED']) await test(`foreground-navigation-honours-background-speech-${mode}`, async () => {
+    await open({mode});
+    await command({type:'navigate',offset:canonical.indexOf(lines[10])});
+    await command({type:'visibility',visible:false});
+    const target=canonical.indexOf(lines[30]);
+    await command({type:'navigate',offset:target});
+    await command({type:'visibility',visible:true});await page.waitForTimeout(180);
+    const state=await viewport();assert.ok(state.offset<=target+2 && state.endOffset>target);
+    return {target,state};
+  });
+  for (const mode of ['SCROLL', 'PAGED', 'VERTICAL_PAGED']) await test(`foreground-return-keeps-position-${mode}`, async () => {
+    await open({mode});
+    await command({type:'navigate', offset:canonical.indexOf(lines[20])});
+    if (mode === 'SCROLL') await page.evaluate(() => scrollBy(0, 37));
+    await page.waitForTimeout(100);
+    const before = await viewport();
+    const pixels = await page.evaluate(() => ({x:scrollX,y:scrollY}));
+    await command({type:'visibility',visible:false});
+    const reports = await page.evaluate(() => window.events.filter(e => e.type === 'viewport').length);
+    await page.setViewportSize({width:300,height:400});
+    await page.waitForTimeout(130);
+    assert.equal(await page.evaluate(() => window.events.filter(e => e.type === 'viewport').length), reports);
+    await page.setViewportSize({width:392,height:760});
+    await command({type:'visibility',visible:true});
+    await page.waitForTimeout(180);
+    const after = await viewport();
+    assert.equal(after.page,before.page); assert.equal(after.offset,before.offset);
+    const restored = await page.evaluate(() => ({x:scrollX,y:scrollY}));
+    assert.ok(Math.abs(restored.x-pixels.x)<=1 && Math.abs(restored.y-pixels.y)<=1);
+    return {before,after,pixels,restored};
+  });
+
   for (const mode of ['SCROLL', 'PAGED', 'VERTICAL_PAGED']) {
     for (const chapter of [
       { name: 'blank', body: '', text: '', images: [] },

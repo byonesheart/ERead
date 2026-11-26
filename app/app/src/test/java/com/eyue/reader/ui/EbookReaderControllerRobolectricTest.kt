@@ -10,6 +10,17 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
 class EbookReaderControllerRobolectricTest {
+    @Test fun backgroundStateSurvivesAChapterLoadAndResumeRestartsReports() {
+        val controller = EbookReaderController()
+        val commands = mutableListOf<JSONObject>()
+        controller.foreground(false)
+        controller.bind(3) { commands += it }
+        controller.loaded()
+        assertEquals("visibility", commands.single().getString("type"))
+        assertFalse(commands.single().getBoolean("visible"))
+        controller.foreground(true)
+        assertTrue(commands.last().getBoolean("visible"))
+    }
     @Test fun retiredModeCannotDisconnectOrConsumeTheNewModesChapterAndProgressJumps() {
         val controller = EbookReaderController()
         val old = Any(); val current = Any()
