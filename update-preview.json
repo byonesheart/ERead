@@ -1,13 +1,13 @@
 {
-  "versionCode": 115,
-  "versionName": "1.11.33-beta.3",
+  "versionCode": 118,
+  "versionName": "1.11.35-beta.1",
   "prerelease": true,
-  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.33-beta.3",
-  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.33-beta.3/ERead-1.11.33-beta.3-release.apk",
+  "releaseUrl": "https://github.com/byonesheart/ERead/releases/tag/v1.11.35-beta.1",
+  "downloadUrl": "https://github.com/byonesheart/ERead/releases/download/v1.11.35-beta.1/ERead-1.11.35-beta.1-release.apk",
   "mirrors": [],
   "changelog": [
-    "单行书架分行显示作者与当前章节，补充章节进度。",
-    "隐藏封面图标时，未下载书籍仍保留下载图标。",
+    "改善 EPUB、MOBI 切换应用或锁屏返回后的阅读位置保持。",
+    "原书排版数据随书籍保留，减少临时缓存失效后的重复整理与全书文件检查。",
     "更多功能请自行体验。"
   ]
 }
